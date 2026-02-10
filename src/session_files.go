@@ -14,9 +14,15 @@ func generateSessionName(projectRoot, agent, mode, tag string) string {
 	now := time.Now()
 	stamp := fmt.Sprintf("%s-%09d", now.Format("060102-150405"), now.Nanosecond())
 	slug := projectSlug(projectRoot)
-	agent = normalizeAgent(agent)
-	mode = normalizeMode(mode)
-	name := fmt.Sprintf("lisa-%s-%s-%s-%s", slug, stamp, agent, mode)
+	parsedAgent, err := parseAgent(agent)
+	if err != nil {
+		parsedAgent = "claude"
+	}
+	parsedMode, err := parseMode(mode)
+	if err != nil {
+		parsedMode = "interactive"
+	}
+	name := fmt.Sprintf("lisa-%s-%s-%s-%s", slug, stamp, parsedAgent, parsedMode)
 	if tag != "" {
 		name += "-" + sanitizeID(tag, 16)
 	}
@@ -24,6 +30,7 @@ func generateSessionName(projectRoot, agent, mode, tag string) string {
 }
 
 func projectSlug(projectRoot string) string {
+	projectRoot = canonicalProjectRoot(projectRoot)
 	base := filepath.Base(projectRoot)
 	return sanitizeID(base, 10)
 }
@@ -47,19 +54,81 @@ func sanitizeID(s string, max int) string {
 }
 
 func sessionStateFile(projectRoot, session string) string {
-	return fmt.Sprintf("/tmp/.lisa-%s-session-%s-state.json", projectHash(projectRoot), session)
+	return fmt.Sprintf("/tmp/.lisa-%s-session-%s-state.json", projectHash(projectRoot), sessionArtifactID(session))
 }
 
 func sessionMetaFile(projectRoot, session string) string {
-	return fmt.Sprintf("/tmp/.lisa-%s-session-%s-meta.json", projectHash(projectRoot), session)
+	return fmt.Sprintf("/tmp/.lisa-%s-session-%s-meta.json", projectHash(projectRoot), sessionArtifactID(session))
 }
 
 func sessionOutputFile(projectRoot, session string) string {
-	return fmt.Sprintf("/tmp/lisa-%s-output-%s.txt", projectHash(projectRoot), session)
+	return fmt.Sprintf("/tmp/lisa-%s-output-%s.txt", projectHash(projectRoot), sessionArtifactID(session))
 }
 
 func projectHash(projectRoot string) string {
-	return md5Hex8(projectRoot)
+	return md5Hex8(canonicalProjectRoot(projectRoot))
+}
+
+func canonicalProjectRoot(projectRoot string) string {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		root = getPWD()
+	}
+	abs, err := filepath.Abs(root)
+	if err == nil {
+		root = abs
+	}
+	eval, err := filepath.EvalSymlinks(root)
+	if err == nil {
+		root = eval
+	}
+	return filepath.Clean(root)
+}
+
+func sessionArtifactID(session string) string {
+	session = strings.TrimSpace(session)
+	if session == "" {
+		return "session-" + md5Hex8(session)
+	}
+	safe := sanitizeSessionToken(session)
+	if safe == session {
+		return safe
+	}
+	return fmt.Sprintf("%s-%s", safe, md5Hex8(session))
+}
+
+func sanitizeSessionToken(session string) string {
+	var b strings.Builder
+	for _, r := range session {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_' || r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := strings.Trim(b.String(), "._-")
+	if out == "" {
+		out = "session"
+	}
+	if len(out) > 64 {
+		out = out[:64]
+	}
+	return out
+}
+
+func sessionCommandScriptPath(session string, createdAtNanos int64) string {
+	return fmt.Sprintf("/tmp/lisa-cmd-%s-%d.sh", sessionArtifactID(session), createdAtNanos)
+}
+
+func sessionCommandScriptPattern(session string) string {
+	return fmt.Sprintf("/tmp/lisa-cmd-%s-*.sh", sessionArtifactID(session))
 }
 
 func loadSessionState(path string) sessionState {
@@ -118,7 +187,7 @@ func cleanupSessionArtifacts(projectRoot, session string) error {
 		}
 	}
 
-	matches, _ := filepath.Glob(fmt.Sprintf("/tmp/lisa-cmd-%s-*.sh", session))
+	matches, _ := filepath.Glob(sessionCommandScriptPattern(session))
 	for _, m := range matches {
 		if err := os.Remove(m); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err.Error())
@@ -138,7 +207,7 @@ func writeSessionOutputFile(projectRoot, session string) (string, error) {
 	}
 	lines := tailLines(trimLines(capture), 260)
 	path := sessionOutputFile(projectRoot, session)
-	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
 		return "", err
 	}
 	return path, nil

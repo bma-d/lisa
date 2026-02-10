@@ -29,7 +29,7 @@ func tmuxSendCommandWithFallback(session, command string, enter bool) error {
 		return tmuxSendKeys(session, []string{command}, enter)
 	}
 
-	scriptPath := fmt.Sprintf("/tmp/lisa-cmd-%s-%d.sh", session, time.Now().UnixNano())
+	scriptPath := sessionCommandScriptPath(session, time.Now().UnixNano())
 	body := buildFallbackScriptBody(command)
 	if err := os.WriteFile(scriptPath, []byte(body), 0o700); err != nil {
 		return fmt.Errorf("failed to write long command script: %w", err)

@@ -6,6 +6,27 @@ import (
 	"os/exec"
 )
 
+type doctorCheck struct {
+	Name      string `json:"name"`
+	Available bool   `json:"available"`
+	Path      string `json:"path,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+func doctorReady(results []doctorCheck) bool {
+	tmuxOK := false
+	agentOK := false
+	for _, r := range results {
+		if r.Name == "tmux" && r.Available {
+			tmuxOK = true
+		}
+		if (r.Name == "claude" || r.Name == "codex") && r.Available {
+			agentOK = true
+		}
+	}
+	return tmuxOK && agentOK
+}
+
 func cmdDoctor(args []string) int {
 	jsonOut := false
 	for _, arg := range args {
@@ -14,28 +35,17 @@ func cmdDoctor(args []string) int {
 		}
 	}
 
-	type check struct {
-		Name      string `json:"name"`
-		Available bool   `json:"available"`
-		Path      string `json:"path,omitempty"`
-		Error     string `json:"error,omitempty"`
-	}
-	results := []check{}
+	results := []doctorCheck{}
 	for _, bin := range []string{"tmux", "claude", "codex"} {
 		path, err := exec.LookPath(bin)
 		if err != nil {
-			results = append(results, check{Name: bin, Available: false, Error: err.Error()})
+			results = append(results, doctorCheck{Name: bin, Available: false, Error: err.Error()})
 			continue
 		}
-		results = append(results, check{Name: bin, Available: true, Path: path})
+		results = append(results, doctorCheck{Name: bin, Available: true, Path: path})
 	}
 
-	allOK := true
-	for _, r := range results {
-		if !r.Available {
-			allOK = false
-		}
-	}
+	allOK := doctorReady(results)
 
 	if jsonOut {
 		payload := map[string]any{
@@ -122,10 +132,13 @@ func cmdAgentBuildCmd(args []string) int {
 		return 1
 	}
 
+	agent, _ = parseAgent(agent)
+	mode, _ = parseMode(mode)
+
 	if jsonOut {
 		writeJSON(map[string]any{
-			"agent":   normalizeAgent(agent),
-			"mode":    normalizeMode(mode),
+			"agent":   agent,
+			"mode":    mode,
 			"prompt":  prompt,
 			"command": cmd,
 		})
