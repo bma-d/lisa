@@ -17,6 +17,9 @@ func Run(args []string) int {
 	switch cmd {
 	case "doctor":
 		return cmdDoctor(rest)
+	case "version", "--version", "-version", "-v":
+		fmt.Printf("lisa %s (commit %s, built %s)\n", BuildVersion, BuildCommit, BuildDate)
+		return 0
 	case "session":
 		return cmdSession(rest)
 	case "agent":

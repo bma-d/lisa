@@ -330,18 +330,60 @@ func estimateWait(task string, done, total int) int {
 }
 
 func parseExecCompletion(capture string) (bool, int) {
-	re := regexp.MustCompile(`(?m)__LISA_EXEC_DONE__:(-?\d+)\s*$`)
-	matches := re.FindAllStringSubmatch(capture, -1)
-	if len(matches) == 0 {
+	markerRe := regexp.MustCompile(`^__LISA_EXEC_DONE__:(-?\d+)\s*$`)
+	lines := trimLines(capture)
+	if len(lines) == 0 {
 		return false, 0
 	}
-	last := matches[len(matches)-1]
-	if len(last) < 2 {
+
+	// Only trust completion markers that are still at the tail of the pane output.
+	// Historical markers can linger in tmux history and should not end a new run.
+	tail := make([]string, 0, 24)
+	for i := len(lines) - 1; i >= 0 && len(tail) < 24; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		tail = append([]string{line}, tail...)
+	}
+	if len(tail) == 0 {
 		return false, 0
 	}
-	code, err := strconv.Atoi(last[1])
+
+	markerIdx := -1
+	markerCode := ""
+	for i := len(tail) - 1; i >= 0; i-- {
+		match := markerRe.FindStringSubmatch(tail[i])
+		if len(match) == 2 {
+			markerIdx = i
+			markerCode = match[1]
+			break
+		}
+	}
+	if markerIdx < 0 {
+		return false, 0
+	}
+	for i := markerIdx + 1; i < len(tail); i++ {
+		if !isLikelyShellPromptLine(tail[i]) {
+			return false, 0
+		}
+	}
+
+	code, err := strconv.Atoi(markerCode)
 	if err != nil {
 		return true, 1
 	}
 	return true, code
+}
+
+func isLikelyShellPromptLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return true
+	}
+	return strings.HasSuffix(line, "$") ||
+		strings.HasSuffix(line, "#") ||
+		strings.HasSuffix(line, "%") ||
+		strings.HasSuffix(line, ">") ||
+		strings.HasSuffix(line, "❯")
 }

@@ -156,3 +156,14 @@ func boolExit(ok bool) int {
 	}
 	return 1
 }
+
+func parseBoolFlag(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes":
+		return true, nil
+	case "false", "0", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean: %s", raw)
+	}
+}

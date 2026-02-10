@@ -1,7 +1,9 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,6 +29,46 @@ func TestBuildFallbackScriptBodyLeavesNonExecCommandsUntouched(t *testing.T) {
 	if strings.Contains(body, "set +e\n") {
 		t.Fatalf("did not expect errexit override for non-exec command")
 	}
+}
+
+func captureOutput(t *testing.T, fn func()) (string, string) {
+	t.Helper()
+
+	origStdout := os.Stdout
+	origStderr := os.Stderr
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stdout pipe: %v", err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stderr pipe: %v", err)
+	}
+
+	os.Stdout = stdoutW
+	os.Stderr = stderrW
+	defer func() {
+		os.Stdout = origStdout
+		os.Stderr = origStderr
+	}()
+
+	fn()
+
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
+
+	stdoutBytes, err := io.ReadAll(stdoutR)
+	if err != nil {
+		t.Fatalf("failed to read stdout: %v", err)
+	}
+	stderrBytes, err := io.ReadAll(stderrR)
+	if err != nil {
+		t.Fatalf("failed to read stderr: %v", err)
+	}
+	_ = stdoutR.Close()
+	_ = stderrR.Close()
+
+	return strings.TrimSpace(string(stdoutBytes)), strings.TrimSpace(string(stderrBytes))
 }
 
 func TestLooksLikePromptWaitingIgnoresHistoricalMarkers(t *testing.T) {
@@ -64,6 +106,33 @@ func TestLooksLikePromptWaitingDetectsRecentPromptContext(t *testing.T) {
 	}, "\n")
 	if !looksLikePromptWaiting("claude", claudeCapture) {
 		t.Fatalf("expected claude prompt context to be detected as waiting")
+	}
+}
+
+func TestParseExecCompletionIgnoresHistoricalMarkers(t *testing.T) {
+	capture := strings.Join([]string{
+		"working",
+		"__LISA_EXEC_DONE__:0",
+		"starting next run",
+		"still running",
+	}, "\n")
+
+	done, code := parseExecCompletion(capture)
+	if done {
+		t.Fatalf("expected stale marker to be ignored, got done=%v code=%d", done, code)
+	}
+}
+
+func TestParseExecCompletionAcceptsTailMarkerWithPrompt(t *testing.T) {
+	capture := strings.Join([]string{
+		"final output",
+		"__LISA_EXEC_DONE__:7",
+		"user@host:~/repo$",
+	}, "\n")
+
+	done, code := parseExecCompletion(capture)
+	if !done || code != 7 {
+		t.Fatalf("expected tail marker to be parsed, got done=%v code=%d", done, code)
 	}
 }
 
@@ -209,6 +278,27 @@ func TestDoctorReadyRequiresTmuxAndAtLeastOneAgent(t *testing.T) {
 func TestCmdDoctorRejectsUnknownFlags(t *testing.T) {
 	if code := cmdDoctor([]string{"--bogus"}); code == 0 {
 		t.Fatalf("expected non-zero exit for unknown doctor flag")
+	}
+}
+
+func TestRunHandlesVersionCommand(t *testing.T) {
+	origVersion := BuildVersion
+	origCommit := BuildCommit
+	origDate := BuildDate
+	t.Cleanup(func() {
+		BuildVersion = origVersion
+		BuildCommit = origCommit
+		BuildDate = origDate
+	})
+
+	SetBuildInfo("v2.0.1", "def456", "2026-02-10T00:00:00Z")
+	stdout, _ := captureOutput(t, func() {
+		if code := Run([]string{"version"}); code != 0 {
+			t.Fatalf("expected version command to succeed, got %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "lisa v2.0.1 (commit def456, built 2026-02-10T00:00:00Z)") {
+		t.Fatalf("unexpected version output: %q", stdout)
 	}
 }
 
@@ -397,6 +487,92 @@ func TestSessionArtifactsAreNotWorldReadable(t *testing.T) {
 	}
 }
 
+func TestCmdSessionSpawnRejectsInvalidWidth(t *testing.T) {
+	if code := cmdSessionSpawn([]string{"--width", "oops"}); code == 0 {
+		t.Fatalf("expected non-zero exit for invalid width")
+	}
+}
+
+func TestCmdSessionSpawnExecRequiresPromptOrCommand(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionFn = origNew
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return false }
+	newCalled := false
+	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error {
+		newCalled = true
+		return nil
+	}
+
+	if code := cmdSessionSpawn([]string{"--mode", "exec"}); code == 0 {
+		t.Fatalf("expected non-zero exit for exec mode without prompt/command")
+	}
+	if newCalled {
+		t.Fatalf("did not expect tmux session creation when argument validation fails")
+	}
+}
+
+func TestCmdSessionSpawnJSONOutputAndExecWrapping(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionFn
+	origSend := tmuxSendCommandWithFallbackFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionFn = origNew
+		tmuxSendCommandWithFallbackFn = origSend
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return false }
+	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
+
+	sentCommand := ""
+	tmuxSendCommandWithFallbackFn = func(session, command string, enter bool) error {
+		if !enter {
+			t.Fatalf("expected startup command send to include enter")
+		}
+		sentCommand = command
+		return nil
+	}
+
+	session := "lisa-spawn-json"
+	projectRoot := t.TempDir()
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionSpawn([]string{
+			"--agent", "codex",
+			"--mode", "exec",
+			"--session", session,
+			"--project-root", projectRoot,
+			"--prompt", "hello world",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected spawn success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("failed to parse spawn json: %v (%q)", err, stdout)
+	}
+	if payload["session"] != session {
+		t.Fatalf("expected session %q, got %v", session, payload["session"])
+	}
+	commandText, _ := payload["command"].(string)
+	if !strings.Contains(commandText, "codex exec 'hello world' --full-auto") {
+		t.Fatalf("unexpected command payload: %q", commandText)
+	}
+	if !strings.Contains(sentCommand, execDonePrefix) {
+		t.Fatalf("expected wrapped exec marker in startup command, got %q", sentCommand)
+	}
+}
+
 func TestCmdSessionKillReturnsErrorWhenSessionNotFound(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	t.Cleanup(func() {
@@ -409,6 +585,17 @@ func TestCmdSessionKillReturnsErrorWhenSessionNotFound(t *testing.T) {
 
 	if code := cmdSessionKill([]string{"--session", "missing", "--project-root", t.TempDir()}); code == 0 {
 		t.Fatalf("expected non-zero exit when session is missing")
+	}
+}
+
+func TestCmdSessionMonitorRejectsInvalidStopOnWaitingValue(t *testing.T) {
+	_, stderr := captureOutput(t, func() {
+		if code := cmdSessionMonitor([]string{"--stop-on-waiting", "maybe"}); code == 0 {
+			t.Fatalf("expected non-zero exit for invalid stop-on-waiting value")
+		}
+	})
+	if !strings.Contains(stderr, "invalid --stop-on-waiting") {
+		t.Fatalf("expected invalid value error, got %q", stderr)
 	}
 }
 

@@ -196,7 +196,7 @@ func cmdSessionSpawn(args []string) int {
 	if session == "" {
 		session = generateSessionName(projectRoot, agent, mode, "")
 	}
-	if tmuxHasSession(session) {
+	if tmuxHasSessionFn(session) {
 		fmt.Fprintf(os.Stderr, "session already exists: %s\n", session)
 		return 1
 	}
@@ -209,7 +209,7 @@ func cmdSessionSpawn(args []string) int {
 		}
 	}
 
-	if err := tmuxNewSession(session, projectRoot, agent, mode, width, height); err != nil {
+	if err := tmuxNewSessionFn(session, projectRoot, agent, mode, width, height); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create tmux session: %v\n", err)
 		return 1
 	}
@@ -220,7 +220,7 @@ func cmdSessionSpawn(args []string) int {
 	}
 
 	if commandToSend != "" {
-		if err := tmuxSendCommandWithFallback(session, commandToSend, true); err != nil {
+		if err := tmuxSendCommandWithFallbackFn(session, commandToSend, true); err != nil {
 			_ = tmuxKillSession(session)
 			fmt.Fprintf(os.Stderr, "failed to send startup command: %v\n", err)
 			return 1
@@ -474,8 +474,12 @@ func cmdSessionMonitor(args []string) int {
 			if i+1 >= len(args) {
 				return flagValueError("--stop-on-waiting")
 			}
-			val := strings.ToLower(args[i+1])
-			stopOnWaiting = val != "false" && val != "0" && val != "no"
+			parsed, err := parseBoolFlag(args[i+1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "invalid --stop-on-waiting: %s (expected true|false)\n", args[i+1])
+				return 1
+			}
+			stopOnWaiting = parsed
 			i++
 		case "--json":
 			jsonOut = true
