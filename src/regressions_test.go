@@ -263,3 +263,121 @@ func TestSessionArtifactsAreNotWorldReadable(t *testing.T) {
 		t.Fatalf("state file should not be group/world-readable: perm=%#o", stateStat.Mode().Perm())
 	}
 }
+
+func TestCmdSessionKillReturnsErrorWhenSessionNotFound(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+	})
+
+	tmuxHasSessionFn = func(session string) bool {
+		return false
+	}
+
+	if code := cmdSessionKill([]string{"--session", "missing", "--project-root", t.TempDir()}); code == 0 {
+		t.Fatalf("expected non-zero exit when session is missing")
+	}
+}
+
+func TestCmdSessionKillReturnsErrorWhenTmuxKillFails(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origKill := tmuxKillSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxKillSessionFn = origKill
+	})
+
+	tmuxHasSessionFn = func(session string) bool {
+		return true
+	}
+	tmuxKillSessionFn = func(session string) error {
+		return errors.New("kill failed")
+	}
+
+	if code := cmdSessionKill([]string{"--session", "lisa-test", "--project-root", t.TempDir()}); code == 0 {
+		t.Fatalf("expected non-zero exit when tmux kill fails")
+	}
+}
+
+func TestCmdSessionKillAllReturnsErrorOnPartialFailure(t *testing.T) {
+	origList := tmuxListSessionsFn
+	origKill := tmuxKillSessionFn
+	t.Cleanup(func() {
+		tmuxListSessionsFn = origList
+		tmuxKillSessionFn = origKill
+	})
+
+	tmuxListSessionsFn = func(projectOnly bool, projectRoot string) ([]string, error) {
+		return []string{"lisa-a", "lisa-b"}, nil
+	}
+	tmuxKillSessionFn = func(session string) error {
+		if session == "lisa-b" {
+			return errors.New("kill failed")
+		}
+		return nil
+	}
+
+	if code := cmdSessionKillAll([]string{"--project-root", t.TempDir()}); code == 0 {
+		t.Fatalf("expected non-zero exit when any session kill fails")
+	}
+}
+
+func TestComputeSessionStatusReturnsErrorOnCriticalTmuxReadFailures(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool {
+		return true
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		return "", errors.New("missing")
+	}
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "", errors.New("capture failed")
+	}
+	if _, err := computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1); err == nil {
+		t.Fatalf("expected error when pane capture fails")
+	}
+
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "output", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) {
+		return "", errors.New("pane status failed")
+	}
+	if _, err := computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1); err == nil {
+		t.Fatalf("expected error when pane status read fails")
+	}
+
+	tmuxPaneStatusFn = func(session string) (string, error) {
+		return "alive", nil
+	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "not-a-number", nil
+		default:
+			return "", nil
+		}
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
+		return 0, 0
+	}
+	if _, err := computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1); err == nil {
+		t.Fatalf("expected error when pane pid cannot be parsed")
+	}
+}
