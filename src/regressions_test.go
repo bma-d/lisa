@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"io"
@@ -133,6 +134,32 @@ func TestParseExecCompletionAcceptsTailMarkerWithPrompt(t *testing.T) {
 	done, code := parseExecCompletion(capture)
 	if !done || code != 7 {
 		t.Fatalf("expected tail marker to be parsed, got done=%v code=%d", done, code)
+	}
+}
+
+func TestParseExecCompletionIgnoresTagLikeTrailingLine(t *testing.T) {
+	capture := strings.Join([]string{
+		"final output",
+		"__LISA_EXEC_DONE__:0",
+		"<results>",
+	}, "\n")
+
+	done, code := parseExecCompletion(capture)
+	if done {
+		t.Fatalf("expected tag-like trailing line to invalidate completion, got done=%v code=%d", done, code)
+	}
+}
+
+func TestParseExecCompletionAcceptsFishStylePromptWithPath(t *testing.T) {
+	capture := strings.Join([]string{
+		"final output",
+		"__LISA_EXEC_DONE__:0",
+		"~/repo>",
+	}, "\n")
+
+	done, code := parseExecCompletion(capture)
+	if !done || code != 0 {
+		t.Fatalf("expected fish-style prompt to be accepted, got done=%v code=%d", done, code)
 	}
 }
 
@@ -573,6 +600,263 @@ func TestCmdSessionSpawnJSONOutputAndExecWrapping(t *testing.T) {
 	}
 }
 
+func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionFn
+	origSend := tmuxSendCommandWithFallbackFn
+	origKill := tmuxKillSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionFn = origNew
+		tmuxSendCommandWithFallbackFn = origSend
+		tmuxKillSessionFn = origKill
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return false }
+	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
+	tmuxSendCommandWithFallbackFn = func(session, command string, enter bool) error {
+		return errors.New("send failed")
+	}
+	killCalled := false
+	tmuxKillSessionFn = func(session string) error {
+		killCalled = true
+		return nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-send-failure-cleanup"
+	scriptPath := sessionCommandScriptPath(session, time.Now().UnixNano())
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\n"), 0o700); err != nil {
+		t.Fatalf("failed to create script artifact: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(scriptPath)
+	})
+
+	_, _ = captureOutput(t, func() {
+		if code := cmdSessionSpawn([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--command", "echo hello",
+		}); code == 0 {
+			t.Fatalf("expected spawn to fail when startup command send fails")
+		}
+	})
+
+	if !killCalled {
+		t.Fatalf("expected failed spawn to kill tmux session")
+	}
+	if fileExists(scriptPath) {
+		t.Fatalf("expected cleanup to remove command script after failed spawn")
+	}
+}
+
+func TestCmdSessionSendUsesMockableTextPath(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origSendText := tmuxSendTextFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxSendTextFn = origSendText
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	sendCalled := false
+	tmuxSendTextFn = func(session, text string, enter bool) error {
+		sendCalled = true
+		if session != "lisa-send" || text != "hello,world" || !enter {
+			t.Fatalf("unexpected send args session=%q text=%q enter=%v", session, text, enter)
+		}
+		return nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		if code := cmdSessionSend([]string{
+			"--session", "lisa-send",
+			"--text", "hello,world",
+			"--enter",
+		}); code != 0 {
+			t.Fatalf("expected send success, got %d", code)
+		}
+	})
+
+	if !sendCalled {
+		t.Fatalf("expected tmuxSendTextFn to be called")
+	}
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if stdout != "ok" {
+		t.Fatalf("unexpected stdout: %q", stdout)
+	}
+}
+
+func TestCmdSessionCaptureUsesMockableFns(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	receivedLines := 0
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		receivedLines = lines
+		if session != "lisa-capture" {
+			t.Fatalf("unexpected session: %q", session)
+		}
+		return "line1\nline2", nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		if code := cmdSessionCapture([]string{
+			"--session", "lisa-capture",
+			"--lines", "123",
+			"--json",
+		}); code != 0 {
+			t.Fatalf("expected capture success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if receivedLines != 123 {
+		t.Fatalf("expected capture lines=123, got %d", receivedLines)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("failed to parse capture json: %v (%q)", err, stdout)
+	}
+	if payload["capture"] != "line1\nline2" {
+		t.Fatalf("unexpected capture payload: %v", payload["capture"])
+	}
+}
+
+func TestCmdSessionListUsesMockableFn(t *testing.T) {
+	origList := tmuxListSessionsFn
+	t.Cleanup(func() {
+		tmuxListSessionsFn = origList
+	})
+
+	called := false
+	tmuxListSessionsFn = func(projectOnly bool, projectRoot string) ([]string, error) {
+		called = true
+		if !projectOnly {
+			t.Fatalf("expected project-only flag")
+		}
+		return []string{"lisa-a", "lisa-b"}, nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		if code := cmdSessionList([]string{"--project-only", "--project-root", t.TempDir()}); code != 0 {
+			t.Fatalf("expected list success, got %d", code)
+		}
+	})
+	if !called {
+		t.Fatalf("expected tmuxListSessionsFn to be called")
+	}
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if stdout != "lisa-a\nlisa-b" {
+		t.Fatalf("unexpected stdout: %q", stdout)
+	}
+}
+
+func TestCmdSessionExistsUsesMockableFn(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+	})
+
+	tmuxHasSessionFn = func(session string) bool {
+		return session == "lisa-present"
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		if code := cmdSessionExists([]string{"--session", "lisa-present"}); code != 0 {
+			t.Fatalf("expected exists success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if stdout != "true" {
+		t.Fatalf("unexpected stdout: %q", stdout)
+	}
+
+	stdout, _ = captureOutput(t, func() {
+		if code := cmdSessionExists([]string{"--session", "lisa-missing"}); code == 0 {
+			t.Fatalf("expected missing session to return non-zero")
+		}
+	})
+	if stdout != "false" {
+		t.Fatalf("unexpected stdout for missing session: %q", stdout)
+	}
+}
+
+func TestCmdSessionStatusEscapesCSVFields(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "working on api,tests", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) {
+		return "alive", nil
+	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		return "", errors.New("missing")
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
+		return 1234, 1.5
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		if code := cmdSessionStatus([]string{"--session", "lisa-status", "--project-root", t.TempDir()}); code != 0 {
+			t.Fatalf("expected status success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+
+	record, err := csv.NewReader(strings.NewReader(stdout)).Read()
+	if err != nil {
+		t.Fatalf("failed to parse csv output: %v (%q)", err, stdout)
+	}
+	if len(record) != 6 {
+		t.Fatalf("expected 6 csv fields, got %d (%q)", len(record), stdout)
+	}
+	if record[3] != "working on api,tests" {
+		t.Fatalf("expected active task to preserve comma, got %q", record[3])
+	}
+}
+
 func TestCmdSessionKillReturnsErrorWhenSessionNotFound(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	t.Cleanup(func() {
@@ -592,6 +876,17 @@ func TestCmdSessionMonitorRejectsInvalidStopOnWaitingValue(t *testing.T) {
 	_, stderr := captureOutput(t, func() {
 		if code := cmdSessionMonitor([]string{"--stop-on-waiting", "maybe"}); code == 0 {
 			t.Fatalf("expected non-zero exit for invalid stop-on-waiting value")
+		}
+	})
+	if !strings.Contains(stderr, "invalid --stop-on-waiting") {
+		t.Fatalf("expected invalid value error, got %q", stderr)
+	}
+}
+
+func TestCmdSessionMonitorRejectsNonLiteralBooleanStopOnWaiting(t *testing.T) {
+	_, stderr := captureOutput(t, func() {
+		if code := cmdSessionMonitor([]string{"--stop-on-waiting", "1"}); code == 0 {
+			t.Fatalf("expected non-zero exit for non-literal stop-on-waiting value")
 		}
 	})
 	if !strings.Contains(stderr, "invalid --stop-on-waiting") {

@@ -44,6 +44,7 @@ lisa/
 ├── go.mod            # Go 1.21, zero dependencies
 └── src/              # Package "app" — all implementation
     ├── run.go                  # Command router
+    ├── build_info.go           # Build/version metadata plumbing
     ├── types.go                # Shared types/constants
     ├── agent_command.go        # Agent command builder
     ├── commands_agent.go       # doctor, agent subcommands

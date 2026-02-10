@@ -216,7 +216,7 @@ func cleanupSessionArtifacts(projectRoot, session string) error {
 }
 
 func writeSessionOutputFile(projectRoot, session string) (string, error) {
-	capture, err := tmuxCapturePane(session, 320)
+	capture, err := tmuxCapturePaneFn(session, 320)
 	if err != nil {
 		return "", err
 	}

@@ -221,8 +221,15 @@ func cmdSessionSpawn(args []string) int {
 
 	if commandToSend != "" {
 		if err := tmuxSendCommandWithFallbackFn(session, commandToSend, true); err != nil {
-			_ = tmuxKillSession(session)
+			killErr := tmuxKillSessionFn(session)
+			cleanupErr := cleanupSessionArtifacts(projectRoot, session)
 			fmt.Fprintf(os.Stderr, "failed to send startup command: %v\n", err)
+			if killErr != nil {
+				fmt.Fprintf(os.Stderr, "failed to kill session after send error: %v\n", killErr)
+			}
+			if cleanupErr != nil {
+				fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
+			}
 			return 1
 		}
 	}
@@ -295,7 +302,7 @@ func cmdSessionSend(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
-	if !tmuxHasSession(session) {
+	if !tmuxHasSessionFn(session) {
 		fmt.Fprintln(os.Stderr, "session not found")
 		return 1
 	}
@@ -309,7 +316,7 @@ func cmdSessionSend(args []string) int {
 	}
 
 	if text != "" {
-		if err := tmuxSendText(session, text, enter); err != nil {
+		if err := tmuxSendTextFn(session, text, enter); err != nil {
 			fmt.Fprintf(os.Stderr, "failed sending text: %v\n", err)
 			return 1
 		}
@@ -319,7 +326,7 @@ func cmdSessionSend(args []string) int {
 			fmt.Fprintln(os.Stderr, "empty --keys")
 			return 1
 		}
-		if err := tmuxSendKeys(session, keyList, enter); err != nil {
+		if err := tmuxSendKeysFn(session, keyList, enter); err != nil {
 			fmt.Fprintf(os.Stderr, "failed sending keys: %v\n", err)
 			return 1
 		}
@@ -407,7 +414,17 @@ func cmdSessionStatus(args []string) int {
 		return 0
 	}
 
-	fmt.Printf("%s,%d,%d,%s,%d,%s\n", status.Status, status.TodosDone, status.TodosTotal, status.ActiveTask, status.WaitEstimate, status.SessionState)
+	if err := writeCSVRecord(
+		status.Status,
+		strconv.Itoa(status.TodosDone),
+		strconv.Itoa(status.TodosTotal),
+		status.ActiveTask,
+		strconv.Itoa(status.WaitEstimate),
+		status.SessionState,
+	); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write status output: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
@@ -549,7 +566,18 @@ func cmdSessionMonitor(args []string) int {
 			if jsonOut {
 				writeJSON(result)
 			} else {
-				fmt.Printf("%s,%d,%d,%s,%s,%d,%s\n", result.FinalState, result.TodosDone, result.TodosTotal, result.OutputFile, result.ExitReason, result.Polls, result.FinalStatus)
+				if err := writeCSVRecord(
+					result.FinalState,
+					strconv.Itoa(result.TodosDone),
+					strconv.Itoa(result.TodosTotal),
+					result.OutputFile,
+					result.ExitReason,
+					strconv.Itoa(result.Polls),
+					result.FinalStatus,
+				); err != nil {
+					fmt.Fprintf(os.Stderr, "failed to write monitor output: %v\n", err)
+					return 1
+				}
 			}
 			if reason == "completed" || reason == "waiting_input" {
 				return 0
@@ -575,7 +603,18 @@ func cmdSessionMonitor(args []string) int {
 	if jsonOut {
 		writeJSON(result)
 	} else {
-		fmt.Printf("%s,%d,%d,%s,%s,%d,%s\n", result.FinalState, result.TodosDone, result.TodosTotal, result.OutputFile, result.ExitReason, result.Polls, result.FinalStatus)
+		if err := writeCSVRecord(
+			result.FinalState,
+			strconv.Itoa(result.TodosDone),
+			strconv.Itoa(result.TodosTotal),
+			result.OutputFile,
+			result.ExitReason,
+			strconv.Itoa(result.Polls),
+			result.FinalStatus,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write monitor output: %v\n", err)
+			return 1
+		}
 	}
 	return 2
 }
@@ -613,11 +652,11 @@ func cmdSessionCapture(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
-	if !tmuxHasSession(session) {
+	if !tmuxHasSessionFn(session) {
 		fmt.Fprintln(os.Stderr, "session not found")
 		return 1
 	}
-	capture, err := tmuxCapturePane(session, lines)
+	capture, err := tmuxCapturePaneFn(session, lines)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to capture pane: %v\n", err)
 		return 1
@@ -654,7 +693,7 @@ func cmdSessionList(args []string) int {
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
-	list, err := tmuxListSessions(projectOnly, projectRoot)
+	list, err := tmuxListSessionsFn(projectOnly, projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to list sessions: %v\n", err)
 		return 1
@@ -681,7 +720,7 @@ func cmdSessionExists(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
-	if tmuxHasSession(session) {
+	if tmuxHasSessionFn(session) {
 		fmt.Println("true")
 		return 0
 	}

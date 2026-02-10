@@ -27,7 +27,7 @@
 
 - [AGENTS.md](../AGENTS.md) — Contributor and agent guidelines
 - [agent.md](../agent.md) — Lisa SDK usage guide (command reference, integration patterns)
-- [Changelog](./changelog/260209.md) — Recent changes
+- [Changelog (latest)](./changelog/260210.md) — Recent changes
 
 ## Getting Started
 

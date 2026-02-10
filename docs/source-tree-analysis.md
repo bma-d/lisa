@@ -22,7 +22,8 @@ lisa/                           # Project root
 │   └── regressions_test.go     # Unit tests for safety, regression, and edge cases
 └── docs/                       # Documentation output
     └── changelog/
-        └── 260209.md
+        ├── 260209.md
+        └── 260210.md
 ```
 
 ## Critical Files

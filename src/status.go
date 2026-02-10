@@ -381,9 +381,22 @@ func isLikelyShellPromptLine(line string) bool {
 	if line == "" {
 		return true
 	}
-	return strings.HasSuffix(line, "$") ||
+	if strings.HasSuffix(line, "$") ||
 		strings.HasSuffix(line, "#") ||
 		strings.HasSuffix(line, "%") ||
-		strings.HasSuffix(line, ">") ||
-		strings.HasSuffix(line, "❯")
+		strings.HasSuffix(line, "❯") {
+		return true
+	}
+
+	// Fish-style prompts commonly end with '>' but should not match arbitrary
+	// output like XML/HTML tags.
+	if strings.HasSuffix(line, ">") {
+		if strings.Contains(line, "<") {
+			return false
+		}
+		return strings.Contains(line, "/") ||
+			strings.Contains(line, "~") ||
+			strings.Contains(line, `\`)
+	}
+	return false
 }

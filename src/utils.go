@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"crypto/md5"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -159,11 +160,20 @@ func boolExit(ok bool) int {
 
 func parseBoolFlag(raw string) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "true", "1", "yes":
+	case "true":
 		return true, nil
-	case "false", "0", "no":
+	case "false":
 		return false, nil
 	default:
 		return false, fmt.Errorf("invalid boolean: %s", raw)
 	}
+}
+
+func writeCSVRecord(fields ...string) error {
+	writer := csv.NewWriter(os.Stdout)
+	if err := writer.Write(fields); err != nil {
+		return err
+	}
+	writer.Flush()
+	return writer.Error()
 }
