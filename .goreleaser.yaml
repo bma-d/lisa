@@ -16,7 +16,6 @@ builds:
     goos:
       - darwin
       - linux
-      - windows
     goarch:
       - amd64
       - arm64
@@ -27,9 +26,6 @@ archives:
     format: tar.gz
     files:
       - README.md
-    format_overrides:
-      - goos: windows
-        format: zip
 
 checksum:
   name_template: "checksums.txt"
@@ -64,12 +60,3 @@ nfpms:
       - deb
       - rpm
       - apk
-
-scoops:
-  - name: lisa
-    repository:
-      owner: bma-d
-      name: scoop-bucket
-      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
-    homepage: https://github.com/bma-d/lisa
-    description: tmux orchestrator for Claude/Codex AI agent sessions.

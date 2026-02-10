@@ -1,6 +1,6 @@
 # SDK Usage Guide
 
-Last Updated: 2026-02-09
+Last Updated: 2026-02-10
 Related Files: `agent.md`, `src/commands_session.go`, `src/commands_agent.go`
 
 ## Overview
@@ -9,7 +9,7 @@ How to use Lisa as infrastructure from an LLM orchestrator or script.
 
 ## Integration Pattern
 
-1. **Spawn** one session per task (`session spawn --json`), store returned session name
+1. **Spawn** one session per task (`session spawn --json`), store returned session name (custom `--session` values must start with `lisa-`)
 2. **Poll** with `session monitor --json` (blocking loop) or `session status --json` (one-shot)
 3. If state is `waiting_input` or `stuck`, send next instruction with `session send --text "..." --enter`
 4. Fetch artifacts with `session capture --lines N`

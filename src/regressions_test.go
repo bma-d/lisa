@@ -642,6 +642,38 @@ func TestCmdSessionSpawnRejectsInvalidWidth(t *testing.T) {
 	}
 }
 
+func TestCmdSessionSpawnRejectsCustomSessionWithoutLisaPrefix(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionFn = origNew
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return false }
+	newCalled := false
+	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error {
+		newCalled = true
+		return nil
+	}
+
+	_, stderr := captureOutput(t, func() {
+		if code := cmdSessionSpawn([]string{
+			"--session", "custom-name",
+			"--command", "echo hello",
+		}); code == 0 {
+			t.Fatalf("expected non-zero exit for invalid custom session name")
+		}
+	})
+
+	if newCalled {
+		t.Fatalf("did not expect tmux session creation when session naming validation fails")
+	}
+	if !strings.Contains(stderr, `invalid --session: must start with "lisa-"`) {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+}
+
 func TestCmdSessionSpawnExecRequiresPromptOrCommand(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origNew := tmuxNewSessionFn

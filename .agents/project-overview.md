@@ -38,7 +38,7 @@ lisa/
 - Hand-rolled flag parsing (no flag library)
 - Machine-readable `--json` is available on `doctor`, `agent build-cmd`, and `session spawn|send|status|monitor|capture`; helper commands (`session name|list|exists|kill|kill-all`) are text-first
 - Session artifacts in `/tmp/` keyed by project hash
-- Release artifacts and package-manager distribution are handled via GoReleaser (Homebrew, Scoop, deb/rpm/apk, archives)
+- Release artifacts and package-manager distribution are handled via GoReleaser (Homebrew, deb/rpm/apk, archives)
 
 ## Breadcrumb System
 

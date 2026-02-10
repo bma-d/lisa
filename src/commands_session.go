@@ -192,6 +192,11 @@ func cmdSessionSpawn(args []string) int {
 		return 1
 	}
 	projectRoot = canonicalProjectRoot(projectRoot)
+	session = strings.TrimSpace(session)
+	if session != "" && !strings.HasPrefix(session, "lisa-") {
+		fmt.Fprintln(os.Stderr, `invalid --session: must start with "lisa-"`)
+		return 1
+	}
 
 	if session == "" {
 		session = generateSessionName(projectRoot, agent, mode, "")

@@ -7,6 +7,7 @@ Standalone Go CLI for orchestrating Claude/Codex agent sessions in tmux.
 - Go 1.21+
 - tmux on `PATH`
 - `claude` and/or `codex` on `PATH`
+- Supported OS: macOS or Linux
 
 ## Run From Source
 
@@ -20,13 +21,6 @@ go run .
 
 ```bash
 brew install bma-d/tap/lisa
-```
-
-### Scoop (Windows)
-
-```powershell
-scoop bucket add bma-d https://github.com/bma-d/scoop-bucket
-scoop install lisa
 ```
 
 ### Debian/Ubuntu (.deb)
