@@ -206,6 +206,12 @@ func TestDoctorReadyRequiresTmuxAndAtLeastOneAgent(t *testing.T) {
 	}
 }
 
+func TestCmdDoctorRejectsUnknownFlags(t *testing.T) {
+	if code := cmdDoctor([]string{"--bogus"}); code == 0 {
+		t.Fatalf("expected non-zero exit for unknown doctor flag")
+	}
+}
+
 func TestDoctorJSONPayloadUsesBuildInfo(t *testing.T) {
 	origVersion := BuildVersion
 	origCommit := BuildCommit
@@ -406,6 +412,45 @@ func TestCmdSessionKillReturnsErrorWhenSessionNotFound(t *testing.T) {
 	}
 }
 
+func TestCmdSessionKillAttemptsTmuxKillBeforeCleanup(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origKill := tmuxKillSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxKillSessionFn = origKill
+	})
+
+	tmuxHasSessionFn = func(session string) bool {
+		return true
+	}
+
+	killCalled := false
+	tmuxKillSessionFn = func(session string) error {
+		killCalled = true
+		return nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-kill-cleanup-order"
+	metaPath := sessionMetaFile(projectRoot, session)
+	if err := os.MkdirAll(metaPath, 0o700); err != nil {
+		t.Fatalf("failed to create blocking meta directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(metaPath, "block"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("failed to create blocking file: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(metaPath)
+	})
+
+	if code := cmdSessionKill([]string{"--session", session, "--project-root", projectRoot}); code == 0 {
+		t.Fatalf("expected non-zero exit when cleanup fails")
+	}
+	if !killCalled {
+		t.Fatalf("expected tmux kill to be attempted before cleanup")
+	}
+}
+
 func TestCmdSessionKillReturnsErrorWhenTmuxKillFails(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origKill := tmuxKillSessionFn
@@ -446,6 +491,46 @@ func TestCmdSessionKillAllReturnsErrorOnPartialFailure(t *testing.T) {
 
 	if code := cmdSessionKillAll([]string{"--project-root", t.TempDir()}); code == 0 {
 		t.Fatalf("expected non-zero exit when any session kill fails")
+	}
+}
+
+func TestCmdSessionKillAllAttemptsKillBeforeCleanup(t *testing.T) {
+	origList := tmuxListSessionsFn
+	origKill := tmuxKillSessionFn
+	t.Cleanup(func() {
+		tmuxListSessionsFn = origList
+		tmuxKillSessionFn = origKill
+	})
+
+	sessionA := "lisa-a"
+	sessionB := "lisa-b"
+	tmuxListSessionsFn = func(projectOnly bool, projectRoot string) ([]string, error) {
+		return []string{sessionA, sessionB}, nil
+	}
+
+	killCalls := map[string]int{}
+	tmuxKillSessionFn = func(session string) error {
+		killCalls[session]++
+		return nil
+	}
+
+	projectRoot := t.TempDir()
+	metaPath := sessionMetaFile(projectRoot, sessionB)
+	if err := os.MkdirAll(metaPath, 0o700); err != nil {
+		t.Fatalf("failed to create blocking meta directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(metaPath, "block"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("failed to create blocking file: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(metaPath)
+	})
+
+	if code := cmdSessionKillAll([]string{"--project-root", projectRoot}); code == 0 {
+		t.Fatalf("expected non-zero exit when cleanup fails for any session")
+	}
+	if killCalls[sessionA] != 1 || killCalls[sessionB] != 1 {
+		t.Fatalf("expected tmux kill attempts for all sessions; calls=%v", killCalls)
 	}
 }
 

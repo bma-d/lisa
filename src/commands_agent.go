@@ -40,8 +40,11 @@ func doctorReady(results []doctorCheck) bool {
 func cmdDoctor(args []string) int {
 	jsonOut := false
 	for _, arg := range args {
-		if arg == "--json" {
+		switch arg {
+		case "--json":
 			jsonOut = true
+		default:
+			return unknownFlagError(arg)
 		}
 	}
 
