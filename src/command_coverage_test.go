@@ -28,6 +28,39 @@ func TestBuildAgentCommandInteractiveVariants(t *testing.T) {
 	}
 }
 
+func TestCmdAgentBuildCmdExecPath(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdAgentBuildCmd([]string{
+			"--agent", "codex",
+			"--mode", "exec",
+			"--prompt", "ship release",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected exec build-cmd success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"agent":"codex"`) || !strings.Contains(stdout, `"mode":"exec"`) {
+		t.Fatalf("expected codex exec JSON payload, got %q", stdout)
+	}
+	if !strings.Contains(stdout, `codex exec 'ship release' --full-auto`) {
+		t.Fatalf("expected codex exec command in payload, got %q", stdout)
+	}
+
+	_, stderr = captureOutput(t, func() {
+		code := cmdAgentBuildCmd([]string{"--agent", "codex", "--mode", "exec"})
+		if code == 0 {
+			t.Fatalf("expected exec build-cmd without prompt to fail")
+		}
+	})
+	if !strings.Contains(stderr, "exec mode requires --prompt") {
+		t.Fatalf("expected missing prompt error, got %q", stderr)
+	}
+}
+
 func TestAgentDisplayNameFormatting(t *testing.T) {
 	if got := agentDisplayName("claude"); got != "Claude" {
 		t.Fatalf("expected Claude display name, got %q", got)
@@ -101,6 +134,46 @@ func TestCmdSessionMonitorTimeoutCSVOutput(t *testing.T) {
 	}
 	if record[4] != "max_polls_exceeded" {
 		t.Fatalf("expected max_polls_exceeded reason, got %q", record[4])
+	}
+}
+
+func TestCmdSessionMonitorRetriesDegradedUntilCompletion(t *testing.T) {
+	origCompute := computeSessionStatusFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origCompute
+	})
+
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		if pollCount == 1 {
+			return sessionStatus{
+				Session:      session,
+				Status:       "idle",
+				SessionState: "degraded",
+			}, nil
+		}
+		return sessionStatus{
+			Session:      session,
+			Status:       "idle",
+			SessionState: "completed",
+		}, nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionMonitor([]string{
+			"--session", "lisa-monitor-retry",
+			"--max-polls", "3",
+			"--poll-interval", "1",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected monitor success after degraded retry, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"finalState":"completed"`) || !strings.Contains(stdout, `"polls":2`) {
+		t.Fatalf("expected completed result after second poll, got %q", stdout)
 	}
 }
 

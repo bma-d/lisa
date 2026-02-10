@@ -75,7 +75,7 @@ func cmdSessionExplain(args []string) int {
 		return 1
 	}
 
-	status, err := computeSessionStatus(session, projectRoot, agentHint, modeHint, true, 0)
+	status, err := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, true, 0)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1

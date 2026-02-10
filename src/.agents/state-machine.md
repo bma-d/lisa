@@ -11,7 +11,7 @@ Related Files: `src/status.go`, `src/types.go`
 
 1. **Pane status snapshot** (`readPaneSnapshot`): prefers a single tmux format query (`pane_dead`, `pane_dead_status`, `pane_current_command`, `pane_pid`) with fallback to per-field reads
 2. **Agent process** (`detectAgentProcess`): BFS walk from pane PID through process tree, matches "claude"/"codex" in command string, returns PID + CPU%; cached between polls via `LISA_PROCESS_SCAN_INTERVAL_SECONDS` (default 8s)
-3. **Output freshness**: MD5 hash of captured pane output compared to last known hash; stale after `LISA_OUTPUT_STALE_SECONDS` (default 240s). Updates are monotonic by capture timestamp so older concurrent polls cannot overwrite newer freshness state.
+3. **Output freshness**: MD5 hash of captured pane output compared to last known hash; stale after `LISA_OUTPUT_STALE_SECONDS` (default 240s). Updates are monotonic by nanosecond capture timestamp so older concurrent polls cannot overwrite newer freshness state.
 4. **Prompt detection** (`looksLikePromptWaiting`): agent-specific regex patterns on last output line
    - Claude: trailing `>` or `›`, or "press enter to send"
    - Codex: `❯` with timestamp pattern, or "tokens used"
@@ -22,6 +22,7 @@ Related Files: `src/status.go`, `src/types.go`
 9. **State lock observability**: lock wait timing in `signals.stateLockWaitMs`, timeout fallback to `state_lock_timeout` classification
 10. **Structured signals**: status payload includes `classificationReason` + `signals` block for observability and debugging
 11. **Process scan errors**: `signals.agentScanError` captures `ps`/scan failures; classification falls back to `degraded` (`agent_scan_error`) when no stronger activity signals exist
+12. **Capture fallback**: when pane capture fails, pane terminal status (`exited`/`crashed`) still takes precedence so completed/crashed sessions are not misclassified as degraded
 
 ## Classification Priority
 

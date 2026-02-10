@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+var computeSessionStatusFn = computeSessionStatus
+
 func cmdSessionStatus(args []string) int {
 	session := ""
 	projectRoot := getPWD()
@@ -67,7 +69,7 @@ func cmdSessionStatus(args []string) int {
 		return 1
 	}
 
-	status, err := computeSessionStatus(session, projectRoot, agentHint, modeHint, full, 0)
+	status, err := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, full, 0)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
@@ -188,13 +190,17 @@ func cmdSessionMonitor(args []string) int {
 	}
 
 	last := sessionStatus{}
+	degradedPolls := 0
 	for poll := 1; poll <= maxPolls; poll++ {
-		status, err := computeSessionStatus(session, projectRoot, agentHint, modeHint, true, poll)
+		status, err := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, true, poll)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			return 1
 		}
 		last = status
+		if status.SessionState == "degraded" {
+			degradedPolls++
+		}
 
 		if verbose {
 			fmt.Fprintf(os.Stderr, "[%s] poll=%d state=%s status=%s active=%q wait=%ds\n",
@@ -207,8 +213,6 @@ func cmdSessionMonitor(args []string) int {
 			reason = "completed"
 		case "crashed":
 			reason = "crashed"
-		case "degraded":
-			reason = "degraded"
 		case "not_found":
 			reason = "not_found"
 		case "stuck":
@@ -265,6 +269,9 @@ func cmdSessionMonitor(args []string) int {
 		ExitReason:  "max_polls_exceeded",
 		Polls:       maxPolls,
 		FinalStatus: last.Status,
+	}
+	if degradedPolls == maxPolls && maxPolls > 0 {
+		result.ExitReason = "degraded_max_polls_exceeded"
 	}
 	if jsonOut {
 		writeJSON(result)

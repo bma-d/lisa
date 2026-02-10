@@ -114,7 +114,7 @@ lisa session kill-all                      # kill all lisa sessions
 
 ## Exit codes
 
-- `session monitor`: `0` on `completed`/`waiting_input`, `2` on `crashed`/`stuck`/`degraded`/`not_found`/timeout.
+- `session monitor`: `0` on `completed`/`waiting_input`, `2` on `crashed`/`stuck`/`not_found`/timeout.
 - `session status`: always returns a status payload unless argument parsing fails.
 
 ## Build from source

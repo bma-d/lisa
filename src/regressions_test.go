@@ -313,6 +313,59 @@ func TestComputeSessionStatusUsesHeartbeatWhenAgentUndetected(t *testing.T) {
 	}
 }
 
+func TestComputeSessionStatusDoesNotOverwriteNewerOutputTimestamp(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	origNow := nowFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+		nowFn = origNow
+	})
+
+	baseNow := time.Unix(1_700_000_000, 500_000_000)
+	nowFn = func() time.Time { return baseNow }
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "new-output", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tzsh\t123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 0, 0, nil }
+
+	projectRoot := t.TempDir()
+	session := "lisa-nanos-order"
+	oldHash := md5Hex8("old-output")
+	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
+		LastOutputHash:    oldHash,
+		LastOutputAt:      baseNow.Unix(),
+		LastOutputAtNanos: baseNow.UnixNano() + 200,
+	}); err != nil {
+		t.Fatalf("failed to seed state: %v", err)
+	}
+
+	if _, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 4); err != nil {
+		t.Fatalf("computeSessionStatus failed: %v", err)
+	}
+
+	state := loadSessionState(sessionStateFile(projectRoot, session))
+	if state.LastOutputHash != oldHash {
+		t.Fatalf("expected newer timestamp guard to preserve old hash, got %q", state.LastOutputHash)
+	}
+}
+
 func TestComputeSessionStatusInteractiveUsesSessionDoneMarker(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn
@@ -516,6 +569,114 @@ func TestDetectAgentProcessReturnsZeroCPUWhenNoMatch(t *testing.T) {
 	}
 	if pid != 0 || cpu != 0.0 {
 		t.Fatalf("expected no match to return pid=0 cpu=0, got pid=%d cpu=%f", pid, cpu)
+	}
+}
+
+func TestDetectAgentProcessUsesSharedProcessListCache(t *testing.T) {
+	origList := listProcessesFn
+	origCacheMS := os.Getenv("LISA_PROCESS_LIST_CACHE_MS")
+	t.Cleanup(func() {
+		listProcessesFn = origList
+		_ = os.Setenv("LISA_PROCESS_LIST_CACHE_MS", origCacheMS)
+	})
+
+	if err := os.Setenv("LISA_PROCESS_LIST_CACHE_MS", "1000"); err != nil {
+		t.Fatalf("failed to set process cache env: %v", err)
+	}
+	processCache.mu.Lock()
+	processCache.fnPtr = 0
+	processCache.atNanos = 0
+	processCache.procs = nil
+	processCache.mu.Unlock()
+
+	listCalls := 0
+	listProcessesFn = func() ([]processInfo, error) {
+		listCalls++
+		return []processInfo{
+			{PID: 10, PPID: 1, CPU: 0.8, Command: "codex exec"},
+		}, nil
+	}
+
+	for i := 0; i < 2; i++ {
+		pid, _, err := detectAgentProcess(1, "codex")
+		if err != nil {
+			t.Fatalf("unexpected detectAgentProcess error: %v", err)
+		}
+		if pid != 10 {
+			t.Fatalf("expected cached process lookup to find pid 10, got %d", pid)
+		}
+	}
+	if listCalls != 1 {
+		t.Fatalf("expected one process table read due to cache, got %d", listCalls)
+	}
+}
+
+func TestDetectAgentProcessHonorsCustomMatchEnv(t *testing.T) {
+	origList := listProcessesFn
+	origMatch := os.Getenv("LISA_AGENT_PROCESS_MATCH_CODEX")
+	t.Cleanup(func() {
+		listProcessesFn = origList
+		_ = os.Setenv("LISA_AGENT_PROCESS_MATCH_CODEX", origMatch)
+	})
+
+	if err := os.Setenv("LISA_AGENT_PROCESS_MATCH_CODEX", "wrapper-codex"); err != nil {
+		t.Fatalf("failed to set custom match env: %v", err)
+	}
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 22, PPID: 1, CPU: 1.3, Command: "wrapper-codex --task"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 22 {
+		t.Fatalf("expected custom matcher to detect wrapper process, got pid=%d", pid)
+	}
+}
+
+func TestDetectAgentProcessDoesNotCacheErrors(t *testing.T) {
+	origList := listProcessesFn
+	origCacheMS := os.Getenv("LISA_PROCESS_LIST_CACHE_MS")
+	t.Cleanup(func() {
+		listProcessesFn = origList
+		_ = os.Setenv("LISA_PROCESS_LIST_CACHE_MS", origCacheMS)
+	})
+
+	if err := os.Setenv("LISA_PROCESS_LIST_CACHE_MS", "1000"); err != nil {
+		t.Fatalf("failed to set process cache env: %v", err)
+	}
+	processCache.mu.Lock()
+	processCache.fnPtr = 0
+	processCache.atNanos = 0
+	processCache.procs = nil
+	processCache.mu.Unlock()
+
+	listCalls := 0
+	listProcessesFn = func() ([]processInfo, error) {
+		listCalls++
+		if listCalls == 1 {
+			return nil, errors.New("ps failed")
+		}
+		return []processInfo{
+			{PID: 10, PPID: 1, CPU: 0.8, Command: "codex exec"},
+		}, nil
+	}
+
+	if _, _, err := detectAgentProcess(1, "codex"); err == nil {
+		t.Fatalf("expected first process lookup to fail")
+	}
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("expected second process lookup to retry and succeed, got %v", err)
+	}
+	if pid != 10 {
+		t.Fatalf("expected retry path to return pid 10, got %d", pid)
+	}
+	if listCalls != 2 {
+		t.Fatalf("expected two list calls when first fails, got %d", listCalls)
 	}
 }
 
@@ -1404,7 +1565,7 @@ func TestCmdSessionMonitorRejectsNonLiteralBooleanStopOnWaiting(t *testing.T) {
 	}
 }
 
-func TestCmdSessionMonitorTreatsDegradedAsTerminal(t *testing.T) {
+func TestCmdSessionMonitorRetriesDegradedUntilTimeout(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn
 	origPaneStatus := tmuxPaneStatusFn
@@ -1445,14 +1606,14 @@ func TestCmdSessionMonitorTreatsDegradedAsTerminal(t *testing.T) {
 
 	stdout, _ := captureOutput(t, func() {
 		if code := cmdSessionMonitor([]string{"--session", "lisa-monitor-degraded", "--max-polls", "1", "--poll-interval", "1", "--json"}); code != 2 {
-			t.Fatalf("expected exit code 2 for degraded monitor stop, got %d", code)
+			t.Fatalf("expected exit code 2 for monitor timeout, got %d", code)
 		}
 	})
-	if !strings.Contains(stdout, `"exitReason":"degraded"`) {
-		t.Fatalf("expected degraded exit reason, got %q", stdout)
+	if !strings.Contains(stdout, `"exitReason":"degraded_max_polls_exceeded"`) {
+		t.Fatalf("expected degraded timeout exit reason, got %q", stdout)
 	}
-	if !strings.Contains(stdout, `"finalState":"degraded"`) {
-		t.Fatalf("expected degraded final state, got %q", stdout)
+	if !strings.Contains(stdout, `"finalState":"timeout"`) {
+		t.Fatalf("expected timeout final state, got %q", stdout)
 	}
 }
 
@@ -1673,6 +1834,14 @@ func TestComputeSessionStatusDegradesOnTmuxReadFailures(t *testing.T) {
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
 		return "", errors.New("missing")
 	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tzsh\t123", nil
+		default:
+			return "", nil
+		}
+	}
 	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
 		return "", errors.New("capture failed")
 	}
@@ -1690,6 +1859,9 @@ func TestComputeSessionStatusDegradesOnTmuxReadFailures(t *testing.T) {
 	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
 		return "output", nil
 	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		return "", errors.New("combined snapshot failed")
+	}
 	tmuxPaneStatusFn = func(session string) (string, error) {
 		return "", errors.New("pane status failed")
 	}
@@ -1704,11 +1876,10 @@ func TestComputeSessionStatusDegradesOnTmuxReadFailures(t *testing.T) {
 		t.Fatalf("expected tmux snapshot error signal, got %q", status.Signals.TMUXReadError)
 	}
 
-	tmuxPaneStatusFn = func(session string) (string, error) {
-		return "alive", nil
-	}
 	tmuxDisplayFn = func(session, format string) (string, error) {
 		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tzsh\tnot-a-number", nil
 		case "#{pane_current_command}":
 			return "zsh", nil
 		case "#{pane_pid}":
@@ -1729,6 +1900,41 @@ func TestComputeSessionStatusDegradesOnTmuxReadFailures(t *testing.T) {
 	}
 	if !strings.Contains(status.Signals.TMUXReadError, "not-a-number") {
 		t.Fatalf("expected pane pid parse error signal, got %q", status.Signals.TMUXReadError)
+	}
+}
+
+func TestComputeSessionStatusUsesPaneTerminalStateWhenCaptureFails(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "1\t0\tzsh\t123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "", errors.New("capture failed")
+	}
+
+	status, err := computeSessionStatus("lisa-pane-terminal", t.TempDir(), "auto", "auto", false, 1)
+	if err != nil {
+		t.Fatalf("expected terminal payload when capture fails on exited pane, got error: %v", err)
+	}
+	if status.SessionState != "completed" || status.ClassificationReason != "pane_exited_zero" {
+		t.Fatalf("expected completed pane exit classification, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
 	}
 }
 

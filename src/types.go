@@ -10,6 +10,7 @@ const (
 	defaultEventsMaxBytes      = 1_000_000
 	defaultEventsMaxLines      = 2000
 	defaultProcessScanInterval = 8
+	defaultProcessListCacheMS  = 500
 	defaultCmdTimeoutSeconds   = 20
 	defaultTmuxWidth           = 220
 	defaultTmuxHeight          = 60
@@ -35,6 +36,7 @@ type sessionState struct {
 	HasEverBeenActive         bool    `json:"hasEverBeenActive"`
 	LastOutputHash            string  `json:"lastOutputHash"`
 	LastOutputAt              int64   `json:"lastOutputAt"`
+	LastOutputAtNanos         int64   `json:"lastOutputAtNanos,omitempty"`
 	LastAgentPID              int     `json:"lastAgentPid,omitempty"`
 	LastAgentProbeAt          int64   `json:"lastAgentProbeAt,omitempty"`
 	LastAgentCPU              float64 `json:"lastAgentCpu,omitempty"`

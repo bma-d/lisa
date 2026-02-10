@@ -39,6 +39,14 @@ Spawn path now hard-fails before session creation if heartbeat artifact path can
 
 `detectAgentProcess()`: given pane PID, does BFS through process tree (`ps -axo pid=,ppid=,%cpu=,command=`), finds child process matching agent name. Returns best match by CPU usage; no-match returns `(0, 0)` and `ps` failures return an error surfaced via `signals.agentScanError`.
 
+Process-table reads are shared through a short-lived cache (`LISA_PROCESS_LIST_CACHE_MS`, default 500ms) to reduce repeated full `ps` scans across concurrent status polls.
+Cache stores successful scans only; failed scans are not cached so status polling retries `ps` immediately on the next probe.
+
+Process matching supports defaults (`claude`/`anthropic` for Claude sessions, `codex`/`openai` for Codex sessions) plus optional custom substrings via:
+- `LISA_AGENT_PROCESS_MATCH` (applies to both agents)
+- `LISA_AGENT_PROCESS_MATCH_CLAUDE`
+- `LISA_AGENT_PROCESS_MATCH_CODEX`
+
 ## Mocking
 
 All key functions have `var fooFn = foo` pattern for test substitution:

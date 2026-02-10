@@ -3,9 +3,11 @@ package app
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,6 +24,14 @@ var tmuxDisplayFn = tmuxDisplay
 var tmuxPaneStatusFn = tmuxPaneStatus
 var detectAgentProcessFn = detectAgentProcess
 var listProcessesFn = listProcesses
+var listProcessesCachedFn = listProcessesCached
+
+var processCache = struct {
+	mu      sync.Mutex
+	fnPtr   uintptr
+	atNanos int64
+	procs   []processInfo
+}{}
 
 func tmuxNewSession(session, projectRoot, agent, mode string, width, height int) error {
 	_, err := runCmd("tmux", "new-session", "-d", "-s", session,
@@ -210,7 +220,7 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 	if panePID <= 0 {
 		return 0, 0, nil
 	}
-	procs, err := listProcessesFn()
+	procs, err := listProcessesCachedFn()
 	if err != nil {
 		return 0, 0, fmt.Errorf("process scan failed: %w", err)
 	}
@@ -221,10 +231,7 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 
 	queue := []int{panePID}
 	seen := map[int]bool{}
-	needle := "claude"
-	if agent == "codex" {
-		needle = "codex"
-	}
+	needles := agentProcessNeedles(agent)
 
 	bestPID := 0
 	bestCPU := -1.0
@@ -238,7 +245,7 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 		for _, child := range children[cur] {
 			queue = append(queue, child.PID)
 			cmdLower := strings.ToLower(child.Command)
-			if strings.Contains(cmdLower, needle) && !strings.Contains(cmdLower, "grep") {
+			if matchesAnyNeedle(cmdLower, needles) && !strings.Contains(cmdLower, "grep") {
 				if bestPID == 0 || child.CPU > bestCPU {
 					bestCPU = child.CPU
 					bestPID = child.PID
@@ -250,6 +257,100 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 		return 0, 0, nil
 	}
 	return bestPID, bestCPU, nil
+}
+
+func listProcessesCached() ([]processInfo, error) {
+	cacheMS := getIntEnv("LISA_PROCESS_LIST_CACHE_MS", defaultProcessListCacheMS)
+	if cacheMS <= 0 {
+		cacheMS = defaultProcessListCacheMS
+	}
+	nowNanos := time.Now().UnixNano()
+	ttlNanos := int64(cacheMS) * int64(time.Millisecond)
+	currentFnPtr := reflect.ValueOf(listProcessesFn).Pointer()
+
+	processCache.mu.Lock()
+	if processCache.fnPtr == currentFnPtr && processCache.atNanos > 0 && (nowNanos-processCache.atNanos) < ttlNanos {
+		procs := make([]processInfo, len(processCache.procs))
+		copy(procs, processCache.procs)
+		processCache.mu.Unlock()
+		return procs, nil
+	}
+	processCache.mu.Unlock()
+
+	procs, err := listProcessesFn()
+	if err != nil {
+		processCache.mu.Lock()
+		processCache.fnPtr = currentFnPtr
+		processCache.atNanos = 0
+		processCache.procs = nil
+		processCache.mu.Unlock()
+		return nil, err
+	}
+
+	processCache.mu.Lock()
+	processCache.fnPtr = currentFnPtr
+	processCache.atNanos = nowNanos
+	copied := make([]processInfo, len(procs))
+	copy(copied, procs)
+	processCache.procs = copied
+	processCache.mu.Unlock()
+	return procs, nil
+}
+
+func agentProcessNeedles(agent string) []string {
+	agent = strings.ToLower(strings.TrimSpace(agent))
+	needles := []string{}
+	switch agent {
+	case "codex":
+		needles = append(needles, "codex", "openai")
+	default:
+		needles = append(needles, "claude", "anthropic")
+	}
+
+	needles = append(needles, parseNeedleEnv("LISA_AGENT_PROCESS_MATCH")...)
+	switch agent {
+	case "codex":
+		needles = append(needles, parseNeedleEnv("LISA_AGENT_PROCESS_MATCH_CODEX")...)
+	default:
+		needles = append(needles, parseNeedleEnv("LISA_AGENT_PROCESS_MATCH_CLAUDE")...)
+	}
+
+	out := make([]string, 0, len(needles))
+	seen := map[string]bool{}
+	for _, n := range needles {
+		n = strings.ToLower(strings.TrimSpace(n))
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
+}
+
+func parseNeedleEnv(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func matchesAnyNeedle(command string, needles []string) bool {
+	for _, needle := range needles {
+		if needle != "" && strings.Contains(command, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func listProcesses() ([]processInfo, error) {

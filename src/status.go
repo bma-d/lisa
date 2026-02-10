@@ -28,6 +28,7 @@ var (
 	activeTaskIgnorePrefixes = []string{"$", ">", "To get started", "Usage:", "Error:", "warning:", "note:"}
 	activeTaskPatterns       = []*regexp.Regexp{activeTaskKeywordRe, activeTaskCurrentRe, activeTaskActiveRe}
 )
+var nowFn = time.Now
 
 type sessionCompletionMarker struct {
 	Seen     bool
@@ -85,9 +86,34 @@ func degradedSessionStatus(status sessionStatus, reason string, err error) sessi
 	return status
 }
 
+func applyTerminalPaneStatus(status sessionStatus, paneStatus string) (sessionStatus, bool) {
+	switch {
+	case strings.HasPrefix(paneStatus, "crashed:"):
+		status.Status = "idle"
+		status.SessionState = "crashed"
+		status.WaitEstimate = 0
+		status.ClassificationReason = "pane_crashed"
+		return status, true
+	case strings.HasPrefix(paneStatus, "exited:"):
+		exitCode := strings.TrimPrefix(paneStatus, "exited:")
+		status.Status = "idle"
+		status.WaitEstimate = 0
+		if exitCode == "0" {
+			status.SessionState = "completed"
+			status.ClassificationReason = "pane_exited_zero"
+		} else {
+			status.SessionState = "crashed"
+			status.ClassificationReason = "pane_exited_nonzero"
+		}
+		return status, true
+	default:
+		return status, false
+	}
+}
+
 func appendStatusEvent(projectRoot, session, eventType string, poll int, status sessionStatus) error {
 	return appendSessionEventFn(projectRoot, session, sessionEvent{
-		At:      time.Now().UTC().Format(time.RFC3339Nano),
+		At:      nowFn().UTC().Format(time.RFC3339Nano),
 		Type:    eventType,
 		Session: session,
 		State:   status.SessionState,
@@ -149,20 +175,6 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		status.Signals.RunID = strings.TrimSpace(meta.RunID)
 	}
 
-	capture, err := tmuxCapturePaneFn(session, 220)
-	if err != nil {
-		status = degradedSessionStatus(status, "tmux_capture_error", err)
-		if shouldAppendImmediateReadErrorEvent(pollCount) {
-			if eventErr := appendStatusEvent(projectRoot, session, "transition", pollCount, status); eventErr != nil {
-				status.Signals.EventsWriteError = eventErr.Error()
-			}
-		}
-		return status, nil
-	}
-	capture = filterInputBox(capture)
-	capture = strings.Join(trimLines(capture), "\n")
-	captureObservedAt := time.Now().Unix()
-
 	paneStatus, paneCommand, panePIDText, err := readPaneSnapshot(session)
 	if err != nil {
 		status = degradedSessionStatus(status, "tmux_snapshot_error", err)
@@ -175,6 +187,25 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	}
 	status.PaneStatus = paneStatus
 	status.PaneCommand = paneCommand
+
+	capture, err := tmuxCapturePaneFn(session, 220)
+	if err != nil {
+		status.Signals.TMUXReadError = err.Error()
+		if terminalStatus, terminal := applyTerminalPaneStatus(status, paneStatus); terminal {
+			status = terminalStatus
+		} else {
+			status = degradedSessionStatus(status, "tmux_capture_error", err)
+		}
+		if shouldAppendImmediateReadErrorEvent(pollCount) {
+			if eventErr := appendStatusEvent(projectRoot, session, "transition", pollCount, status); eventErr != nil {
+				status.Signals.EventsWriteError = eventErr.Error()
+			}
+		}
+		return status, nil
+	}
+	capture = filterInputBox(capture)
+	capture = strings.Join(trimLines(capture), "\n")
+	captureObservedAtNanos := nowFn().UnixNano()
 
 	statePath := sessionStateFile(projectRoot, session)
 	stateHint, stateHintErr := loadSessionStateWithError(statePath)
@@ -215,7 +246,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			return status, nil
 		}
 	}
-	now := time.Now().Unix()
+	now := nowFn().Unix()
 	processScanInterval := getIntEnv("LISA_PROCESS_SCAN_INTERVAL_SECONDS", defaultProcessScanInterval)
 	if processScanInterval <= 0 {
 		processScanInterval = defaultProcessScanInterval
@@ -263,17 +294,26 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			state.LastAgentProbeAt = now
 		}
 
+		stateOutputAtNanos := state.LastOutputAtNanos
+		if stateOutputAtNanos == 0 && state.LastOutputAt > 0 {
+			stateOutputAtNanos = state.LastOutputAt * int64(time.Second)
+		}
+
 		hash := md5Hex8(capture)
 		if hash != "" && hash != state.LastOutputHash {
-			if captureObservedAt >= state.LastOutputAt {
+			if captureObservedAtNanos > stateOutputAtNanos {
 				state.LastOutputHash = hash
-				state.LastOutputAt = captureObservedAt
+				state.LastOutputAtNanos = captureObservedAtNanos
+				state.LastOutputAt = captureObservedAtNanos / int64(time.Second)
+				stateOutputAtNanos = captureObservedAtNanos
 			}
 		}
-		if state.LastOutputAt == 0 {
-			state.LastOutputAt = captureObservedAt
+		if stateOutputAtNanos == 0 {
+			stateOutputAtNanos = captureObservedAtNanos
+			state.LastOutputAtNanos = stateOutputAtNanos
+			state.LastOutputAt = stateOutputAtNanos / int64(time.Second)
 		}
-		outputAge := int(time.Now().Unix() - state.LastOutputAt)
+		outputAge := int((nowFn().UnixNano() - stateOutputAtNanos) / int64(time.Second))
 		if outputAge < 0 {
 			outputAge = 0
 		}
@@ -398,7 +438,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			eventType = "transition"
 		}
 		pendingEvent = sessionEvent{
-			At:      time.Now().UTC().Format(time.RFC3339Nano),
+			At:      nowFn().UTC().Format(time.RFC3339Nano),
 			Type:    eventType,
 			Session: session,
 			State:   status.SessionState,
