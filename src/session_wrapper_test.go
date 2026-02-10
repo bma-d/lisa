@@ -638,6 +638,43 @@ func TestReadSessionEventTailHandlesLargeLine(t *testing.T) {
 	}
 }
 
+func TestReadSessionEventTailNormalizesNonPositiveLimit(t *testing.T) {
+	projectRoot := t.TempDir()
+	session := "lisa-events-limit-zero"
+	if err := appendSessionEvent(projectRoot, session, sessionEvent{
+		At:      time.Now().UTC().Format(time.RFC3339Nano),
+		Type:    "snapshot",
+		Session: session,
+		State:   "in_progress",
+		Status:  "active",
+		Reason:  "r1",
+		Poll:    1,
+		Signals: statusSignals{},
+	}); err != nil {
+		t.Fatalf("appendSessionEvent failed: %v", err)
+	}
+	if err := appendSessionEvent(projectRoot, session, sessionEvent{
+		At:      time.Now().UTC().Format(time.RFC3339Nano),
+		Type:    "snapshot",
+		Session: session,
+		State:   "in_progress",
+		Status:  "active",
+		Reason:  "r2",
+		Poll:    2,
+		Signals: statusSignals{},
+	}); err != nil {
+		t.Fatalf("appendSessionEvent failed: %v", err)
+	}
+
+	tail, err := readSessionEventTail(projectRoot, session, 0)
+	if err != nil {
+		t.Fatalf("expected non-positive limit to be handled, got %v", err)
+	}
+	if len(tail.Events) != 1 {
+		t.Fatalf("expected normalized limit to return one event, got %d", len(tail.Events))
+	}
+}
+
 func TestAppendSessionEventTrimsOversizedEventLog(t *testing.T) {
 	origMaxBytes := os.Getenv("LISA_EVENTS_MAX_BYTES")
 	origMaxLines := os.Getenv("LISA_EVENTS_MAX_LINES")

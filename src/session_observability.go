@@ -195,6 +195,9 @@ func trimSessionEventFile(path string) error {
 }
 
 func readSessionEventTail(projectRoot, session string, max int) (sessionEventTail, error) {
+	if max <= 0 {
+		max = 1
+	}
 	path := sessionEventsFile(projectRoot, session)
 	f, err := os.Open(path)
 	if err != nil {
