@@ -263,8 +263,23 @@ func looksLikePromptWaiting(agent, capture string) bool {
 	if len(lines) == 0 {
 		return false
 	}
-	last := strings.TrimSpace(lines[len(lines)-1])
-	if last == "" {
+
+	tail := make([]string, 0, 8)
+	for i := len(lines) - 1; i >= 0 && len(tail) < 8; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		tail = append(tail, line)
+	}
+	if len(tail) == 0 {
+		return false
+	}
+	last := tail[0]
+	lowerTail := strings.ToLower(strings.Join(tail, "\n"))
+
+	// If recent output still looks like active work, avoid classifying as waiting.
+	if regexp.MustCompile(`(?i)\b(working|running|checking|planning|writing|editing|creating|fixing|executing|reviewing|loading|reading|searching|parsing|building|compiling|installing)\b`).MatchString(last) {
 		return false
 	}
 
@@ -272,7 +287,7 @@ func looksLikePromptWaiting(agent, capture string) bool {
 		if regexp.MustCompile(`❯\s*([0-9]+[smh]\s*)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}\s*$`).MatchString(last) {
 			return true
 		}
-		if strings.Contains(strings.ToLower(capture), "tokens used") {
+		if strings.Contains(lowerTail, "tokens used") && strings.Contains(last, "❯") {
 			return true
 		}
 	}
@@ -281,7 +296,7 @@ func looksLikePromptWaiting(agent, capture string) bool {
 		if strings.HasSuffix(last, ">") || strings.HasSuffix(last, "›") {
 			return true
 		}
-		if strings.Contains(strings.ToLower(capture), "press enter to send") {
+		if strings.Contains(lowerTail, "press enter to send") {
 			return true
 		}
 	}

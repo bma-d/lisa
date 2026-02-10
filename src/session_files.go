@@ -176,20 +176,35 @@ func loadSessionMeta(projectRoot, session string) (sessionMeta, error) {
 
 func cleanupSessionArtifacts(projectRoot, session string) error {
 	var errs []string
-	files := []string{
+	files := make(map[string]struct{}, 8)
+	for _, path := range []string{
 		sessionStateFile(projectRoot, session),
 		sessionMetaFile(projectRoot, session),
 		sessionOutputFile(projectRoot, session),
+	} {
+		files[path] = struct{}{}
 	}
-	for _, path := range files {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+
+	sid := sessionArtifactID(session)
+	globPatterns := []string{
+		fmt.Sprintf("/tmp/.lisa-*-session-%s-state.json", sid),
+		fmt.Sprintf("/tmp/.lisa-*-session-%s-meta.json", sid),
+		fmt.Sprintf("/tmp/lisa-*-output-%s.txt", sid),
+		sessionCommandScriptPattern(session),
+	}
+	for _, pattern := range globPatterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
 			errs = append(errs, err.Error())
+			continue
+		}
+		for _, m := range matches {
+			files[m] = struct{}{}
 		}
 	}
 
-	matches, _ := filepath.Glob(sessionCommandScriptPattern(session))
-	for _, m := range matches {
-		if err := os.Remove(m); err != nil && !errors.Is(err, os.ErrNotExist) {
+	for path := range files {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err.Error())
 		}
 	}

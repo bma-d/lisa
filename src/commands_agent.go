@@ -13,6 +13,16 @@ type doctorCheck struct {
 	Error     string `json:"error,omitempty"`
 }
 
+func doctorJSONPayload(allOK bool, results []doctorCheck) map[string]any {
+	return map[string]any{
+		"ok":      allOK,
+		"checks":  results,
+		"version": BuildVersion,
+		"commit":  BuildCommit,
+		"date":    BuildDate,
+	}
+}
+
 func doctorReady(results []doctorCheck) bool {
 	tmuxOK := false
 	agentOK := false
@@ -48,12 +58,7 @@ func cmdDoctor(args []string) int {
 	allOK := doctorReady(results)
 
 	if jsonOut {
-		payload := map[string]any{
-			"ok":      allOK,
-			"checks":  results,
-			"version": "1.0.0",
-		}
-		writeJSON(payload)
+		writeJSON(doctorJSONPayload(allOK, results))
 		return boolExit(allOK)
 	}
 

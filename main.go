@@ -26,6 +26,7 @@ func shouldPrintVersion(args []string) bool {
 }
 
 func main() {
+	app.SetBuildInfo(version, commit, date)
 	args := os.Args[1:]
 	if shouldPrintVersion(args) {
 		fmt.Printf("lisa %s (commit %s, built %s)\n", version, commit, date)

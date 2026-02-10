@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildFallbackScriptBodyPreservesExecCompletionMarkerOnFailure(t *testing.T) {
@@ -28,6 +29,44 @@ func TestBuildFallbackScriptBodyLeavesNonExecCommandsUntouched(t *testing.T) {
 	}
 }
 
+func TestLooksLikePromptWaitingIgnoresHistoricalMarkers(t *testing.T) {
+	codexCapture := strings.Join([]string{
+		"previous output",
+		"tokens used: 1234",
+		"running tests now",
+	}, "\n")
+	if looksLikePromptWaiting("codex", codexCapture) {
+		t.Fatalf("expected codex historical marker to not force waiting state")
+	}
+
+	claudeCapture := strings.Join([]string{
+		"previous output",
+		"press enter to send",
+		"writing fix for parser",
+	}, "\n")
+	if looksLikePromptWaiting("claude", claudeCapture) {
+		t.Fatalf("expected claude historical marker to not force waiting state")
+	}
+}
+
+func TestLooksLikePromptWaitingDetectsRecentPromptContext(t *testing.T) {
+	codexCapture := strings.Join([]string{
+		"tokens used: 4321",
+		"❯ 12:34:56",
+	}, "\n")
+	if !looksLikePromptWaiting("codex", codexCapture) {
+		t.Fatalf("expected codex prompt context to be detected as waiting")
+	}
+
+	claudeCapture := strings.Join([]string{
+		"press enter to send",
+		">",
+	}, "\n")
+	if !looksLikePromptWaiting("claude", claudeCapture) {
+		t.Fatalf("expected claude prompt context to be detected as waiting")
+	}
+}
+
 func TestTailLinesKeepsNewestOutput(t *testing.T) {
 	values := make([]string, 300)
 	for i := 0; i < 300; i++ {
@@ -43,6 +82,25 @@ func TestTailLinesKeepsNewestOutput(t *testing.T) {
 	}
 	if tail[len(tail)-1] != values[len(values)-1] {
 		t.Fatalf("expected newest retained line to be %q, got %q", values[len(values)-1], tail[len(tail)-1])
+	}
+}
+
+func TestDetectAgentProcessReturnsMatchEvenWhenCPUIsZero(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 10, PPID: 1, CPU: 0.0, Command: "codex exec 'task'"},
+			{PID: 11, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, cpu := detectAgentProcess(1, "codex")
+	if pid != 10 || cpu != 0.0 {
+		t.Fatalf("expected codex PID with zero CPU to be selected, got pid=%d cpu=%f", pid, cpu)
 	}
 }
 
@@ -148,6 +206,30 @@ func TestDoctorReadyRequiresTmuxAndAtLeastOneAgent(t *testing.T) {
 	}
 }
 
+func TestDoctorJSONPayloadUsesBuildInfo(t *testing.T) {
+	origVersion := BuildVersion
+	origCommit := BuildCommit
+	origDate := BuildDate
+	t.Cleanup(func() {
+		BuildVersion = origVersion
+		BuildCommit = origCommit
+		BuildDate = origDate
+	})
+
+	SetBuildInfo("v9.9.9", "abc123", "2026-02-10T00:00:00Z")
+	payload := doctorJSONPayload(true, nil)
+
+	if got := payload["version"]; got != "v9.9.9" {
+		t.Fatalf("expected version from build info, got %v", got)
+	}
+	if got := payload["commit"]; got != "abc123" {
+		t.Fatalf("expected commit from build info, got %v", got)
+	}
+	if got := payload["date"]; got != "2026-02-10T00:00:00Z" {
+		t.Fatalf("expected date from build info, got %v", got)
+	}
+}
+
 func TestBuildAgentCommandRejectsInvalidAgentAndMode(t *testing.T) {
 	if _, err := buildAgentCommand("typo", "exec", "hello", ""); err == nil {
 		t.Fatalf("expected invalid agent to return error")
@@ -201,6 +283,51 @@ func TestCleanupSessionArtifactsDoesNotExpandSessionWildcards(t *testing.T) {
 
 	if !fileExists(sentinelOne) || !fileExists(sentinelTwo) {
 		t.Fatalf("wildcard session cleanup removed unrelated command files")
+	}
+}
+
+func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifacts(t *testing.T) {
+	base := t.TempDir()
+	projectOne := filepath.Join(base, "one")
+	projectTwo := filepath.Join(base, "two")
+	if err := os.MkdirAll(projectOne, 0o755); err != nil {
+		t.Fatalf("failed to create projectOne: %v", err)
+	}
+	if err := os.MkdirAll(projectTwo, 0o755); err != nil {
+		t.Fatalf("failed to create projectTwo: %v", err)
+	}
+
+	session := "lisa-cross-project-cleanup"
+	metaPath := sessionMetaFile(projectTwo, session)
+	statePath := sessionStateFile(projectTwo, session)
+	outputPath := sessionOutputFile(projectTwo, session)
+	scriptPath := sessionCommandScriptPath(session, time.Now().UnixNano())
+
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "exec",
+		ProjectRoot: projectTwo,
+	}
+	if err := saveSessionMeta(projectTwo, session, meta); err != nil {
+		t.Fatalf("failed to save metadata: %v", err)
+	}
+	if err := saveSessionState(statePath, sessionState{PollCount: 2}); err != nil {
+		t.Fatalf("failed to save state: %v", err)
+	}
+	if err := os.WriteFile(outputPath, []byte("output"), 0o600); err != nil {
+		t.Fatalf("failed to save output: %v", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\n"), 0o700); err != nil {
+		t.Fatalf("failed to write script: %v", err)
+	}
+
+	if err := cleanupSessionArtifacts(projectOne, session); err != nil {
+		t.Fatalf("cleanup returned error: %v", err)
+	}
+
+	if fileExists(metaPath) || fileExists(statePath) || fileExists(outputPath) || fileExists(scriptPath) {
+		t.Fatalf("expected all artifacts to be removed across project hashes")
 	}
 }
 

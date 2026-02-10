@@ -17,6 +17,7 @@ var tmuxCapturePaneFn = tmuxCapturePane
 var tmuxDisplayFn = tmuxDisplay
 var tmuxPaneStatusFn = tmuxPaneStatus
 var detectAgentProcessFn = detectAgentProcess
+var listProcessesFn = listProcesses
 
 func tmuxNewSession(session, projectRoot, agent, mode string, width, height int) error {
 	_, err := runCmd("tmux", "new-session", "-d", "-s", session,
@@ -189,7 +190,7 @@ func detectAgentProcess(panePID int, agent string) (int, float64) {
 	if panePID <= 0 {
 		return 0, 0
 	}
-	procs, err := listProcesses()
+	procs, err := listProcessesFn()
 	if err != nil {
 		return 0, 0
 	}
@@ -206,7 +207,7 @@ func detectAgentProcess(panePID int, agent string) (int, float64) {
 	}
 
 	bestPID := 0
-	bestCPU := 0.0
+	bestCPU := -1.0
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -218,7 +219,7 @@ func detectAgentProcess(panePID int, agent string) (int, float64) {
 			queue = append(queue, child.PID)
 			cmdLower := strings.ToLower(child.Command)
 			if strings.Contains(cmdLower, needle) && !strings.Contains(cmdLower, "grep") {
-				if child.CPU > bestCPU {
+				if bestPID == 0 || child.CPU > bestCPU {
 					bestCPU = child.CPU
 					bestPID = child.PID
 				}
