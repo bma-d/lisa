@@ -32,6 +32,20 @@ func TestBuildFallbackScriptBodyLeavesNonExecCommandsUntouched(t *testing.T) {
 	}
 }
 
+func TestWrapExecCommandTemporarilyDisablesErrexit(t *testing.T) {
+	wrapped := wrapExecCommand("false")
+	for _, token := range []string{
+		"case $- in *e*) __lisa_had_errexit=1;; esac",
+		"set +e;",
+		execDonePrefix,
+		"then set -e; fi",
+	} {
+		if !strings.Contains(wrapped, token) {
+			t.Fatalf("expected wrapped exec command to contain %q, got %q", token, wrapped)
+		}
+	}
+}
+
 func captureOutput(t *testing.T, fn func()) (string, string) {
 	t.Helper()
 
@@ -156,6 +170,65 @@ func TestComputeSessionStatusDoesNotTreatTagLikeClaudeTailAsWaiting(t *testing.T
 	}
 	if status.SessionState != "in_progress" || status.Status != "active" {
 		t.Fatalf("expected busy claude session to remain active, got state=%s status=%s", status.SessionState, status.Status)
+	}
+}
+
+func TestComputeSessionStatusTreatsPwshPaneAsShell(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	capture := "no new output"
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return capture, nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) {
+		return "alive", nil
+	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "pwsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		return "", errors.New("missing")
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
+		return 0, 0
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-pwsh-shell"
+	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
+		LastOutputHash: md5Hex8(capture),
+		LastOutputAt:   time.Now().Add(-15 * time.Minute).Unix(),
+	}); err != nil {
+		t.Fatalf("failed to seed stale state: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 4)
+	if err != nil {
+		t.Fatalf("expected status computation to succeed, got %v", err)
+	}
+	if status.SessionState != "stuck" || status.Status != "idle" {
+		t.Fatalf("expected stale pwsh shell to be idle/stuck, got state=%s status=%s", status.SessionState, status.Status)
 	}
 }
 

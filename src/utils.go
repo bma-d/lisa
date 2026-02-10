@@ -121,12 +121,18 @@ func containsAnyPrefix(line string, prefixes []string) bool {
 }
 
 func isShellCommand(command string) bool {
-	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "zsh", "bash", "sh", "fish", "tmux":
-		return true
-	default:
+	command = strings.ToLower(strings.TrimSpace(command))
+	if command == "" {
 		return false
 	}
+	command = filepath.Base(command)
+	switch command {
+	case "zsh", "bash", "sh", "dash", "ash", "ksh", "mksh", "pdksh", "yash",
+		"fish", "tcsh", "csh", "nu", "pwsh", "powershell", "xonsh", "elvish",
+		"ion", "tmux":
+		return true
+	}
+	return strings.HasSuffix(command, "sh")
 }
 
 func flagValueError(flag string) int {

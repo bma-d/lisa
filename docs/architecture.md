@@ -17,7 +17,7 @@ User / Orchestrator
         ├── doctor          → Health check (tmux, claude, codex on PATH)
         ├── agent build-cmd  → Generate agent startup command string
         └── session
-              ├── name      → Generate deterministic session name
+              ├── name      → Generate unique session name
               ├── spawn     → Create tmux session + send startup command
               ├── send      → Send text/keys to running session
               ├── status    → One-shot status classification
