@@ -63,7 +63,7 @@ func writeJSON(v any) {
 func writeFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp := filepath.Join(dir, fmt.Sprintf(".%s.tmp", filepath.Base(path)))
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

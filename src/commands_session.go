@@ -77,6 +77,19 @@ func cmdSessionName(args []string) int {
 		}
 	}
 
+	var err error
+	agent, err = parseAgent(agent)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	mode, err = parseMode(mode)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	projectRoot = canonicalProjectRoot(projectRoot)
+
 	name := generateSessionName(projectRoot, agent, mode, tag)
 	fmt.Println(name)
 	return 0
@@ -167,8 +180,19 @@ func cmdSessionSpawn(args []string) int {
 		}
 	}
 
-	agent = normalizeAgent(agent)
-	mode = normalizeMode(mode)
+	var err error
+	agent, err = parseAgent(agent)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	mode, err = parseMode(mode)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	projectRoot = canonicalProjectRoot(projectRoot)
+
 	if session == "" {
 		session = generateSessionName(projectRoot, agent, mode, "")
 	}
@@ -178,7 +202,6 @@ func cmdSessionSpawn(args []string) int {
 	}
 
 	if command == "" {
-		var err error
 		command, err = buildAgentCommand(agent, mode, prompt, agentArgs)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
@@ -361,6 +384,17 @@ func cmdSessionStatus(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
+	projectRoot = canonicalProjectRoot(projectRoot)
+	agentHint, err := parseAgentHint(agentHint)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	modeHint, err = parseModeHint(modeHint)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
 
 	status, err := computeSessionStatus(session, projectRoot, agentHint, modeHint, full, 0)
 	if err != nil {
@@ -454,6 +488,17 @@ func cmdSessionMonitor(args []string) int {
 
 	if session == "" {
 		fmt.Fprintln(os.Stderr, "--session is required")
+		return 1
+	}
+	projectRoot = canonicalProjectRoot(projectRoot)
+	agentHint, err := parseAgentHint(agentHint)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	modeHint, err = parseModeHint(modeHint)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
 
@@ -604,6 +649,7 @@ func cmdSessionList(args []string) int {
 		}
 	}
 
+	projectRoot = canonicalProjectRoot(projectRoot)
 	list, err := tmuxListSessions(projectOnly, projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to list sessions: %v\n", err)
@@ -664,6 +710,7 @@ func cmdSessionKill(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
+	projectRoot = canonicalProjectRoot(projectRoot)
 	if err := cleanupSessionArtifacts(projectRoot, session); err != nil {
 		fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", err)
 	}
@@ -690,6 +737,7 @@ func cmdSessionKillAll(args []string) int {
 		}
 	}
 
+	projectRoot = canonicalProjectRoot(projectRoot)
 	sessions, err := tmuxListSessions(projectOnly, projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to list sessions: %v\n", err)
@@ -701,4 +749,28 @@ func cmdSessionKillAll(args []string) int {
 	}
 	fmt.Printf("killed %d sessions\n", len(sessions))
 	return 0
+}
+
+func parseAgentHint(agent string) (string, error) {
+	a := strings.ToLower(strings.TrimSpace(agent))
+	if a == "" || a == "auto" {
+		return "auto", nil
+	}
+	parsed, err := parseAgent(a)
+	if err != nil {
+		return "", fmt.Errorf("invalid --agent: %s (expected auto|claude|codex)", agent)
+	}
+	return parsed, nil
+}
+
+func parseModeHint(mode string) (string, error) {
+	m := strings.ToLower(strings.TrimSpace(mode))
+	if m == "" || m == "auto" {
+		return "auto", nil
+	}
+	parsed, err := parseMode(m)
+	if err != nil {
+		return "", fmt.Errorf("invalid --mode: %s (expected auto|interactive|exec)", mode)
+	}
+	return parsed, nil
 }

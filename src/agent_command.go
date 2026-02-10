@@ -7,8 +7,15 @@ import (
 )
 
 func buildAgentCommand(agent, mode, prompt, agentArgs string) (string, error) {
-	agent = normalizeAgent(agent)
-	mode = normalizeMode(mode)
+	var err error
+	agent, err = parseAgent(agent)
+	if err != nil {
+		return "", err
+	}
+	mode, err = parseMode(mode)
+	if err != nil {
+		return "", err
+	}
 
 	switch mode {
 	case "interactive":
@@ -51,18 +58,42 @@ func wrapExecCommand(command string) string {
 	return fmt.Sprintf("{ %s; __lisa_ec=$?; printf '\\n%s%%d\\n' \"$__lisa_ec\"; }", command, execDonePrefix)
 }
 
-func normalizeAgent(agent string) string {
+func parseAgent(agent string) (string, error) {
 	a := strings.ToLower(strings.TrimSpace(agent))
-	if a == "codex" {
-		return "codex"
+	switch a {
+	case "claude", "":
+		return "claude", nil
+	case "codex":
+		return "codex", nil
+	default:
+		return "", fmt.Errorf("invalid --agent: %s (expected claude|codex)", agent)
 	}
-	return "claude"
+}
+
+func parseMode(mode string) (string, error) {
+	m := strings.ToLower(strings.TrimSpace(mode))
+	switch m {
+	case "interactive", "":
+		return "interactive", nil
+	case "exec", "execution", "non-interactive":
+		return "exec", nil
+	default:
+		return "", fmt.Errorf("invalid --mode: %s (expected interactive|exec)", mode)
+	}
+}
+
+func normalizeAgent(agent string) string {
+	a, err := parseAgent(agent)
+	if err != nil {
+		return "claude"
+	}
+	return a
 }
 
 func normalizeMode(mode string) string {
-	m := strings.ToLower(strings.TrimSpace(mode))
-	if m == "exec" || m == "execution" || m == "non-interactive" {
-		return "exec"
+	m, err := parseMode(mode)
+	if err != nil {
+		return "interactive"
 	}
-	return "interactive"
+	return m
 }
