@@ -136,13 +136,20 @@ func writeSessionOutputFile(projectRoot, session string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	lines := trimLines(capture)
-	if len(lines) > 260 {
-		lines = lines[len(lines)-260:]
-	}
+	lines := tailLines(trimLines(capture), 260)
 	path := sessionOutputFile(projectRoot, session)
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+func tailLines(lines []string, max int) []string {
+	if max <= 0 || len(lines) == 0 {
+		return []string{}
+	}
+	if len(lines) <= max {
+		return lines
+	}
+	return lines[len(lines)-max:]
 }

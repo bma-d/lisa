@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+var tmuxShowEnvironmentFn = tmuxShowEnvironment
+
 func tmuxNewSession(session, projectRoot, agent, mode string, width, height int) error {
 	_, err := runCmd("tmux", "new-session", "-d", "-s", session,
 		"-x", strconv.Itoa(width),
@@ -28,11 +30,25 @@ func tmuxSendCommandWithFallback(session, command string, enter bool) error {
 	}
 
 	scriptPath := fmt.Sprintf("/tmp/lisa-cmd-%s-%d.sh", session, time.Now().UnixNano())
-	body := "#!/usr/bin/env bash\n" + command + "\n"
+	body := buildFallbackScriptBody(command)
 	if err := os.WriteFile(scriptPath, []byte(body), 0o700); err != nil {
 		return fmt.Errorf("failed to write long command script: %w", err)
 	}
 	return tmuxSendKeys(session, []string{"bash " + shellQuote(scriptPath)}, enter)
+}
+
+func buildFallbackScriptBody(command string) string {
+	var b strings.Builder
+	b.WriteString("#!/usr/bin/env bash\n")
+	// Preserve exec completion markers even when wrapped commands fail.
+	if strings.Contains(command, execDonePrefix) {
+		b.WriteString("set +e\n")
+	}
+	b.WriteString(command)
+	if !strings.HasSuffix(command, "\n") {
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func tmuxSendText(session, text string, enter bool) error {
@@ -105,7 +121,7 @@ func sessionMatchesProjectRoot(session, projectRoot, expectedProjectHash string)
 		expectedProjectHash = projectHash(projectRoot)
 	}
 
-	if hash, err := tmuxShowEnvironment(session, "LISA_PROJECT_HASH"); err == nil {
+	if hash, err := tmuxShowEnvironmentFn(session, "LISA_PROJECT_HASH"); err == nil {
 		hash = strings.TrimSpace(hash)
 		if hash == "" {
 			// Key absent in older sessions; fall back to legacy matching.
