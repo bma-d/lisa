@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+var saveSessionMetaFn = saveSessionMeta
+
 func generateSessionName(projectRoot, agent, mode, tag string) string {
 	now := time.Now()
 	stamp := fmt.Sprintf("%s-%09d", now.Format("060102-150405"), now.Nanosecond())
@@ -205,6 +207,7 @@ func cleanupSessionArtifacts(projectRoot, session string) error {
 		sessionOutputFile(projectRoot, session),
 		sessionHeartbeatFile(projectRoot, session),
 		sessionEventsFile(projectRoot, session),
+		sessionEventCountFile(sessionEventsFile(projectRoot, session)),
 		sessionStateLockFile(projectRoot, session),
 	} {
 		files[path] = struct{}{}
@@ -217,6 +220,7 @@ func cleanupSessionArtifacts(projectRoot, session string) error {
 		fmt.Sprintf("/tmp/lisa-*-output-%s.txt", sid),
 		fmt.Sprintf("/tmp/.lisa-*-session-%s-heartbeat.txt", sid),
 		fmt.Sprintf("/tmp/.lisa-*-session-%s-events.jsonl", sid),
+		fmt.Sprintf("/tmp/.lisa-*-session-%s-events.jsonl.lines", sid),
 		fmt.Sprintf("/tmp/.lisa-*-session-%s-state.json.lock", sid),
 		sessionCommandScriptPattern(session),
 	}
@@ -248,6 +252,10 @@ func writeSessionOutputFile(projectRoot, session string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return writeSessionOutputFileFromCapture(projectRoot, session, capture)
+}
+
+func writeSessionOutputFileFromCapture(projectRoot, session, capture string) (string, error) {
 	lines := tailLines(trimLines(capture), 260)
 	path := sessionOutputFile(projectRoot, session)
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {

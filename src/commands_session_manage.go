@@ -92,6 +92,9 @@ func cmdSessionKill(args []string) int {
 		if err := cleanupSessionArtifacts(projectRoot, session); err != nil {
 			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", err)
 		}
+		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "not_found", "idle", "kill_not_found"); err != nil {
+			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+		}
 		return 1
 	}
 	killErr := tmuxKillSessionFn(session)
@@ -103,7 +106,13 @@ func cmdSessionKill(args []string) int {
 		if cleanupErr != nil {
 			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
 		}
+		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "degraded", "idle", "kill_error"); err != nil {
+			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+		}
 		return 1
+	}
+	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "terminated", "idle", "kill_success"); err != nil {
+		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 	}
 	fmt.Println("ok")
 	return 0
@@ -142,8 +151,22 @@ func cmdSessionKillAll(args []string) int {
 		} else {
 			killed++
 		}
-		if cleanupErr := cleanupSessionArtifacts(projectRoot, s); cleanupErr != nil {
+		cleanupErr := cleanupSessionArtifacts(projectRoot, s)
+		if cleanupErr != nil {
 			errs = append(errs, fmt.Sprintf("%s cleanup: %v", s, cleanupErr))
+		}
+
+		eventState := "terminated"
+		eventReason := "kill_all_success"
+		if killErr != nil {
+			eventState = "degraded"
+			eventReason = "kill_all_error"
+		} else if cleanupErr != nil {
+			eventState = "degraded"
+			eventReason = "kill_all_cleanup_error"
+		}
+		if eventErr := appendLifecycleEvent(projectRoot, s, "lifecycle", eventState, "idle", eventReason); eventErr != nil {
+			errs = append(errs, fmt.Sprintf("%s observability: %v", s, eventErr))
 		}
 	}
 	if len(errs) > 0 {

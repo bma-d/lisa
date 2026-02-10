@@ -264,7 +264,7 @@ func cmdSessionSpawn(args []string) int {
 		Prompt:      prompt,
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
-	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+	if err := saveSessionMetaFn(projectRoot, session, meta); err != nil {
 		killErr := tmuxKillSessionFn(session)
 		cleanupErr := cleanupSessionArtifacts(projectRoot, session)
 		fmt.Fprintf(os.Stderr, "failed to persist metadata: %v\n", err)
@@ -277,6 +277,9 @@ func cmdSessionSpawn(args []string) int {
 		return 1
 	}
 	_ = os.Remove(sessionStateFile(projectRoot, session))
+	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "spawned", "active", "spawn_success"); err != nil {
+		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+	}
 
 	if jsonOut {
 		writeJSON(map[string]any{
@@ -295,6 +298,7 @@ func cmdSessionSpawn(args []string) int {
 
 func cmdSessionSend(args []string) int {
 	session := ""
+	projectRoot := getPWD()
 	text := ""
 	keys := ""
 	enter := false
@@ -307,6 +311,12 @@ func cmdSessionSend(args []string) int {
 				return flagValueError("--session")
 			}
 			session = args[i+1]
+			i++
+		case "--project-root":
+			if i+1 >= len(args) {
+				return flagValueError("--project-root")
+			}
+			projectRoot = args[i+1]
 			i++
 		case "--text":
 			if i+1 >= len(args) {
@@ -333,6 +343,7 @@ func cmdSessionSend(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
+	projectRoot = canonicalProjectRoot(projectRoot)
 	if !tmuxHasSessionFn(session) {
 		fmt.Fprintln(os.Stderr, "session not found")
 		return 1
@@ -351,6 +362,9 @@ func cmdSessionSend(args []string) int {
 			fmt.Fprintf(os.Stderr, "failed sending text: %v\n", err)
 			return 1
 		}
+		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "in_progress", "active", "send_text"); err != nil {
+			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+		}
 	} else {
 		keyList := strings.Fields(keys)
 		if len(keyList) == 0 {
@@ -360,6 +374,9 @@ func cmdSessionSend(args []string) int {
 		if err := tmuxSendKeysFn(session, keyList, enter); err != nil {
 			fmt.Fprintf(os.Stderr, "failed sending keys: %v\n", err)
 			return 1
+		}
+		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "in_progress", "active", "send_keys"); err != nil {
+			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 		}
 	}
 

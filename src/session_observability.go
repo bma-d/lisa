@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -127,8 +128,17 @@ func withExclusiveFileLock(lockPath string, timeoutMS int, fn func() error) erro
 
 func appendSessionEvent(projectRoot, session string, event sessionEvent) error {
 	path := sessionEventsFile(projectRoot, session)
+	countPath := sessionEventCountFile(path)
 	lockTimeout := getIntEnv("LISA_EVENT_LOCK_TIMEOUT_MS", defaultEventLockTimeoutMS)
 	lockPath := path + ".lock"
+	maxBytes := getIntEnv("LISA_EVENTS_MAX_BYTES", defaultEventsMaxBytes)
+	if maxBytes <= 0 {
+		maxBytes = defaultEventsMaxBytes
+	}
+	maxLines := getIntEnv("LISA_EVENTS_MAX_LINES", defaultEventsMaxLines)
+	if maxLines <= 0 {
+		maxLines = defaultEventsMaxLines
+	}
 
 	return withExclusiveFileLock(lockPath, lockTimeout, func() error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -151,17 +161,56 @@ func appendSessionEvent(projectRoot, session string, event sessionEvent) error {
 		if err := f.Close(); err != nil {
 			return err
 		}
-		return trimSessionEventFile(path)
+
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+
+		lineCount, countKnown := readSessionEventCount(countPath)
+		if countKnown {
+			lineCount++
+		}
+		if !countKnown {
+			bootCount, err := countSessionEventLines(path)
+			if err == nil {
+				lineCount = bootCount
+				countKnown = true
+			}
+		}
+
+		needsTrim := info.Size() > int64(maxBytes)
+		if !needsTrim && countKnown && lineCount > maxLines {
+			needsTrim = true
+		}
+
+		if needsTrim {
+			keptLines, err := trimSessionEventFileAndCount(path)
+			if err != nil {
+				return err
+			}
+			return writeSessionEventCount(countPath, keptLines)
+		}
+
+		if countKnown {
+			return writeSessionEventCount(countPath, lineCount)
+		}
+		return nil
 	})
 }
 
 func trimSessionEventFile(path string) error {
+	_, err := trimSessionEventFileAndCount(path)
+	return err
+}
+
+func trimSessionEventFileAndCount(path string) (int, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return 0, nil
 		}
-		return err
+		return 0, err
 	}
 
 	maxBytes := getIntEnv("LISA_EVENTS_MAX_BYTES", defaultEventsMaxBytes)
@@ -186,12 +235,18 @@ func trimSessionEventFile(path string) error {
 	for len(lines) > 0 {
 		data := strings.Join(lines, "\n") + "\n"
 		if len(data) <= maxBytes {
-			return writeFileAtomic(path, []byte(data))
+			if err := writeFileAtomic(path, []byte(data)); err != nil {
+				return 0, err
+			}
+			return len(lines), nil
 		}
 		lines = lines[1:]
 	}
 
-	return writeFileAtomic(path, []byte{})
+	if err := writeFileAtomic(path, []byte{}); err != nil {
+		return 0, err
+	}
+	return 0, nil
 }
 
 func readSessionEventTail(projectRoot, session string, max int) (sessionEventTail, error) {
@@ -230,4 +285,65 @@ func readSessionEventTail(projectRoot, session string, max int) (sessionEventTai
 		events = append(events, event)
 	}
 	return sessionEventTail{Events: events, DroppedLines: dropped}, nil
+}
+
+func sessionEventCountFile(path string) string {
+	return path + ".lines"
+}
+
+func readSessionEventCount(path string) (int, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+func writeSessionEventCount(path string, count int) error {
+	if count < 0 {
+		count = 0
+	}
+	return writeFileAtomic(path, []byte(strconv.Itoa(count)))
+}
+
+func countSessionEventLines(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	count := 0
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	for scanner.Scan() {
+		if strings.TrimSpace(scanner.Text()) == "" {
+			continue
+		}
+		count++
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func appendLifecycleEvent(projectRoot, session, eventType, state, status, reason string) error {
+	if strings.TrimSpace(projectRoot) == "" || strings.TrimSpace(session) == "" {
+		return nil
+	}
+	return appendSessionEventFn(projectRoot, session, sessionEvent{
+		At:      nowFn().UTC().Format(time.RFC3339Nano),
+		Type:    eventType,
+		Session: session,
+		State:   state,
+		Status:  status,
+		Reason:  reason,
+		Poll:    0,
+		Signals: statusSignals{},
+	})
 }

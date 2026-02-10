@@ -82,10 +82,10 @@ Session states: `just_started` | `in_progress` | `waiting_input` | `completed` |
 ### Send follow-up input
 
 ```bash
-lisa session send --session <SESSION> --text "Continue and apply all safe fixes" --enter
+lisa session send --session <SESSION> --project-root <PATH> --text "Continue and apply all safe fixes" --enter
 
 # Or send raw tmux keys
-lisa session send --session <SESSION> --keys "C-c" --enter
+lisa session send --session <SESSION> --project-root <PATH> --keys "C-c" --enter
 ```
 
 ### Capture output

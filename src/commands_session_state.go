@@ -249,6 +249,9 @@ func cmdSessionMonitor(args []string) int {
 					return 1
 				}
 			}
+			if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+reason); err != nil {
+				fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+			}
 			if reason == "completed" || reason == "waiting_input" {
 				return 0
 			}
@@ -288,6 +291,9 @@ func cmdSessionMonitor(args []string) int {
 			fmt.Fprintf(os.Stderr, "failed to write monitor output: %v\n", err)
 			return 1
 		}
+	}
+	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+result.ExitReason); err != nil {
+		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 	}
 	return 2
 }

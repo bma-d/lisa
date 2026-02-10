@@ -78,11 +78,34 @@ func writeJSON(v any) {
 
 func writeFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	tmp := filepath.Join(dir, fmt.Sprintf(".%s.tmp", filepath.Base(path)))
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	tmpFile, err := os.CreateTemp(dir, fmt.Sprintf(".%s.tmp-*", filepath.Base(path)))
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := tmpFile.Name()
+	cleanupTmp := true
+	defer func() {
+		if cleanupTmp {
+			_ = os.Remove(tmp)
+		}
+	}()
+
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	cleanupTmp = false
+	return nil
 }
 
 func trimLines(input string) []string {

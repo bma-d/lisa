@@ -43,7 +43,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  session name [--agent claude|codex] [--mode interactive|exec] [--project-root PATH] [--tag TEXT]")
 	fmt.Fprintln(os.Stderr, "  session spawn --agent claude|codex --mode interactive|exec [--session lisa-NAME] [--prompt TEXT] [--command TEXT]")
 	fmt.Fprintln(os.Stderr, "               [--agent-args TEXT] [--project-root PATH] [--width N] [--height N] [--json]")
-	fmt.Fprintln(os.Stderr, "  session send --session NAME [--text TEXT | --keys \"KEYS...\"] [--enter] [--json]")
+	fmt.Fprintln(os.Stderr, "  session send --session NAME [--project-root PATH] [--text TEXT | --keys \"KEYS...\"] [--enter] [--json]")
 	fmt.Fprintln(os.Stderr, "  session status --session NAME [--agent auto|claude|codex] [--mode auto|interactive|exec] [--project-root PATH] [--full] [--json]")
 	fmt.Fprintln(os.Stderr, "  session explain --session NAME [--agent auto|claude|codex] [--mode auto|interactive|exec] [--project-root PATH] [--events N] [--json]")
 	fmt.Fprintln(os.Stderr, "  session monitor --session NAME [--agent auto|claude|codex] [--mode auto|interactive|exec] [--project-root PATH]")

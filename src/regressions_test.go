@@ -1175,11 +1175,13 @@ func TestCmdSessionSpawnMetaFailureKillsSession(t *testing.T) {
 	origNew := tmuxNewSessionFn
 	origSend := tmuxSendCommandWithFallbackFn
 	origKill := tmuxKillSessionFn
+	origSaveMeta := saveSessionMetaFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
 		tmuxNewSessionFn = origNew
 		tmuxSendCommandWithFallbackFn = origSend
 		tmuxKillSessionFn = origKill
+		saveSessionMetaFn = origSaveMeta
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return false }
@@ -1190,17 +1192,12 @@ func TestCmdSessionSpawnMetaFailureKillsSession(t *testing.T) {
 		killCalled = true
 		return nil
 	}
+	saveSessionMetaFn = func(projectRoot, session string, meta sessionMeta) error {
+		return errors.New("forced metadata failure")
+	}
 
 	projectRoot := t.TempDir()
 	session := "lisa-meta-failure"
-	metaPath := sessionMetaFile(projectRoot, session)
-	tmpPath := filepath.Join(filepath.Dir(metaPath), "."+filepath.Base(metaPath)+".tmp")
-	if err := os.Mkdir(tmpPath, 0o700); err != nil {
-		t.Fatalf("failed to create tmp path blocker: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(tmpPath)
-	})
 
 	_, stderr := captureOutput(t, func() {
 		if code := cmdSessionSpawn([]string{
