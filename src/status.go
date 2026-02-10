@@ -18,6 +18,7 @@ var (
 	activeTaskActiveRe       = regexp.MustCompile(`(?i)^active task[:\s]+(.+)$`)
 	promptBusyKeywordRe      = regexp.MustCompile(`(?i)\b(working|running|checking|planning|writing|editing|creating|fixing|executing|reviewing|loading|reading|searching|parsing|building|compiling|installing)\b`)
 	codexPromptRe            = regexp.MustCompile(`❯\s*([0-9]+[smh]\s*)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}\s*$`)
+	shellPromptTrailerRe     = regexp.MustCompile(`[❯›]\s*(?:[0-9]+[smh]\s*)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}\s*$`)
 	waitReadLikeRe           = regexp.MustCompile(`loading|reading|searching|parsing`)
 	waitBuildLikeRe          = regexp.MustCompile(`running tests|testing|building|compiling|installing`)
 	waitWriteLikeRe          = regexp.MustCompile(`writing|editing|updating|creating|fixing`)
@@ -165,14 +166,18 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		(now-stateHint.LastAgentProbeAt) < int64(processScanInterval)
 	agentPID := stateHint.LastAgentPID
 	agentCPU := stateHint.LastAgentCPU
+	var agentScanErr error
 	if !useCachedProcessScan {
-		agentPID, agentCPU = detectAgentProcessFn(panePID, agent)
+		agentPID, agentCPU, agentScanErr = detectAgentProcessFn(panePID, agent)
 	} else {
 		status.Signals.AgentScanCached = true
 	}
 	status.AgentPID = agentPID
 	status.AgentCPU = agentCPU
 	status.Signals.AgentProcessDetected = agentPID > 0
+	if agentScanErr != nil {
+		status.Signals.AgentScanError = agentScanErr.Error()
+	}
 
 	hbAge, hbSeen := sessionHeartbeatAge(projectRoot, session, now)
 	if hbSeen {
@@ -288,6 +293,11 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 				status.Status = "active"
 				status.SessionState = "in_progress"
 				status.ClassificationReason = "non_shell_command"
+			case agentScanErr != nil:
+				status.Status = "idle"
+				status.SessionState = "degraded"
+				status.WaitEstimate = 0
+				status.ClassificationReason = "agent_scan_error"
 			default:
 				status.Status = "idle"
 				status.WaitEstimate = 0
@@ -663,6 +673,10 @@ func isAgeFresh(age, staleAfter int) bool {
 func isLikelyShellPromptLine(line string) bool {
 	line = strings.TrimSpace(stripANSIEscape(line))
 	if line == "" {
+		return true
+	}
+	// Starship and similar prompts often include duration/time segments after the prompt token.
+	if shellPromptTrailerRe.MatchString(line) {
 		return true
 	}
 	if strings.HasSuffix(line, "$") ||

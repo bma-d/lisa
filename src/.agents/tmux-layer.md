@@ -6,6 +6,7 @@ Related Files: `src/tmux.go`
 ## Overview
 
 All tmux interactions are wrapped in Go functions. No direct tmux commands elsewhere in codebase.
+External command wrappers are now bounded by `LISA_CMD_TIMEOUT_SECONDS` (default 20s) to prevent hung `tmux`/`ps` calls from stalling status/monitor loops.
 
 ## Session Creation
 
@@ -36,7 +37,7 @@ Spawn path now hard-fails before session creation if heartbeat artifact path can
 
 ## Process Detection
 
-`detectAgentProcess()`: given pane PID, does BFS through process tree (`ps -axo pid=,ppid=,%cpu=,command=`), finds child process matching agent name. Returns best match by CPU usage. Excludes grep processes.
+`detectAgentProcess()`: given pane PID, does BFS through process tree (`ps -axo pid=,ppid=,%cpu=,command=`), finds child process matching agent name. Returns best match by CPU usage; no-match returns `(0, 0)` and `ps` failures return an error surfaced via `signals.agentScanError`.
 
 ## Mocking
 

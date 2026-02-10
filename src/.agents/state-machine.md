@@ -21,6 +21,7 @@ Related Files: `src/status.go`, `src/types.go`
 8. **Todo progress** (`parseTodos`): counts `[x]`/`[ ]` checkboxes in output
 9. **State lock observability**: lock wait timing in `signals.stateLockWaitMs`, timeout fallback to `state_lock_timeout` classification
 10. **Structured signals**: status payload includes `classificationReason` + `signals` block for observability and debugging
+11. **Process scan errors**: `signals.agentScanError` captures `ps`/scan failures; classification falls back to `degraded` (`agent_scan_error`) when no stronger activity signals exist
 
 ## Classification Priority
 
@@ -30,6 +31,7 @@ session done marker (matching runId) → completed/crashed based on exit code
 exec mode + exec done marker → completed/crashed based on exit code
 interactive waiting (low CPU + stale output) OR prompt regex → waiting_input
 agent PID alive OR output fresh OR heartbeat fresh OR non-shell pane command → in_progress
+process scan failure with no stronger activity signals → degraded
 poll count ≤ 3 → just_started (grace period)
 else → stuck
 ```
@@ -41,6 +43,7 @@ Infra observability signals:
 - `signals.metaReadError` when metadata read/parse fails
 - `signals.stateReadError` when state file read/parse fails
 - `signals.eventsWriteError` when event append fails
+- `signals.agentScanError` when process scan fails
 
 ## Wait Estimation
 

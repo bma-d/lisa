@@ -2,10 +2,12 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,24 +15,37 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func runCmd(name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
-	return out.String(), err
+	return runCmdInternal("", name, args...)
 }
 
 func runCmdInput(input, name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+	return runCmdInternal(input, name, args...)
+}
+
+func runCmdInternal(input, name string, args ...string) (string, error) {
+	timeout := time.Duration(getIntEnv("LISA_CMD_TIMEOUT_SECONDS", defaultCmdTimeoutSeconds)) * time.Second
+	if timeout <= 0 {
+		timeout = time.Duration(defaultCmdTimeoutSeconds) * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
 	var out bytes.Buffer
-	cmd.Stdin = strings.NewReader(input)
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	err := cmd.Run()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return out.String(), fmt.Errorf("command timed out after %s: %s %s", timeout, name, strings.Join(args, " "))
+	}
 	return out.String(), err
 }
 

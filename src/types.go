@@ -6,9 +6,11 @@ const (
 	defaultOutputStaleSeconds  = 240
 	defaultHeartbeatStaleSecs  = 8
 	defaultStateLockTimeoutMS  = 2500
+	defaultEventLockTimeoutMS  = 2500
 	defaultEventsMaxBytes      = 1_000_000
 	defaultEventsMaxLines      = 2000
 	defaultProcessScanInterval = 8
+	defaultCmdTimeoutSeconds   = 20
 	defaultTmuxWidth           = 220
 	defaultTmuxHeight          = 60
 	maxInlineSendLength        = 500
@@ -82,6 +84,7 @@ type statusSignals struct {
 	HeartbeatFresh           bool   `json:"heartbeatFresh"`
 	PaneIsShell              bool   `json:"paneIsShell"`
 	AgentScanCached          bool   `json:"agentScanCached"`
+	AgentScanError           string `json:"agentScanError,omitempty"`
 	StateLockWaitMS          int    `json:"stateLockWaitMs"`
 	StateLockTimedOut        bool   `json:"stateLockTimedOut"`
 	MetaReadError            string `json:"metaReadError,omitempty"`

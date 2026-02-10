@@ -176,8 +176,8 @@ func TestComputeSessionStatusDoesNotTreatTagLikeClaudeTailAsWaiting(t *testing.T
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 456, 3.2
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 456, 3.2, nil
 	}
 
 	status, err := computeSessionStatus("lisa-test", t.TempDir(), "claude", "interactive", false, 1)
@@ -226,8 +226,8 @@ func TestComputeSessionStatusTreatsPwshPaneAsShell(t *testing.T) {
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 0, 0
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
 	}
 
 	projectRoot := t.TempDir()
@@ -285,8 +285,8 @@ func TestComputeSessionStatusUsesHeartbeatWhenAgentUndetected(t *testing.T) {
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 0, 0
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
 	}
 
 	projectRoot := t.TempDir()
@@ -352,8 +352,8 @@ func TestComputeSessionStatusInteractiveUsesSessionDoneMarker(t *testing.T) {
 		}
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 0, 0
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
 	}
 
 	status, err := computeSessionStatus("lisa-interactive-done", t.TempDir(), "auto", "auto", false, 4)
@@ -431,6 +431,32 @@ func TestParseSessionCompletionAcceptsTailMarkerWithPrompt(t *testing.T) {
 	}
 }
 
+func TestParseSessionCompletionAcceptsTailMarkerWithStarshipPrompt(t *testing.T) {
+	capture := strings.Join([]string{
+		"final output",
+		"__LISA_SESSION_DONE__:run-10:0",
+		"~/projects/tools/lisa main !1 ?2 ❯                                         11s 18:01:20",
+	}, "\n")
+
+	done, code, markerRunID, mismatch := parseSessionCompletionForRun(capture, "run-10")
+	if !done || code != 0 || markerRunID != "run-10" || mismatch {
+		t.Fatalf("expected starship prompt follow-up to keep marker valid, got done=%v code=%d runID=%q mismatch=%v", done, code, markerRunID, mismatch)
+	}
+}
+
+func TestParseSessionCompletionRejectsNonPromptLineContainingPromptGlyph(t *testing.T) {
+	capture := strings.Join([]string{
+		"final output",
+		"__LISA_SESSION_DONE__:run-11:0",
+		"analysis note: this branch uses ❯ arrow symbol in docs",
+	}, "\n")
+
+	done, _, _, _ := parseSessionCompletionForRun(capture, "run-11")
+	if done {
+		t.Fatalf("expected non-prompt line with prompt glyph to invalidate completion marker")
+	}
+}
+
 func TestTailLinesKeepsNewestOutput(t *testing.T) {
 	values := make([]string, 300)
 	for i := 0; i < 300; i++ {
@@ -462,9 +488,34 @@ func TestDetectAgentProcessReturnsMatchEvenWhenCPUIsZero(t *testing.T) {
 		}, nil
 	}
 
-	pid, cpu := detectAgentProcess(1, "codex")
+	pid, cpu, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected process scan error: %v", err)
+	}
 	if pid != 10 || cpu != 0.0 {
 		t.Fatalf("expected codex PID with zero CPU to be selected, got pid=%d cpu=%f", pid, cpu)
+	}
+}
+
+func TestDetectAgentProcessReturnsZeroCPUWhenNoMatch(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 10, PPID: 1, CPU: 1.2, Command: "bash"},
+			{PID: 11, PPID: 1, CPU: 0.4, Command: "zsh"},
+		}, nil
+	}
+
+	pid, cpu, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected process scan error: %v", err)
+	}
+	if pid != 0 || cpu != 0.0 {
+		t.Fatalf("expected no match to return pid=0 cpu=0, got pid=%d cpu=%f", pid, cpu)
 	}
 }
 
@@ -1251,8 +1302,8 @@ func TestCmdSessionStatusEscapesCSVFields(t *testing.T) {
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 1234, 1.5
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 1234, 1.5, nil
 	}
 
 	stdout, stderr := captureOutput(t, func() {
@@ -1387,7 +1438,7 @@ func TestCmdSessionMonitorTreatsDegradedAsTerminal(t *testing.T) {
 		}
 	}
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) { return 80, 1.0 }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 80, 1.0, nil }
 	withStateFileLockFn = func(statePath string, fn func() error) (stateLockMeta, error) {
 		return stateLockMeta{WaitMS: 77}, &stateLockTimeoutError{WaitMS: 77}
 	}
@@ -1652,8 +1703,8 @@ func TestComputeSessionStatusReturnsErrorOnCriticalTmuxReadFailures(t *testing.T
 			return "", nil
 		}
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 0, 0
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
 	}
 	if _, err := computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1); err == nil {
 		t.Fatalf("expected error when pane pid cannot be parsed")
@@ -1699,8 +1750,8 @@ func TestComputeSessionStatusDetectsPreCompletedExecOnFirstPoll(t *testing.T) {
 		}
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 0, 0
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
 	}
 
 	projectRoot := t.TempDir()
@@ -1755,8 +1806,8 @@ func TestComputeSessionStatusDetectsExecCompletionWithoutModeHint(t *testing.T) 
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 0, 0
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
 	}
 
 	projectRoot := t.TempDir()

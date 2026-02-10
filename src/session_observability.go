@@ -91,33 +91,72 @@ func withStateFileLock(statePath string, fn func() error) (stateLockMeta, error)
 	return stateLockMeta{WaitMS: waited}, fn()
 }
 
-func appendSessionEvent(projectRoot, session string, event sessionEvent) error {
-	path := sessionEventsFile(projectRoot, session)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+func withExclusiveFileLock(lockPath string, timeoutMS int, fn func() error) error {
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
+	}
+	defer lockFile.Close()
+
+	if timeoutMS <= 0 {
+		timeoutMS = defaultEventLockTimeoutMS
 	}
 
-	data, err := json.Marshal(event)
-	if err != nil {
-		_ = f.Close()
-		return err
+	start := time.Now()
+	for {
+		if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+				waited := int(time.Since(start).Milliseconds())
+				if waited >= timeoutMS {
+					return fmt.Errorf("event lock timeout after %dms", waited)
+				}
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			return err
+		}
+		break
 	}
-	if _, err := f.Write(append(data, '\n')); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return trimSessionEventFile(path)
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) //nolint:errcheck
+
+	return fn()
+}
+
+func appendSessionEvent(projectRoot, session string, event sessionEvent) error {
+	path := sessionEventsFile(projectRoot, session)
+	lockTimeout := getIntEnv("LISA_EVENT_LOCK_TIMEOUT_MS", defaultEventLockTimeoutMS)
+	lockPath := path + ".lock"
+
+	return withExclusiveFileLock(lockPath, lockTimeout, func() error {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+
+		data, err := json.Marshal(event)
+		if err != nil {
+			_ = f.Close()
+			return err
+		}
+		if _, err := f.Write(append(data, '\n')); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+		return trimSessionEventFile(path)
+	})
 }
 
 func trimSessionEventFile(path string) error {
-	info, err := os.Stat(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -126,8 +165,8 @@ func trimSessionEventFile(path string) error {
 	}
 
 	maxBytes := getIntEnv("LISA_EVENTS_MAX_BYTES", defaultEventsMaxBytes)
-	if maxBytes <= 0 || info.Size() <= int64(maxBytes) {
-		return nil
+	if maxBytes <= 0 {
+		maxBytes = defaultEventsMaxBytes
 	}
 
 	maxLines := getIntEnv("LISA_EVENTS_MAX_LINES", defaultEventsMaxLines)
@@ -135,27 +174,23 @@ func trimSessionEventFile(path string) error {
 		maxLines = defaultEventsMaxLines
 	}
 
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
+	lines := make([]string, 0, maxLines)
+	for _, line := range trimLines(string(raw)) {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		lines = append(lines, line)
 	}
-	lines := trimLines(string(raw))
 	lines = tailLines(lines, maxLines)
-	for len(lines) > 1 {
+
+	for len(lines) > 0 {
 		data := strings.Join(lines, "\n") + "\n"
 		if len(data) <= maxBytes {
 			return writeFileAtomic(path, []byte(data))
 		}
 		lines = lines[1:]
 	}
-	if len(lines) == 1 {
-		data := strings.TrimSpace(lines[0])
-		if len(data)+1 > maxBytes {
-			// Drop pathological oversized line instead of writing a partial JSON fragment.
-			return writeFileAtomic(path, []byte{})
-		}
-		return writeFileAtomic(path, []byte(data+"\n"))
-	}
+
 	return writeFileAtomic(path, []byte{})
 }
 

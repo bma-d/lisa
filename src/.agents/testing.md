@@ -37,6 +37,9 @@ Run with:
 
 Requires real tmux server + matching agent on PATH. Spawns actual sessions, monitors, captures, and cleans up. Gated behind env vars to avoid CI failures.
 
+Additional hermetic integration:
+- `e2e_interactive_fake_test.go` runs by default when tmux is available and exercises interactive spawn/send/monitor/capture lifecycle using a local one-line shell script (no external agent dependency).
+
 ## Writing New Tests
 
 1. For status/state logic: mock tmux function variables in `regressions_test.go`

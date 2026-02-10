@@ -147,8 +147,8 @@ func TestComputeSessionStatusHeartbeatStaleFallsBackToStuck(t *testing.T) {
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 0, 0
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
 	}
 	if err := os.Setenv("LISA_HEARTBEAT_STALE_SECONDS", "3"); err != nil {
 		t.Fatalf("failed to set heartbeat stale env: %v", err)
@@ -222,8 +222,8 @@ func TestComputeSessionStatusSessionDoneNonZeroIsCrashedWithRunID(t *testing.T) 
 		}
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 0, 0
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
 	}
 
 	projectRoot := t.TempDir()
@@ -284,8 +284,8 @@ func TestComputeSessionStatusMarkerRunMismatchDoesNotComplete(t *testing.T) {
 		}
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 0, 0
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
 	}
 
 	projectRoot := t.TempDir()
@@ -351,8 +351,8 @@ func TestComputeSessionStatusEmitsTransitionAndSnapshotEvents(t *testing.T) {
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 55, 1.1
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 55, 1.1, nil
 	}
 
 	projectRoot := t.TempDir()
@@ -412,7 +412,7 @@ func TestComputeSessionStatusStateLockTimeoutFallsBackToDegraded(t *testing.T) {
 		}
 	}
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) { return 80, 1.0 }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 80, 1.0, nil }
 	withStateFileLockFn = func(statePath string, fn func() error) (stateLockMeta, error) {
 		return stateLockMeta{WaitMS: 77}, &stateLockTimeoutError{WaitMS: 77}
 	}
@@ -461,7 +461,7 @@ func TestComputeSessionStatusMetaReadErrorDoesNotTrustSessionDoneMarker(t *testi
 		}
 	}
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) { return 0, 0 }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 0, 0, nil }
 
 	projectRoot := t.TempDir()
 	session := "lisa-meta-unreadable"
@@ -524,7 +524,7 @@ func TestComputeSessionStatusReportsEventWriteErrors(t *testing.T) {
 		}
 	}
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) { return 80, 1.0 }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 80, 1.0, nil }
 	appendSessionEventFn = func(projectRoot, session string, event sessionEvent) error {
 		return errors.New("disk full")
 	}
@@ -568,7 +568,7 @@ func TestComputeSessionStatusReportsStateReadErrors(t *testing.T) {
 		}
 	}
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) { return 80, 1.0 }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 80, 1.0, nil }
 
 	projectRoot := t.TempDir()
 	session := "lisa-state-corrupt"
@@ -719,9 +719,9 @@ func TestComputeSessionStatusUsesCachedProcessScanBetweenIntervals(t *testing.T)
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
 
 	detectCalls := 0
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
 		detectCalls++
-		return 777, 2.5
+		return 777, 2.5, nil
 	}
 
 	projectRoot := t.TempDir()
@@ -782,8 +782,8 @@ func TestComputeSessionStatusConcurrentStateWritesNoCorruption(t *testing.T) {
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
 		return "", errors.New("missing")
 	}
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
-		return 77, 2.0
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 77, 2.0, nil
 	}
 
 	projectRoot := t.TempDir()
@@ -908,7 +908,7 @@ func TestCmdSessionExplainJSONIncludesStatusAndEvents(t *testing.T) {
 		}
 	}
 	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
-	detectAgentProcessFn = func(panePID int, agent string) (int, float64) { return 80, 1.0 }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 80, 1.0, nil }
 
 	projectRoot := t.TempDir()
 	session := "lisa-explain-json"

@@ -42,7 +42,7 @@ All stored in `/tmp/`:
 
 ## Observability Retention
 
-Event logs are bounded: `appendSessionEvent()` trims oversized `/tmp/.lisa-*-events.jsonl` files using `LISA_EVENTS_MAX_BYTES` and `LISA_EVENTS_MAX_LINES` before/after appends.
+Event logs are bounded: `appendSessionEvent()` trims `/tmp/.lisa-*-events.jsonl` files using both `LISA_EVENTS_MAX_BYTES` and `LISA_EVENTS_MAX_LINES` on every append. Appends + trims are serialized with an event-file lock (`.events.jsonl.lock`) and `LISA_EVENT_LOCK_TIMEOUT_MS`.
 
 ## Project Matching
 

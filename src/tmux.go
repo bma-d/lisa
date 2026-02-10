@@ -206,13 +206,13 @@ func tmuxCapturePane(session string, lines int) (string, error) {
 	return runCmd("tmux", "capture-pane", "-t", session, "-p", "-S", fmt.Sprintf("-%d", lines))
 }
 
-func detectAgentProcess(panePID int, agent string) (int, float64) {
+func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 	if panePID <= 0 {
-		return 0, 0
+		return 0, 0, nil
 	}
 	procs, err := listProcessesFn()
 	if err != nil {
-		return 0, 0
+		return 0, 0, fmt.Errorf("process scan failed: %w", err)
 	}
 	children := map[int][]processInfo{}
 	for _, p := range procs {
@@ -246,7 +246,10 @@ func detectAgentProcess(panePID int, agent string) (int, float64) {
 			}
 		}
 	}
-	return bestPID, bestCPU
+	if bestPID == 0 {
+		return 0, 0, nil
+	}
+	return bestPID, bestCPU, nil
 }
 
 func listProcesses() ([]processInfo, error) {
