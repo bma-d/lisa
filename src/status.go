@@ -21,7 +21,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		status.ActiveTask = "no_session"
 		return status, nil
 	}
-	if !tmuxHasSession(session) {
+	if !tmuxHasSessionFn(session) {
 		status.Status = "not_found"
 		status.SessionState = "not_found"
 		status.WaitEstimate = 0
@@ -34,7 +34,10 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	status.Agent = agent
 	status.Mode = mode
 
-	capture, _ := tmuxCapturePane(session, 220)
+	capture, err := tmuxCapturePaneFn(session, 220)
+	if err != nil {
+		return status, fmt.Errorf("failed to capture tmux pane: %w", err)
+	}
 	capture = filterInputBox(capture)
 	lines := trimLines(capture)
 	capture = strings.Join(lines, "\n")
@@ -56,8 +59,14 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	status.OutputAgeSeconds = outputAge
 	status.OutputFreshSeconds = staleAfter
 
-	paneStatus := tmuxPaneStatus(session)
-	paneCommand, _ := tmuxDisplay(session, "#{pane_current_command}")
+	paneStatus, err := tmuxPaneStatusFn(session)
+	if err != nil {
+		return status, fmt.Errorf("failed to read tmux pane status: %w", err)
+	}
+	paneCommand, err := tmuxDisplayFn(session, "#{pane_current_command}")
+	if err != nil {
+		return status, fmt.Errorf("failed to read tmux pane command: %w", err)
+	}
 	status.PaneStatus = paneStatus
 	status.PaneCommand = paneCommand
 
@@ -68,9 +77,19 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	status.WaitEstimate = estimateWait(status.ActiveTask, todoDone, todoTotal)
 	execDone, execExitCode := parseExecCompletion(capture)
 
-	panePIDRaw, _ := tmuxDisplay(session, "#{pane_pid}")
-	panePID, _ := strconv.Atoi(strings.TrimSpace(panePIDRaw))
-	agentPID, agentCPU := detectAgentProcess(panePID, agent)
+	panePIDRaw, err := tmuxDisplayFn(session, "#{pane_pid}")
+	if err != nil {
+		return status, fmt.Errorf("failed to read tmux pane pid: %w", err)
+	}
+	panePIDText := strings.TrimSpace(panePIDRaw)
+	panePID := 0
+	if panePIDText != "" {
+		panePID, err = strconv.Atoi(panePIDText)
+		if err != nil {
+			return status, fmt.Errorf("failed to parse tmux pane pid %q: %w", panePIDText, err)
+		}
+	}
+	agentPID, agentCPU := detectAgentProcessFn(panePID, agent)
 	status.AgentPID = agentPID
 	status.AgentCPU = agentCPU
 
@@ -154,13 +173,13 @@ func resolveAgent(agentHint string, meta sessionMeta, session string) string {
 	if v := strings.ToLower(strings.TrimSpace(meta.Agent)); v == "claude" || v == "codex" {
 		return v
 	}
-	if envAgent, err := tmuxShowEnvironment(session, "LISA_AGENT"); err == nil {
+	if envAgent, err := tmuxShowEnvironmentFn(session, "LISA_AGENT"); err == nil {
 		envAgent = strings.ToLower(strings.TrimSpace(envAgent))
 		if envAgent == "claude" || envAgent == "codex" {
 			return envAgent
 		}
 	}
-	if envAgent, err := tmuxShowEnvironment(session, "AI_AGENT"); err == nil {
+	if envAgent, err := tmuxShowEnvironmentFn(session, "AI_AGENT"); err == nil {
 		envAgent = strings.ToLower(strings.TrimSpace(envAgent))
 		if envAgent == "claude" || envAgent == "codex" {
 			return envAgent
@@ -177,7 +196,7 @@ func resolveMode(modeHint string, meta sessionMeta, session string) string {
 	if v := strings.ToLower(strings.TrimSpace(meta.Mode)); v == "interactive" || v == "exec" {
 		return v
 	}
-	if v, err := tmuxShowEnvironment(session, "LISA_MODE"); err == nil {
+	if v, err := tmuxShowEnvironmentFn(session, "LISA_MODE"); err == nil {
 		v = strings.ToLower(strings.TrimSpace(v))
 		if v == "interactive" || v == "exec" {
 			return v

@@ -10,6 +10,13 @@ import (
 )
 
 var tmuxShowEnvironmentFn = tmuxShowEnvironment
+var tmuxHasSessionFn = tmuxHasSession
+var tmuxKillSessionFn = tmuxKillSession
+var tmuxListSessionsFn = tmuxListSessions
+var tmuxCapturePaneFn = tmuxCapturePane
+var tmuxDisplayFn = tmuxDisplay
+var tmuxPaneStatusFn = tmuxPaneStatus
+var detectAgentProcessFn = detectAgentProcess
 
 func tmuxNewSession(session, projectRoot, agent, mode string, width, height int) error {
 	_, err := runCmd("tmux", "new-session", "-d", "-s", session,
@@ -153,19 +160,25 @@ func tmuxShowEnvironment(session, key string) (string, error) {
 	return "", nil
 }
 
-func tmuxPaneStatus(session string) string {
-	dead, _ := tmuxDisplay(session, "#{pane_dead}")
-	exit, _ := tmuxDisplay(session, "#{pane_dead_status}")
+func tmuxPaneStatus(session string) (string, error) {
+	dead, err := tmuxDisplayFn(session, "#{pane_dead}")
+	if err != nil {
+		return "", err
+	}
+	exit, err := tmuxDisplayFn(session, "#{pane_dead_status}")
+	if err != nil {
+		return "", err
+	}
 	if dead == "1" {
 		if exit != "" {
-			return "exited:" + exit
+			return "exited:" + exit, nil
 		}
-		return "exited:0"
+		return "exited:0", nil
 	}
 	if exit != "" && exit != "0" {
-		return "crashed:" + exit
+		return "crashed:" + exit, nil
 	}
-	return "alive"
+	return "alive", nil
 }
 
 func tmuxCapturePane(session string, lines int) (string, error) {

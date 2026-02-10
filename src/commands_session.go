@@ -711,10 +711,18 @@ func cmdSessionKill(args []string) int {
 		return 1
 	}
 	projectRoot = canonicalProjectRoot(projectRoot)
+	if !tmuxHasSessionFn(session) {
+		fmt.Fprintln(os.Stderr, "session not found")
+		return 1
+	}
 	if err := cleanupSessionArtifacts(projectRoot, session); err != nil {
 		fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", err)
+		return 1
 	}
-	_ = tmuxKillSession(session)
+	if err := tmuxKillSessionFn(session); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to kill session: %v\n", err)
+		return 1
+	}
 	fmt.Println("ok")
 	return 0
 }
@@ -738,16 +746,32 @@ func cmdSessionKillAll(args []string) int {
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
-	sessions, err := tmuxListSessions(projectOnly, projectRoot)
+	sessions, err := tmuxListSessionsFn(projectOnly, projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to list sessions: %v\n", err)
 		return 1
 	}
+	var errs []string
+	killed := 0
 	for _, s := range sessions {
-		_ = cleanupSessionArtifacts(projectRoot, s)
-		_ = tmuxKillSession(s)
+		if err := cleanupSessionArtifacts(projectRoot, s); err != nil {
+			errs = append(errs, fmt.Sprintf("%s cleanup: %v", s, err))
+			continue
+		}
+		if err := tmuxKillSessionFn(s); err != nil {
+			errs = append(errs, fmt.Sprintf("%s kill: %v", s, err))
+			continue
+		}
+		killed++
 	}
-	fmt.Printf("killed %d sessions\n", len(sessions))
+	if len(errs) > 0 {
+		fmt.Fprintf(os.Stderr, "killed %d/%d sessions\n", killed, len(sessions))
+		for _, e := range errs {
+			fmt.Fprintln(os.Stderr, e)
+		}
+		return 1
+	}
+	fmt.Printf("killed %d sessions\n", killed)
 	return 0
 }
 
