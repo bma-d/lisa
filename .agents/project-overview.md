@@ -36,7 +36,7 @@ lisa/
 - Zero external deps — stdlib only for portability
 - Function variable pattern for test mocking (`var tmuxFooFn = tmuxFoo`)
 - Hand-rolled flag parsing (no flag library)
-- All commands support `--json` for machine consumption
+- Machine-readable `--json` is available on `doctor`, `agent build-cmd`, and `session spawn|send|status|monitor|capture`; helper commands (`session name|list|exists|kill|kill-all`) are text-first
 - Session artifacts in `/tmp/` keyed by project hash
 - Release artifacts and package-manager distribution are handled via GoReleaser (Homebrew, Scoop, deb/rpm/apk, archives)
 

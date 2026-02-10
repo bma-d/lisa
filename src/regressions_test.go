@@ -110,6 +110,55 @@ func TestLooksLikePromptWaitingDetectsRecentPromptContext(t *testing.T) {
 	}
 }
 
+func TestComputeSessionStatusDoesNotTreatTagLikeClaudeTailAsWaiting(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "processing output\n<results>", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) {
+		return "alive", nil
+	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		return "", errors.New("missing")
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
+		return 456, 3.2
+	}
+
+	status, err := computeSessionStatus("lisa-test", t.TempDir(), "claude", "interactive", false, 1)
+	if err != nil {
+		t.Fatalf("expected status computation to succeed, got %v", err)
+	}
+	if status.SessionState != "in_progress" || status.Status != "active" {
+		t.Fatalf("expected busy claude session to remain active, got state=%s status=%s", status.SessionState, status.Status)
+	}
+}
+
 func TestParseExecCompletionIgnoresHistoricalMarkers(t *testing.T) {
 	capture := strings.Join([]string{
 		"working",
@@ -869,6 +918,46 @@ func TestCmdSessionKillReturnsErrorWhenSessionNotFound(t *testing.T) {
 
 	if code := cmdSessionKill([]string{"--session", "missing", "--project-root", t.TempDir()}); code == 0 {
 		t.Fatalf("expected non-zero exit when session is missing")
+	}
+}
+
+func TestCmdSessionKillCleansArtifactsWhenSessionMissing(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+	})
+
+	tmuxHasSessionFn = func(session string) bool {
+		return false
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-missing-cleanup"
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "exec",
+		ProjectRoot: projectRoot,
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("failed to write meta artifact: %v", err)
+	}
+
+	statePath := sessionStateFile(projectRoot, session)
+	if err := saveSessionState(statePath, sessionState{PollCount: 1}); err != nil {
+		t.Fatalf("failed to write state artifact: %v", err)
+	}
+
+	outputPath := sessionOutputFile(projectRoot, session)
+	if err := os.WriteFile(outputPath, []byte("output"), 0o600); err != nil {
+		t.Fatalf("failed to write output artifact: %v", err)
+	}
+
+	if code := cmdSessionKill([]string{"--session", session, "--project-root", projectRoot}); code == 0 {
+		t.Fatalf("expected non-zero exit when session is missing")
+	}
+	if fileExists(sessionMetaFile(projectRoot, session)) || fileExists(statePath) || fileExists(outputPath) {
+		t.Fatalf("expected stale artifacts to be cleaned when tmux session is missing")
 	}
 }
 

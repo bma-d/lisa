@@ -756,6 +756,9 @@ func cmdSessionKill(args []string) int {
 	projectRoot = canonicalProjectRoot(projectRoot)
 	if !tmuxHasSessionFn(session) {
 		fmt.Fprintln(os.Stderr, "session not found")
+		if err := cleanupSessionArtifacts(projectRoot, session); err != nil {
+			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", err)
+		}
 		return 1
 	}
 	if err := tmuxKillSessionFn(session); err != nil {

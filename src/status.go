@@ -113,6 +113,8 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		status.SessionState = "in_progress"
 
 		interactiveWaiting := mode == "interactive" && agentPID > 0 && agentCPU < 0.2 && !outputFresh
+		promptWaiting := mode == "interactive" && looksLikePromptWaiting(agent, capture)
+		activeProcessBusy := agentPID > 0 && agentCPU >= 0.2
 		if mode == "exec" && execDone {
 			status.Status = "idle"
 			if execExitCode == 0 {
@@ -121,7 +123,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 				status.SessionState = "crashed"
 			}
 			status.WaitEstimate = 0
-		} else if interactiveWaiting || looksLikePromptWaiting(agent, capture) {
+		} else if interactiveWaiting || (promptWaiting && !activeProcessBusy) {
 			status.Status = "idle"
 			status.SessionState = "waiting_input"
 			status.WaitEstimate = 0
@@ -293,10 +295,13 @@ func looksLikePromptWaiting(agent, capture string) bool {
 	}
 
 	if agent == "claude" {
-		if strings.HasSuffix(last, ">") || strings.HasSuffix(last, "›") {
+		if strings.HasSuffix(last, "›") {
 			return true
 		}
-		if strings.Contains(lowerTail, "press enter to send") {
+		if strings.TrimSpace(last) == ">" {
+			return true
+		}
+		if strings.Contains(lowerTail, "press enter to send") && (strings.TrimSpace(last) == ">" || strings.HasSuffix(last, "›")) {
 			return true
 		}
 	}
