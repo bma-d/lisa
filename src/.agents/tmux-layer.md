@@ -1,6 +1,6 @@
 # Tmux Interaction Layer
 
-Last Updated: 2026-02-09
+Last Updated: 2026-02-10
 Related Files: `src/tmux.go`
 
 ## Overview
@@ -30,6 +30,7 @@ All tmux interactions are wrapped in Go functions. No direct tmux commands elsew
 - `tmuxCapturePane()`: captures N lines from pane via `capture-pane -p -S -N`
 - `tmuxDisplay()`: queries tmux format strings (`pane_dead`, `pane_pid`, etc.)
 - `tmuxPaneStatus()`: combines `pane_dead` + `pane_dead_status` into alive/exited/crashed
+- `tmuxListSessions()`: normalizes tmux "no server running"/"no sessions" errors to an empty list so list/kill-all behave correctly when no tmux sessions exist
 
 ## Process Detection
 

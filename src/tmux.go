@@ -108,6 +108,9 @@ func tmuxKillSession(session string) error {
 func tmuxListSessions(projectOnly bool, projectRoot string) ([]string, error) {
 	out, err := runCmd("tmux", "list-sessions", "-F", "#{session_name}")
 	if err != nil {
+		if isTmuxNoSessionsOutput(out) {
+			return []string{}, nil
+		}
 		return nil, err
 	}
 	lines := trimLines(out)
@@ -126,6 +129,17 @@ func tmuxListSessions(projectOnly bool, projectRoot string) ([]string, error) {
 	}
 	sort.Strings(filtered)
 	return filtered, nil
+}
+
+func isTmuxNoSessionsOutput(output string) bool {
+	msg := strings.ToLower(strings.TrimSpace(output))
+	if msg == "" {
+		return false
+	}
+	return strings.Contains(msg, "no server running") ||
+		strings.Contains(msg, "failed to connect to server") ||
+		msg == "no sessions" ||
+		strings.HasPrefix(msg, "no sessions ")
 }
 
 func sessionMatchesProjectRoot(session, projectRoot, expectedProjectHash string) bool {

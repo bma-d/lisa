@@ -918,6 +918,68 @@ func TestCmdSessionListUsesMockableFn(t *testing.T) {
 	}
 }
 
+func TestTmuxListSessionsTreatsNoServerAsEmpty(t *testing.T) {
+	binDir := t.TempDir()
+	tmuxPath := filepath.Join(binDir, "tmux")
+	script := strings.Join([]string{
+		"#!/usr/bin/env sh",
+		`if [ "$1" = "list-sessions" ]; then`,
+		`  echo "no server running on /tmp/tmux-501/default" >&2`,
+		"  exit 1",
+		"fi",
+		"exit 0",
+		"",
+	}, "\n")
+	if err := os.WriteFile(tmuxPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("failed to write fake tmux binary: %v", err)
+	}
+
+	origPath := os.Getenv("PATH")
+	if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath); err != nil {
+		t.Fatalf("failed to set PATH: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("PATH", origPath)
+	})
+
+	sessions, err := tmuxListSessions(false, t.TempDir())
+	if err != nil {
+		t.Fatalf("expected no-server tmux output to be handled as empty list, got error: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected zero sessions, got %v", sessions)
+	}
+}
+
+func TestTmuxListSessionsReturnsErrorForUnexpectedTmuxFailure(t *testing.T) {
+	binDir := t.TempDir()
+	tmuxPath := filepath.Join(binDir, "tmux")
+	script := strings.Join([]string{
+		"#!/usr/bin/env sh",
+		`if [ "$1" = "list-sessions" ]; then`,
+		`  echo "permission denied" >&2`,
+		"  exit 1",
+		"fi",
+		"exit 0",
+		"",
+	}, "\n")
+	if err := os.WriteFile(tmuxPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("failed to write fake tmux binary: %v", err)
+	}
+
+	origPath := os.Getenv("PATH")
+	if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath); err != nil {
+		t.Fatalf("failed to set PATH: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("PATH", origPath)
+	})
+
+	if _, err := tmuxListSessions(false, t.TempDir()); err == nil {
+		t.Fatalf("expected tmux list-sessions to return error for unexpected failures")
+	}
+}
+
 func TestCmdSessionExistsUsesMockableFn(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	t.Cleanup(func() {
