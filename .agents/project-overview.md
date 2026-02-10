@@ -1,6 +1,6 @@
 # Project Overview
 
-Last Updated: 2026-02-09
+Last Updated: 2026-02-10
 
 ## Technology Stack
 
@@ -14,6 +14,9 @@ Last Updated: 2026-02-09
 lisa/
 ├── AGENTS.md              # Root index (framework + project overview)
 ├── CLAUDE.md              # → @AGENTS.md
+├── README.md              # User-facing usage + install methods
+├── .goreleaser.yaml       # Multi-channel release packaging
+├── .github/workflows/     # CI + release automation
 ├── .breadcrumbs/          # Change tracking
 │   ├── add-breadcrumb.py
 │   └── YYMMDD.md
@@ -35,6 +38,7 @@ lisa/
 - Hand-rolled flag parsing (no flag library)
 - All commands support `--json` for machine consumption
 - Session artifacts in `/tmp/` keyed by project hash
+- Release artifacts and package-manager distribution are handled via GoReleaser (Homebrew, Scoop, deb/rpm/apk, archives)
 
 ## Breadcrumb System
 
