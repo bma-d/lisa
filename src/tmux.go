@@ -29,9 +29,11 @@ func tmuxNewSession(session, projectRoot, agent, mode string, width, height int)
 		"-y", strconv.Itoa(height),
 		"-c", projectRoot,
 		"-e", "LISA_SESSION=true",
+		"-e", "LISA_SESSION_NAME="+session,
 		"-e", "LISA_AGENT="+agent,
 		"-e", "LISA_MODE="+mode,
 		"-e", "LISA_PROJECT_HASH="+projectHash(projectRoot),
+		"-e", "LISA_HEARTBEAT_FILE="+sessionHeartbeatFile(projectRoot, session),
 	)
 	return err
 }

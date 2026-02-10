@@ -1,11 +1,11 @@
 # Testing
 
-Last Updated: 2026-02-09
-Related Files: `src/regressions_test.go`, `src/e2e_claude_test.go`
+Last Updated: 2026-02-10
+Related Files: `src/regressions_test.go`, `src/session_wrapper_test.go`, `src/e2e_claude_test.go`, `src/e2e_codex_test.go`
 
 ## Overview
 
-Two test files covering unit/regression tests and E2E integration tests.
+Four test files covering regression/unit, wrapper/observability tests, and Claude/Codex E2E integration tests.
 
 ## Unit/Regression Tests
 
@@ -21,19 +21,27 @@ tmuxCapturePaneFn = func(session string, lines int) (string, error) { return moc
 
 Covers: state machine classification, artifact paths, sanitization, edge cases.
 
+## Wrapper/Observability Tests
+
+File: `session_wrapper_test.go`
+
+Covers run-id marker matching, heartbeat mtime freshness boundaries, transition/snapshot event logging, session explain payloads, malformed event line tolerance, event log trimming, process-scan caching, signal trap behavior, and concurrent status polling lock safety.
+
 ## E2E Integration Tests
 
-File: `e2e_claude_test.go`
+Files: `e2e_claude_test.go`, `e2e_codex_test.go`
 
-Run with: `LISA_E2E_CLAUDE=1 go test ./...`
+Run with:
+- `LISA_E2E_CLAUDE=1 go test ./...`
+- `LISA_E2E_CODEX=1 go test ./...`
 
-Requires real tmux server + Claude/Codex on PATH. Spawns actual sessions, monitors, captures, and cleans up. Gated behind env var to avoid CI failures.
+Requires real tmux server + matching agent on PATH. Spawns actual sessions, monitors, captures, and cleans up. Gated behind env vars to avoid CI failures.
 
 ## Writing New Tests
 
 1. For status/state logic: mock tmux function variables in `regressions_test.go`
 2. For new commands: add flag parsing tests, mock underlying functions
-3. For integration: add to `e2e_claude_test.go` with `LISA_E2E_CLAUDE` guard
+3. For integration: add to `e2e_claude_test.go` or `e2e_codex_test.go` with env guard
 
 ## Related Context
 

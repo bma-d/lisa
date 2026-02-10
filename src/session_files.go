@@ -65,6 +65,18 @@ func sessionOutputFile(projectRoot, session string) string {
 	return fmt.Sprintf("/tmp/lisa-%s-output-%s.txt", projectHash(projectRoot), sessionArtifactID(session))
 }
 
+func sessionHeartbeatFile(projectRoot, session string) string {
+	return fmt.Sprintf("/tmp/.lisa-%s-session-%s-heartbeat.txt", projectHash(projectRoot), sessionArtifactID(session))
+}
+
+func sessionEventsFile(projectRoot, session string) string {
+	return fmt.Sprintf("/tmp/.lisa-%s-session-%s-events.jsonl", projectHash(projectRoot), sessionArtifactID(session))
+}
+
+func sessionStateLockFile(projectRoot, session string) string {
+	return fmt.Sprintf("%s.lock", sessionStateFile(projectRoot, session))
+}
+
 func projectHash(projectRoot string) string {
 	return md5Hex8(canonicalProjectRoot(projectRoot))
 }
@@ -181,6 +193,9 @@ func cleanupSessionArtifacts(projectRoot, session string) error {
 		sessionStateFile(projectRoot, session),
 		sessionMetaFile(projectRoot, session),
 		sessionOutputFile(projectRoot, session),
+		sessionHeartbeatFile(projectRoot, session),
+		sessionEventsFile(projectRoot, session),
+		sessionStateLockFile(projectRoot, session),
 	} {
 		files[path] = struct{}{}
 	}
@@ -190,6 +205,9 @@ func cleanupSessionArtifacts(projectRoot, session string) error {
 		fmt.Sprintf("/tmp/.lisa-*-session-%s-state.json", sid),
 		fmt.Sprintf("/tmp/.lisa-*-session-%s-meta.json", sid),
 		fmt.Sprintf("/tmp/lisa-*-output-%s.txt", sid),
+		fmt.Sprintf("/tmp/.lisa-*-session-%s-heartbeat.txt", sid),
+		fmt.Sprintf("/tmp/.lisa-*-session-%s-events.jsonl", sid),
+		fmt.Sprintf("/tmp/.lisa-*-session-%s-state.json.lock", sid),
 		sessionCommandScriptPattern(session),
 	}
 	for _, pattern := range globPatterns {

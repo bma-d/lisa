@@ -1,6 +1,6 @@
 # State Machine & Status Classification
 
-Last Updated: 2026-02-09
+Last Updated: 2026-02-10
 Related Files: `src/status.go`, `src/types.go`
 
 ## Overview
@@ -9,25 +9,33 @@ Related Files: `src/status.go`, `src/types.go`
 
 ## Signal Sources
 
-1. **Pane status** (`tmuxPaneStatus`): checks `pane_dead` + `pane_dead_status` -> alive / exited:N / crashed:N
-2. **Agent process** (`detectAgentProcess`): BFS walk from pane PID through process tree, matches "claude"/"codex" in command string, returns PID + CPU%
+1. **Pane status snapshot** (`readPaneSnapshot`): prefers a single tmux format query (`pane_dead`, `pane_dead_status`, `pane_current_command`, `pane_pid`) with fallback to per-field reads
+2. **Agent process** (`detectAgentProcess`): BFS walk from pane PID through process tree, matches "claude"/"codex" in command string, returns PID + CPU%; cached between polls via `LISA_PROCESS_SCAN_INTERVAL_SECONDS` (default 8s)
 3. **Output freshness**: MD5 hash of captured pane output compared to last known hash; stale after `LISA_OUTPUT_STALE_SECONDS` (default 240s)
 4. **Prompt detection** (`looksLikePromptWaiting`): agent-specific regex patterns on last output line
    - Claude: trailing `>` or `›`, or "press enter to send"
    - Codex: `❯` with timestamp pattern, or "tokens used"
-5. **Exec completion** (`parseExecCompletion`): searches for `__LISA_EXEC_DONE__:N` marker
-6. **Todo progress** (`parseTodos`): counts `[x]`/`[ ]` checkboxes in output
+5. **Session completion** (`parseSessionCompletionForRun`): searches for `__LISA_SESSION_DONE__:{runID}:N` markers and validates against metadata `runId`
+6. **Exec completion** (`parseExecCompletion`): searches for `__LISA_EXEC_DONE__:N` marker
+7. **Heartbeat freshness**: reads `/tmp/.lisa-*-heartbeat.txt` mtime (`LISA_HEARTBEAT_FILE`), stale after `LISA_HEARTBEAT_STALE_SECONDS` (default 8s)
+8. **Todo progress** (`parseTodos`): counts `[x]`/`[ ]` checkboxes in output
+9. **State lock observability**: lock wait timing in `signals.stateLockWaitMs`, timeout fallback to `state_lock_timeout` classification
+10. **Structured signals**: status payload includes `classificationReason` + `signals` block for observability and debugging
 
 ## Classification Priority
 
 ```
 pane crashed/exited → immediate terminal state
-exec mode + done marker → completed/crashed based on exit code
+session done marker (matching runId) → completed/crashed based on exit code
+exec mode + exec done marker → completed/crashed based on exit code
 interactive waiting (low CPU + stale output) OR prompt regex → waiting_input
-agent PID alive OR output fresh OR non-shell pane command → in_progress
+agent PID alive OR output fresh OR heartbeat fresh OR non-shell pane command → in_progress
 poll count ≤ 3 → just_started (grace period)
 else → stuck
 ```
+
+Additional fallback:
+- state lock timeout (`LISA_STATE_LOCK_TIMEOUT_MS`, default 2500ms) -> `stuck` with reason `state_lock_timeout` (non-fatal status payload)
 
 ## Wait Estimation
 
@@ -35,7 +43,8 @@ else → stuck
 
 ## State Persistence
 
-`sessionState` struct saved to `/tmp/` between polls: tracks `PollCount`, `HasEverBeenActive`, `LastOutputHash`, `LastOutputAt`.
+`sessionState` struct saved to `/tmp/` between polls: tracks output freshness, poll counters, and last classification.  
+`/tmp/.lisa-*-events.jsonl` receives snapshot/transition events per status computation and is bounded by `LISA_EVENTS_MAX_BYTES`/`LISA_EVENTS_MAX_LINES`.
 
 ## Related Context
 

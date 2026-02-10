@@ -12,7 +12,9 @@ All tmux interactions are wrapped in Go functions. No direct tmux commands elsew
 `tmuxNewSession()` creates detached session with:
 - Custom dimensions (`-x`, `-y`)
 - Working directory (`-c projectRoot`)
-- Environment variables: `LISA_SESSION`, `LISA_AGENT`, `LISA_MODE`, `LISA_PROJECT_HASH`
+- Environment variables: `LISA_SESSION`, `LISA_SESSION_NAME`, `LISA_AGENT`, `LISA_MODE`, `LISA_PROJECT_HASH`, `LISA_HEARTBEAT_FILE`
+
+Spawn path now hard-fails before session creation if heartbeat artifact path cannot be prepared.
 
 ## Command Sending Strategies
 

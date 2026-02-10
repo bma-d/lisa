@@ -46,6 +46,22 @@ func TestWrapExecCommandTemporarilyDisablesErrexit(t *testing.T) {
 	}
 }
 
+func TestWrapSessionCommandInjectsLifecycleMarkersAndHeartbeat(t *testing.T) {
+	wrapped := wrapSessionCommand("echo hello", "run-test-1")
+	for _, token := range []string{
+		sessionStartPrefix,
+		sessionDonePrefix,
+		"run-test-1",
+		"LISA_HEARTBEAT_FILE",
+		"trap '__lisa_ec=130; exit \"$__lisa_ec\"' INT TERM HUP",
+		"echo hello",
+	} {
+		if !strings.Contains(wrapped, token) {
+			t.Fatalf("expected wrapped session command to contain %q, got %q", token, wrapped)
+		}
+	}
+}
+
 func captureOutput(t *testing.T, fn func()) (string, string) {
 	t.Helper()
 
@@ -232,6 +248,123 @@ func TestComputeSessionStatusTreatsPwshPaneAsShell(t *testing.T) {
 	}
 }
 
+func TestComputeSessionStatusUsesHeartbeatWhenAgentUndetected(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	capture := "running silently"
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return capture, nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) {
+		return "alive", nil
+	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		return "", errors.New("missing")
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
+		return 0, 0
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-heartbeat-active"
+	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
+		LastOutputHash: md5Hex8(capture),
+		LastOutputAt:   time.Now().Add(-15 * time.Minute).Unix(),
+	}); err != nil {
+		t.Fatalf("failed to seed stale output state: %v", err)
+	}
+	if err := os.WriteFile(sessionHeartbeatFile(projectRoot, session), []byte(strconv.FormatInt(time.Now().Unix(), 10)), 0o600); err != nil {
+		t.Fatalf("failed to seed heartbeat file: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 4)
+	if err != nil {
+		t.Fatalf("expected status computation to succeed, got %v", err)
+	}
+	if status.SessionState != "in_progress" || status.Status != "active" {
+		t.Fatalf("expected heartbeat-backed session to be active, got state=%s status=%s", status.SessionState, status.Status)
+	}
+	if status.HeartbeatAge < 0 {
+		t.Fatalf("expected heartbeat age to be recorded")
+	}
+}
+
+func TestComputeSessionStatusInteractiveUsesSessionDoneMarker(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "__LISA_SESSION_DONE__:0\nuser@host:~/repo$ ", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) {
+		return "alive", nil
+	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		if key == "LISA_MODE" {
+			return "interactive", nil
+		}
+		return "", errors.New("missing")
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
+		return 0, 0
+	}
+
+	status, err := computeSessionStatus("lisa-interactive-done", t.TempDir(), "auto", "auto", false, 4)
+	if err != nil {
+		t.Fatalf("expected status computation to succeed, got %v", err)
+	}
+	if status.SessionState != "completed" || status.Status != "idle" {
+		t.Fatalf("expected session done marker to mark completion, got state=%s status=%s", status.SessionState, status.Status)
+	}
+}
+
 func TestParseExecCompletionIgnoresHistoricalMarkers(t *testing.T) {
 	capture := strings.Join([]string{
 		"working",
@@ -282,6 +415,19 @@ func TestParseExecCompletionAcceptsFishStylePromptWithPath(t *testing.T) {
 	done, code := parseExecCompletion(capture)
 	if !done || code != 0 {
 		t.Fatalf("expected fish-style prompt to be accepted, got done=%v code=%d", done, code)
+	}
+}
+
+func TestParseSessionCompletionAcceptsTailMarkerWithPrompt(t *testing.T) {
+	capture := strings.Join([]string{
+		"final output",
+		"__LISA_SESSION_DONE__:2",
+		"user@host:~/repo$",
+	}, "\n")
+
+	done, code := parseSessionCompletion(capture)
+	if !done || code != 2 {
+		t.Fatalf("expected session done marker to be parsed, got done=%v code=%d", done, code)
 	}
 }
 
@@ -546,6 +692,7 @@ func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifacts(t *testing.T) {
 	metaPath := sessionMetaFile(projectTwo, session)
 	statePath := sessionStateFile(projectTwo, session)
 	outputPath := sessionOutputFile(projectTwo, session)
+	heartbeatPath := sessionHeartbeatFile(projectTwo, session)
 	scriptPath := sessionCommandScriptPath(session, time.Now().UnixNano())
 
 	meta := sessionMeta{
@@ -563,6 +710,9 @@ func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifacts(t *testing.T) {
 	if err := os.WriteFile(outputPath, []byte("output"), 0o600); err != nil {
 		t.Fatalf("failed to save output: %v", err)
 	}
+	if err := os.WriteFile(heartbeatPath, []byte(strconv.FormatInt(time.Now().Unix(), 10)), 0o600); err != nil {
+		t.Fatalf("failed to save heartbeat: %v", err)
+	}
 	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\n"), 0o700); err != nil {
 		t.Fatalf("failed to write script: %v", err)
 	}
@@ -571,7 +721,7 @@ func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifacts(t *testing.T) {
 		t.Fatalf("cleanup returned error: %v", err)
 	}
 
-	if fileExists(metaPath) || fileExists(statePath) || fileExists(outputPath) || fileExists(scriptPath) {
+	if fileExists(metaPath) || fileExists(statePath) || fileExists(outputPath) || fileExists(heartbeatPath) || fileExists(scriptPath) {
 		t.Fatalf("expected all artifacts to be removed across project hashes")
 	}
 }
@@ -752,6 +902,9 @@ func TestCmdSessionSpawnJSONOutputAndExecWrapping(t *testing.T) {
 	if !strings.Contains(sentCommand, execDonePrefix) {
 		t.Fatalf("expected wrapped exec marker in startup command, got %q", sentCommand)
 	}
+	if !strings.Contains(sentCommand, sessionStartPrefix) || !strings.Contains(sentCommand, sessionDonePrefix) {
+		t.Fatalf("expected wrapped session markers in startup command, got %q", sentCommand)
+	}
 }
 
 func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
@@ -802,6 +955,56 @@ func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
 	}
 	if fileExists(scriptPath) {
 		t.Fatalf("expected cleanup to remove command script after failed spawn")
+	}
+}
+
+func TestCmdSessionSpawnMetaFailureKillsSession(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionFn
+	origSend := tmuxSendCommandWithFallbackFn
+	origKill := tmuxKillSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionFn = origNew
+		tmuxSendCommandWithFallbackFn = origSend
+		tmuxKillSessionFn = origKill
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return false }
+	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
+	tmuxSendCommandWithFallbackFn = func(session, command string, enter bool) error { return nil }
+	killCalled := false
+	tmuxKillSessionFn = func(session string) error {
+		killCalled = true
+		return nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-meta-failure"
+	metaPath := sessionMetaFile(projectRoot, session)
+	tmpPath := filepath.Join(filepath.Dir(metaPath), "."+filepath.Base(metaPath)+".tmp")
+	if err := os.Mkdir(tmpPath, 0o700); err != nil {
+		t.Fatalf("failed to create tmp path blocker: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(tmpPath)
+	})
+
+	_, stderr := captureOutput(t, func() {
+		if code := cmdSessionSpawn([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--command", "echo hello",
+		}); code == 0 {
+			t.Fatalf("expected spawn to fail when metadata persistence fails")
+		}
+	})
+
+	if !killCalled {
+		t.Fatalf("expected spawn metadata failure to kill tmux session")
+	}
+	if !strings.Contains(stderr, "failed to persist metadata") {
+		t.Fatalf("unexpected stderr: %q", stderr)
 	}
 }
 
@@ -1329,5 +1532,116 @@ func TestComputeSessionStatusReturnsErrorOnCriticalTmuxReadFailures(t *testing.T
 	}
 	if _, err := computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1); err == nil {
 		t.Fatalf("expected error when pane pid cannot be parsed")
+	}
+}
+
+func TestComputeSessionStatusDetectsPreCompletedExecOnFirstPoll(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "running command\nsome output\n__LISA_EXEC_DONE__:0\nuser@host:~/repo$", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) {
+		return "alive", nil
+	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		if key == "LISA_MODE" {
+			return "exec", nil
+		}
+		return "", errors.New("missing")
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
+		return 0, 0
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-pre-completed-exec"
+
+	// First poll with no prior state — simulates monitoring a session that
+	// already finished before polling started.
+	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "completed" {
+		t.Fatalf("expected pre-completed exec session to be detected as completed on first poll, got state=%s status=%s", status.SessionState, status.Status)
+	}
+}
+
+func TestComputeSessionStatusDetectsExecCompletionWithoutModeHint(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "output\n__LISA_EXEC_DONE__:0\nuser@host:~/repo$", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) {
+		return "alive", nil
+	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "bash", nil
+		case "#{pane_pid}":
+			return "100", nil
+		default:
+			return "", nil
+		}
+	}
+	// Simulate mode resolution failing — env lookup returns error and no meta
+	// exists, so mode defaults to "interactive".
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		return "", errors.New("missing")
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) {
+		return 0, 0
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-exec-no-mode-hint"
+
+	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "completed" {
+		t.Fatalf("expected exec completion marker to be detected even when mode resolves to interactive, got state=%s", status.SessionState)
 	}
 }

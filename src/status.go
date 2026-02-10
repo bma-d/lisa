@@ -2,29 +2,81 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
+var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+
+type sessionCompletionMarker struct {
+	Seen     bool
+	RunID    string
+	ExitCode int
+}
+
+func readPaneSnapshot(session string) (string, string, string, error) {
+	combined, err := tmuxDisplayFn(session, "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}")
+	if err == nil {
+		parts := strings.SplitN(combined, "\t", 4)
+		if len(parts) == 4 {
+			return formatPaneStatus(parts[0], parts[1]), strings.TrimSpace(parts[2]), strings.TrimSpace(parts[3]), nil
+		}
+	}
+
+	paneStatus, err := tmuxPaneStatusFn(session)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to read tmux pane status: %w", err)
+	}
+	paneCommand, err := tmuxDisplayFn(session, "#{pane_current_command}")
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to read tmux pane command: %w", err)
+	}
+	panePIDRaw, err := tmuxDisplayFn(session, "#{pane_pid}")
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to read tmux pane pid: %w", err)
+	}
+	return paneStatus, paneCommand, strings.TrimSpace(panePIDRaw), nil
+}
+
+func formatPaneStatus(deadRaw, exitRaw string) string {
+	dead := strings.TrimSpace(deadRaw)
+	exit := strings.TrimSpace(exitRaw)
+	if dead == "1" {
+		if exit != "" {
+			return "exited:" + exit
+		}
+		return "exited:0"
+	}
+	if exit != "" && exit != "0" {
+		return "crashed:" + exit
+	}
+	return "alive"
+}
+
 func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
 	status := sessionStatus{
-		Session:            session,
-		Status:             "error",
-		SessionState:       "error",
-		WaitEstimate:       30,
-		OutputFreshSeconds: defaultOutputStaleSeconds,
+		Session:              session,
+		Status:               "error",
+		SessionState:         "error",
+		WaitEstimate:         30,
+		HeartbeatAge:         -1,
+		HeartbeatFreshSecs:   getIntEnv("LISA_HEARTBEAT_STALE_SECONDS", defaultHeartbeatStaleSecs),
+		ClassificationReason: "initializing",
 	}
 
 	if session == "" {
 		status.ActiveTask = "no_session"
+		status.ClassificationReason = "no_session"
 		return status, nil
 	}
 	if !tmuxHasSessionFn(session) {
 		status.Status = "not_found"
 		status.SessionState = "not_found"
 		status.WaitEstimate = 0
+		status.ClassificationReason = "session_not_found"
 		return status, nil
 	}
 
@@ -33,55 +85,40 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	mode := resolveMode(modeHint, meta, session)
 	status.Agent = agent
 	status.Mode = mode
+	status.Signals.RunID = strings.TrimSpace(meta.RunID)
 
 	capture, err := tmuxCapturePaneFn(session, 220)
 	if err != nil {
 		return status, fmt.Errorf("failed to capture tmux pane: %w", err)
 	}
 	capture = filterInputBox(capture)
-	lines := trimLines(capture)
-	capture = strings.Join(lines, "\n")
+	capture = strings.Join(trimLines(capture), "\n")
 
-	statePath := sessionStateFile(projectRoot, session)
-	state := loadSessionState(statePath)
-	now := time.Now().Unix()
-	hash := md5Hex8(capture)
-	if hash != "" && hash != state.LastOutputHash {
-		state.LastOutputHash = hash
-		state.LastOutputAt = now
-	}
-	if state.LastOutputAt == 0 {
-		state.LastOutputAt = now
-	}
-	outputAge := int(now - state.LastOutputAt)
-	staleAfter := getIntEnv("LISA_OUTPUT_STALE_SECONDS", defaultOutputStaleSeconds)
-	outputFresh := outputAge <= staleAfter
-	status.OutputAgeSeconds = outputAge
-	status.OutputFreshSeconds = staleAfter
-
-	paneStatus, err := tmuxPaneStatusFn(session)
+	paneStatus, paneCommand, panePIDText, err := readPaneSnapshot(session)
 	if err != nil {
-		return status, fmt.Errorf("failed to read tmux pane status: %w", err)
-	}
-	paneCommand, err := tmuxDisplayFn(session, "#{pane_current_command}")
-	if err != nil {
-		return status, fmt.Errorf("failed to read tmux pane command: %w", err)
+		return status, err
 	}
 	status.PaneStatus = paneStatus
 	status.PaneCommand = paneCommand
+
+	statePath := sessionStateFile(projectRoot, session)
+	stateHint := loadSessionState(statePath)
 
 	todoDone, todoTotal := parseTodos(capture)
 	status.TodosDone = todoDone
 	status.TodosTotal = todoTotal
 	status.ActiveTask = extractActiveTask(capture)
 	status.WaitEstimate = estimateWait(status.ActiveTask, todoDone, todoTotal)
-	execDone, execExitCode := parseExecCompletion(capture)
 
-	panePIDRaw, err := tmuxDisplayFn(session, "#{pane_pid}")
-	if err != nil {
-		return status, fmt.Errorf("failed to read tmux pane pid: %w", err)
-	}
-	panePIDText := strings.TrimSpace(panePIDRaw)
+	execDone, execExitCode := parseExecCompletion(capture)
+	sessionDone, sessionExitCode, markerRunID, markerRunMismatch := parseSessionCompletionForRun(capture, status.Signals.RunID)
+	status.Signals.ExecMarkerSeen = execDone
+	status.Signals.ExecExitCode = execExitCode
+	status.Signals.SessionMarkerSeen = markerRunID != "" || sessionDone || markerRunMismatch
+	status.Signals.SessionMarkerRunID = markerRunID
+	status.Signals.SessionMarkerRunMismatch = markerRunMismatch
+	status.Signals.SessionExitCode = sessionExitCode
+
 	panePID := 0
 	if panePIDText != "" {
 		panePID, err = strconv.Atoi(panePIDText)
@@ -89,70 +126,211 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			return status, fmt.Errorf("failed to parse tmux pane pid %q: %w", panePIDText, err)
 		}
 	}
-	agentPID, agentCPU := detectAgentProcessFn(panePID, agent)
+	now := time.Now().Unix()
+	processScanInterval := getIntEnv("LISA_PROCESS_SCAN_INTERVAL_SECONDS", defaultProcessScanInterval)
+	if processScanInterval <= 0 {
+		processScanInterval = defaultProcessScanInterval
+	}
+	useCachedProcessScan := stateHint.LastAgentProbeAt > 0 &&
+		(now-stateHint.LastAgentProbeAt) < int64(processScanInterval)
+	agentPID := stateHint.LastAgentPID
+	agentCPU := stateHint.LastAgentCPU
+	if !useCachedProcessScan {
+		agentPID, agentCPU = detectAgentProcessFn(panePID, agent)
+	} else {
+		status.Signals.AgentScanCached = true
+	}
 	status.AgentPID = agentPID
 	status.AgentCPU = agentCPU
+	status.Signals.AgentProcessDetected = agentPID > 0
 
-	switch {
-	case strings.HasPrefix(paneStatus, "crashed:"):
-		status.Status = "idle"
-		status.SessionState = "crashed"
-		status.WaitEstimate = 0
-	case strings.HasPrefix(paneStatus, "exited:"):
-		exitCode := strings.TrimPrefix(paneStatus, "exited:")
-		if exitCode == "0" {
-			status.Status = "idle"
-			status.SessionState = "completed"
-		} else {
-			status.Status = "idle"
-			status.SessionState = "crashed"
+	hbAge, hbSeen := sessionHeartbeatAge(projectRoot, session, now)
+	if hbSeen {
+		status.HeartbeatAge = hbAge
+	}
+	heartbeatFresh := hbSeen && isAgeFresh(hbAge, status.HeartbeatFreshSecs)
+	status.Signals.HeartbeatSeen = hbSeen
+	status.Signals.HeartbeatFresh = heartbeatFresh
+
+	paneIsShell := isShellCommand(paneCommand)
+	status.Signals.PaneIsShell = paneIsShell
+
+	lockMeta, err := withStateFileLockFn(statePath, func() error {
+		state := loadSessionState(statePath)
+		state.LastAgentPID = agentPID
+		state.LastAgentCPU = agentCPU
+		if !useCachedProcessScan {
+			state.LastAgentProbeAt = now
 		}
-		status.WaitEstimate = 0
-	default:
-		status.Status = "active"
-		status.SessionState = "in_progress"
+
+		hash := md5Hex8(capture)
+		if hash != "" && hash != state.LastOutputHash {
+			state.LastOutputHash = hash
+			state.LastOutputAt = now
+		}
+		if state.LastOutputAt == 0 {
+			state.LastOutputAt = now
+		}
+		outputAge := int(now - state.LastOutputAt)
+		if outputAge < 0 {
+			outputAge = 0
+		}
+		staleAfter := getIntEnv("LISA_OUTPUT_STALE_SECONDS", defaultOutputStaleSeconds)
+		outputFresh := isAgeFresh(outputAge, staleAfter)
+		status.OutputAgeSeconds = outputAge
+		status.OutputFreshSeconds = staleAfter
+		status.Signals.OutputFresh = outputFresh
 
 		interactiveWaiting := mode == "interactive" && agentPID > 0 && agentCPU < 0.2 && !outputFresh
 		promptWaiting := mode == "interactive" && looksLikePromptWaiting(agent, capture)
 		activeProcessBusy := agentPID > 0 && agentCPU >= 0.2
-		if mode == "exec" && execDone {
+		status.Signals.InteractiveWaiting = interactiveWaiting
+		status.Signals.PromptWaiting = promptWaiting
+		status.Signals.ActiveProcessBusy = activeProcessBusy
+
+		switch {
+		case strings.HasPrefix(paneStatus, "crashed:"):
 			status.Status = "idle"
-			if execExitCode == 0 {
+			status.SessionState = "crashed"
+			status.WaitEstimate = 0
+			status.ClassificationReason = "pane_crashed"
+		case strings.HasPrefix(paneStatus, "exited:"):
+			exitCode := strings.TrimPrefix(paneStatus, "exited:")
+			status.Status = "idle"
+			status.WaitEstimate = 0
+			if exitCode == "0" {
 				status.SessionState = "completed"
+				status.ClassificationReason = "pane_exited_zero"
 			} else {
 				status.SessionState = "crashed"
+				status.ClassificationReason = "pane_exited_nonzero"
 			}
-			status.WaitEstimate = 0
-		} else if interactiveWaiting || (promptWaiting && !activeProcessBusy) {
-			status.Status = "idle"
-			status.SessionState = "waiting_input"
-			status.WaitEstimate = 0
-		} else if agentPID > 0 || outputFresh || !isShellCommand(paneCommand) {
+		default:
 			status.Status = "active"
 			status.SessionState = "in_progress"
-			if status.ActiveTask == "" {
+
+			switch {
+			case sessionDone:
+				status.Status = "idle"
+				status.WaitEstimate = 0
+				status.ClassificationReason = "session_done_marker"
+				if sessionExitCode == 0 {
+					status.SessionState = "completed"
+				} else {
+					status.SessionState = "crashed"
+				}
+			case execDone:
+				status.Status = "idle"
+				status.WaitEstimate = 0
+				status.ClassificationReason = "exec_done_marker"
+				if execExitCode == 0 {
+					status.SessionState = "completed"
+				} else {
+					status.SessionState = "crashed"
+				}
+			case interactiveWaiting:
+				status.Status = "idle"
+				status.SessionState = "waiting_input"
+				status.WaitEstimate = 0
+				status.ClassificationReason = "interactive_waiting_idle"
+			case promptWaiting && !activeProcessBusy:
+				status.Status = "idle"
+				status.SessionState = "waiting_input"
+				status.WaitEstimate = 0
+				status.ClassificationReason = "prompt_waiting"
+			case agentPID > 0:
+				status.Status = "active"
+				status.SessionState = "in_progress"
+				status.ClassificationReason = "agent_pid_alive"
+			case outputFresh:
+				status.Status = "active"
+				status.SessionState = "in_progress"
+				status.ClassificationReason = "output_fresh"
+			case heartbeatFresh:
+				status.Status = "active"
+				status.SessionState = "in_progress"
+				status.ClassificationReason = "heartbeat_fresh"
+			case !paneIsShell:
+				status.Status = "active"
+				status.SessionState = "in_progress"
+				status.ClassificationReason = "non_shell_command"
+			default:
+				status.Status = "idle"
+				status.WaitEstimate = 0
+				if pollCount > 0 && pollCount <= 3 {
+					status.SessionState = "just_started"
+					status.ClassificationReason = "grace_period_just_started"
+				} else {
+					status.SessionState = "stuck"
+					if markerRunMismatch {
+						status.ClassificationReason = "stuck_marker_run_mismatch"
+					} else {
+						status.ClassificationReason = "stuck_no_signals"
+					}
+				}
+			}
+			if status.Status == "active" && status.ActiveTask == "" {
 				status.ActiveTask = fmt.Sprintf("%s running", strings.Title(agent))
 			}
-		} else {
-			status.Status = "idle"
-			if pollCount > 0 && pollCount <= 3 {
-				status.SessionState = "just_started"
-			} else {
-				status.SessionState = "stuck"
-			}
-			status.WaitEstimate = 0
 		}
-	}
 
-	if status.Status == "active" {
-		state.HasEverBeenActive = true
+		if status.Status == "active" {
+			state.HasEverBeenActive = true
+		}
+		if pollCount > 0 {
+			state.PollCount = pollCount
+		} else {
+			state.PollCount++
+		}
+		currentPoll := state.PollCount
+
+		eventType := "snapshot"
+		if state.LastSessionState != status.SessionState ||
+			state.LastStatus != status.Status ||
+			state.LastClassificationReason != status.ClassificationReason {
+			eventType = "transition"
+		}
+		_ = appendSessionEventFn(projectRoot, session, sessionEvent{
+			At:      time.Now().UTC().Format(time.RFC3339Nano),
+			Type:    eventType,
+			Session: session,
+			State:   status.SessionState,
+			Status:  status.Status,
+			Reason:  status.ClassificationReason,
+			Poll:    currentPoll,
+			Signals: status.Signals,
+		})
+
+		state.LastSessionState = status.SessionState
+		state.LastStatus = status.Status
+		state.LastClassificationReason = status.ClassificationReason
+		state.LastClassificationPollRef = currentPoll
+
+		return saveSessionState(statePath, state)
+	})
+	status.Signals.StateLockWaitMS = lockMeta.WaitMS
+	if err != nil {
+		if waitMS, timedOut := stateLockTimeoutWaitMS(err); timedOut {
+			status.Status = "idle"
+			status.SessionState = "stuck"
+			status.WaitEstimate = 0
+			status.ClassificationReason = "state_lock_timeout"
+			status.Signals.StateLockTimedOut = true
+			status.Signals.StateLockWaitMS = waitMS
+			_ = appendSessionEventFn(projectRoot, session, sessionEvent{
+				At:      time.Now().UTC().Format(time.RFC3339Nano),
+				Type:    "transition",
+				Session: session,
+				State:   status.SessionState,
+				Status:  status.Status,
+				Reason:  status.ClassificationReason,
+				Poll:    pollCount,
+				Signals: status.Signals,
+			})
+			return status, nil
+		}
+		return status, fmt.Errorf("failed to update session state: %w", err)
 	}
-	if pollCount > 0 {
-		state.PollCount = pollCount
-	} else {
-		state.PollCount++
-	}
-	_ = saveSessionState(statePath, state)
 
 	if full && (status.SessionState == "completed" || status.SessionState == "crashed" || status.SessionState == "stuck") {
 		outputFile, err := writeSessionOutputFile(projectRoot, session)
@@ -268,7 +446,7 @@ func looksLikePromptWaiting(agent, capture string) bool {
 
 	tail := make([]string, 0, 8)
 	for i := len(lines) - 1; i >= 0 && len(tail) < 8; i-- {
-		line := strings.TrimSpace(lines[i])
+		line := strings.TrimSpace(stripANSIEscape(lines[i]))
 		if line == "" {
 			continue
 		}
@@ -280,7 +458,6 @@ func looksLikePromptWaiting(agent, capture string) bool {
 	last := tail[0]
 	lowerTail := strings.ToLower(strings.Join(tail, "\n"))
 
-	// If recent output still looks like active work, avoid classifying as waiting.
 	if regexp.MustCompile(`(?i)\b(working|running|checking|planning|writing|editing|creating|fixing|executing|reviewing|loading|reading|searching|parsing|building|compiling|installing)\b`).MatchString(last) {
 		return false
 	}
@@ -335,22 +512,63 @@ func estimateWait(task string, done, total int) int {
 }
 
 func parseExecCompletion(capture string) (bool, int) {
-	markerRe := regexp.MustCompile(`^__LISA_EXEC_DONE__:(-?\d+)\s*$`)
-	lines := trimLines(capture)
-	if len(lines) == 0 {
-		return false, 0
+	return parseCompletionMarker(capture, execDonePrefix)
+}
+
+func parseSessionCompletion(capture string) (bool, int) {
+	done, code, _, _ := parseSessionCompletionForRun(capture, "")
+	return done, code
+}
+
+func parseSessionCompletionForRun(capture, runID string) (bool, int, string, bool) {
+	marker := parseSessionCompletionMarker(capture)
+	if !marker.Seen {
+		return false, 0, "", false
+	}
+	runMismatch := runID != "" && marker.RunID != "" && marker.RunID != runID
+	if runMismatch {
+		return false, marker.ExitCode, marker.RunID, true
+	}
+	return true, marker.ExitCode, marker.RunID, false
+}
+
+func parseSessionCompletionMarker(capture string) sessionCompletionMarker {
+	markerRe := regexp.MustCompile(`^` + regexp.QuoteMeta(sessionDonePrefix) + `(?:([A-Za-z0-9._-]+):)?(-?\d+)\s*$`)
+	tail := nonEmptyTailLines(capture, 24)
+	if len(tail) == 0 {
+		return sessionCompletionMarker{}
 	}
 
-	// Only trust completion markers that are still at the tail of the pane output.
-	// Historical markers can linger in tmux history and should not end a new run.
-	tail := make([]string, 0, 24)
-	for i := len(lines) - 1; i >= 0 && len(tail) < 24; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
+	markerIdx := -1
+	markerRunID := ""
+	markerCode := ""
+	for i := len(tail) - 1; i >= 0; i-- {
+		match := markerRe.FindStringSubmatch(tail[i])
+		if len(match) == 3 {
+			markerIdx = i
+			markerRunID = strings.TrimSpace(match[1])
+			markerCode = match[2]
+			break
 		}
-		tail = append([]string{line}, tail...)
 	}
+	if markerIdx < 0 {
+		return sessionCompletionMarker{}
+	}
+	for i := markerIdx + 1; i < len(tail); i++ {
+		if !isLikelyShellPromptLine(tail[i]) {
+			return sessionCompletionMarker{}
+		}
+	}
+	code, err := strconv.Atoi(markerCode)
+	if err != nil {
+		code = 1
+	}
+	return sessionCompletionMarker{Seen: true, RunID: markerRunID, ExitCode: code}
+}
+
+func parseCompletionMarker(capture, prefix string) (bool, int) {
+	markerRe := regexp.MustCompile(`^` + regexp.QuoteMeta(prefix) + `(-?\d+)\s*$`)
+	tail := nonEmptyTailLines(capture, 24)
 	if len(tail) == 0 {
 		return false, 0
 	}
@@ -381,8 +599,44 @@ func parseExecCompletion(capture string) (bool, int) {
 	return true, code
 }
 
+func nonEmptyTailLines(capture string, max int) []string {
+	lines := trimLines(capture)
+	tail := make([]string, 0, max)
+	for i := len(lines) - 1; i >= 0 && len(tail) < max; i-- {
+		line := strings.TrimSpace(stripANSIEscape(lines[i]))
+		if line == "" {
+			continue
+		}
+		tail = append([]string{line}, tail...)
+	}
+	return tail
+}
+
+func stripANSIEscape(line string) string {
+	return ansiEscapeRe.ReplaceAllString(line, "")
+}
+
+func sessionHeartbeatAge(projectRoot, session string, now int64) (int, bool) {
+	info, err := os.Stat(sessionHeartbeatFile(projectRoot, session))
+	if err != nil {
+		return 0, false
+	}
+	age := int(now - info.ModTime().Unix())
+	if age < 0 {
+		age = 0
+	}
+	return age, true
+}
+
+func isAgeFresh(age, staleAfter int) bool {
+	if age < 0 {
+		return false
+	}
+	return age <= staleAfter
+}
+
 func isLikelyShellPromptLine(line string) bool {
-	line = strings.TrimSpace(line)
+	line = strings.TrimSpace(stripANSIEscape(line))
 	if line == "" {
 		return true
 	}
@@ -393,15 +647,13 @@ func isLikelyShellPromptLine(line string) bool {
 		return true
 	}
 
-	// Fish-style prompts commonly end with '>' but should not match arbitrary
-	// output like XML/HTML tags.
 	if strings.HasSuffix(line, ">") {
 		if strings.Contains(line, "<") {
 			return false
 		}
 		return strings.Contains(line, "/") ||
 			strings.Contains(line, "~") ||
-			strings.Contains(line, `\`)
+			strings.Contains(line, `\\`)
 	}
 	return false
 }

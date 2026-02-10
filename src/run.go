@@ -45,6 +45,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "               [--agent-args TEXT] [--project-root PATH] [--width N] [--height N] [--json]")
 	fmt.Fprintln(os.Stderr, "  session send --session NAME [--text TEXT | --keys \"KEYS...\"] [--enter] [--json]")
 	fmt.Fprintln(os.Stderr, "  session status --session NAME [--agent auto|claude|codex] [--mode auto|interactive|exec] [--project-root PATH] [--full] [--json]")
+	fmt.Fprintln(os.Stderr, "  session explain --session NAME [--agent auto|claude|codex] [--mode auto|interactive|exec] [--project-root PATH] [--events N] [--json]")
 	fmt.Fprintln(os.Stderr, "  session monitor --session NAME [--agent auto|claude|codex] [--mode auto|interactive|exec] [--project-root PATH]")
 	fmt.Fprintln(os.Stderr, "                  [--poll-interval N] [--max-polls N] [--stop-on-waiting true|false] [--json] [--verbose]")
 	fmt.Fprintln(os.Stderr, "  session capture --session NAME [--lines N] [--json]")
