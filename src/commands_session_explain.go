@@ -120,6 +120,9 @@ func cmdSessionExplain(args []string) int {
 	if status.Signals.EventsWriteError != "" {
 		fmt.Printf("events_write_error: %s\n", status.Signals.EventsWriteError)
 	}
+	if status.Signals.TMUXReadError != "" {
+		fmt.Printf("tmux_read_error: %s\n", status.Signals.TMUXReadError)
+	}
 	if len(events) == 0 {
 		fmt.Println("events: none")
 		if eventTail.DroppedLines > 0 {

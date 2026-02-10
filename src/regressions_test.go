@@ -1651,7 +1651,7 @@ func TestCmdSessionKillAllAttemptsKillBeforeCleanup(t *testing.T) {
 	}
 }
 
-func TestComputeSessionStatusReturnsErrorOnCriticalTmuxReadFailures(t *testing.T) {
+func TestComputeSessionStatusDegradesOnTmuxReadFailures(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn
 	origPaneStatus := tmuxPaneStatusFn
@@ -1676,8 +1676,15 @@ func TestComputeSessionStatusReturnsErrorOnCriticalTmuxReadFailures(t *testing.T
 	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
 		return "", errors.New("capture failed")
 	}
-	if _, err := computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1); err == nil {
-		t.Fatalf("expected error when pane capture fails")
+	status, err := computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1)
+	if err != nil {
+		t.Fatalf("expected degraded payload when pane capture fails, got error: %v", err)
+	}
+	if status.SessionState != "degraded" || status.ClassificationReason != "tmux_capture_error" {
+		t.Fatalf("expected tmux capture failure to degrade, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
+	}
+	if !strings.Contains(status.Signals.TMUXReadError, "capture failed") {
+		t.Fatalf("expected tmux capture error signal, got %q", status.Signals.TMUXReadError)
 	}
 
 	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
@@ -1686,8 +1693,15 @@ func TestComputeSessionStatusReturnsErrorOnCriticalTmuxReadFailures(t *testing.T
 	tmuxPaneStatusFn = func(session string) (string, error) {
 		return "", errors.New("pane status failed")
 	}
-	if _, err := computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1); err == nil {
-		t.Fatalf("expected error when pane status read fails")
+	status, err = computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1)
+	if err != nil {
+		t.Fatalf("expected degraded payload when pane snapshot read fails, got error: %v", err)
+	}
+	if status.SessionState != "degraded" || status.ClassificationReason != "tmux_snapshot_error" {
+		t.Fatalf("expected tmux snapshot failure to degrade, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
+	}
+	if !strings.Contains(status.Signals.TMUXReadError, "pane status failed") {
+		t.Fatalf("expected tmux snapshot error signal, got %q", status.Signals.TMUXReadError)
 	}
 
 	tmuxPaneStatusFn = func(session string) (string, error) {
@@ -1706,8 +1720,51 @@ func TestComputeSessionStatusReturnsErrorOnCriticalTmuxReadFailures(t *testing.T
 	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
 		return 0, 0, nil
 	}
-	if _, err := computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1); err == nil {
-		t.Fatalf("expected error when pane pid cannot be parsed")
+	status, err = computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1)
+	if err != nil {
+		t.Fatalf("expected degraded payload when pane pid parse fails, got error: %v", err)
+	}
+	if status.SessionState != "degraded" || status.ClassificationReason != "tmux_pane_pid_parse_error" {
+		t.Fatalf("expected pane pid parse failure to degrade, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
+	}
+	if !strings.Contains(status.Signals.TMUXReadError, "not-a-number") {
+		t.Fatalf("expected pane pid parse error signal, got %q", status.Signals.TMUXReadError)
+	}
+}
+
+func TestComputeSessionStatusReadErrorEventLoggingSkipsZeroPoll(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origAppend := appendSessionEventFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		appendSessionEventFn = origAppend
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "", errors.New("capture failed")
+	}
+
+	appendCalls := 0
+	appendSessionEventFn = func(projectRoot, session string, event sessionEvent) error {
+		appendCalls++
+		return nil
+	}
+
+	if _, err := computeSessionStatus("lisa-read-error-no-poll", t.TempDir(), "auto", "auto", false, 0); err != nil {
+		t.Fatalf("expected degraded status payload, got %v", err)
+	}
+	if appendCalls != 0 {
+		t.Fatalf("expected no immediate read-error event when pollCount=0, got %d", appendCalls)
+	}
+
+	if _, err := computeSessionStatus("lisa-read-error-with-poll", t.TempDir(), "auto", "auto", false, 1); err != nil {
+		t.Fatalf("expected degraded status payload, got %v", err)
+	}
+	if appendCalls != 1 {
+		t.Fatalf("expected one immediate read-error event when pollCount>0, got %d", appendCalls)
 	}
 }
 

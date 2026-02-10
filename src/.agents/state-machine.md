@@ -11,7 +11,7 @@ Related Files: `src/status.go`, `src/types.go`
 
 1. **Pane status snapshot** (`readPaneSnapshot`): prefers a single tmux format query (`pane_dead`, `pane_dead_status`, `pane_current_command`, `pane_pid`) with fallback to per-field reads
 2. **Agent process** (`detectAgentProcess`): BFS walk from pane PID through process tree, matches "claude"/"codex" in command string, returns PID + CPU%; cached between polls via `LISA_PROCESS_SCAN_INTERVAL_SECONDS` (default 8s)
-3. **Output freshness**: MD5 hash of captured pane output compared to last known hash; stale after `LISA_OUTPUT_STALE_SECONDS` (default 240s)
+3. **Output freshness**: MD5 hash of captured pane output compared to last known hash; stale after `LISA_OUTPUT_STALE_SECONDS` (default 240s). Updates are monotonic by capture timestamp so older concurrent polls cannot overwrite newer freshness state.
 4. **Prompt detection** (`looksLikePromptWaiting`): agent-specific regex patterns on last output line
    - Claude: trailing `>` or `›`, or "press enter to send"
    - Codex: `❯` with timestamp pattern, or "tokens used"
@@ -32,6 +32,7 @@ exec mode + exec done marker → completed/crashed based on exit code
 interactive waiting (low CPU + stale output) OR prompt regex → waiting_input
 agent PID alive OR output fresh OR heartbeat fresh OR non-shell pane command → in_progress
 process scan failure with no stronger activity signals → degraded
+tmux read/snapshot/pid parse failures → degraded (non-fatal payload)
 poll count ≤ 3 → just_started (grace period)
 else → stuck
 ```
@@ -44,6 +45,7 @@ Infra observability signals:
 - `signals.stateReadError` when state file read/parse fails
 - `signals.eventsWriteError` when event append fails
 - `signals.agentScanError` when process scan fails
+- `signals.tmuxReadError` when tmux capture/snapshot/pid parsing fails
 
 ## Wait Estimation
 
@@ -52,7 +54,7 @@ Infra observability signals:
 ## State Persistence
 
 `sessionState` struct saved to `/tmp/` between polls: tracks output freshness, poll counters, and last classification.  
-`/tmp/.lisa-*-events.jsonl` receives snapshot/transition events per status computation and is bounded by `LISA_EVENTS_MAX_BYTES`/`LISA_EVENTS_MAX_LINES`.
+`/tmp/.lisa-*-events.jsonl` receives snapshot/transition events per status computation and is bounded by `LISA_EVENTS_MAX_BYTES`/`LISA_EVENTS_MAX_LINES`. Event writes happen outside the state-file lock to keep lock hold-times short.
 
 ## Related Context
 

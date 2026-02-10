@@ -87,6 +87,7 @@ type statusSignals struct {
 	AgentScanError           string `json:"agentScanError,omitempty"`
 	StateLockWaitMS          int    `json:"stateLockWaitMs"`
 	StateLockTimedOut        bool   `json:"stateLockTimedOut"`
+	TMUXReadError            string `json:"tmuxReadError,omitempty"`
 	MetaReadError            string `json:"metaReadError,omitempty"`
 	StateReadError           string `json:"stateReadError,omitempty"`
 	EventsWriteError         string `json:"eventsWriteError,omitempty"`

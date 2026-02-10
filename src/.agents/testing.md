@@ -1,15 +1,15 @@
 # Testing
 
 Last Updated: 2026-02-10
-Related Files: `src/regressions_test.go`, `src/session_wrapper_test.go`, `src/e2e_claude_test.go`, `src/e2e_codex_test.go`
+Related Files: `src/regressions_test.go`, `src/command_coverage_test.go`, `src/session_wrapper_test.go`, `src/e2e_claude_test.go`, `src/e2e_codex_test.go`
 
 ## Overview
 
-Four test files covering regression/unit, wrapper/observability tests, and Claude/Codex E2E integration tests.
+Five test files covering regression/unit, command-branch coverage, wrapper/observability tests, and Claude/Codex E2E integration tests.
 
 ## Unit/Regression Tests
 
-File: `regressions_test.go`
+Files: `regressions_test.go`, `command_coverage_test.go`
 
 Run with: `go test ./...`
 
@@ -19,7 +19,7 @@ tmuxHasSessionFn = func(session string) bool { return true }
 tmuxCapturePaneFn = func(session string, lines int) (string, error) { return mockOutput, nil }
 ```
 
-Covers: state machine classification, artifact paths, sanitization, edge cases.
+Covers: state machine classification, command/output branches, artifact paths, sanitization, edge cases.
 
 ## Wrapper/Observability Tests
 

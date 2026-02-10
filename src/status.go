@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var (
@@ -73,6 +74,44 @@ func formatPaneStatus(deadRaw, exitRaw string) string {
 	return "alive"
 }
 
+func degradedSessionStatus(status sessionStatus, reason string, err error) sessionStatus {
+	status.Status = "idle"
+	status.SessionState = "degraded"
+	status.WaitEstimate = 0
+	status.ClassificationReason = reason
+	if err != nil {
+		status.Signals.TMUXReadError = err.Error()
+	}
+	return status
+}
+
+func appendStatusEvent(projectRoot, session, eventType string, poll int, status sessionStatus) error {
+	return appendSessionEventFn(projectRoot, session, sessionEvent{
+		At:      time.Now().UTC().Format(time.RFC3339Nano),
+		Type:    eventType,
+		Session: session,
+		State:   status.SessionState,
+		Status:  status.Status,
+		Reason:  status.ClassificationReason,
+		Poll:    poll,
+		Signals: status.Signals,
+	})
+}
+
+func shouldAppendImmediateReadErrorEvent(pollCount int) bool {
+	return pollCount > 0
+}
+
+func agentDisplayName(agent string) string {
+	agent = strings.TrimSpace(strings.ToLower(agent))
+	if agent == "" {
+		return "Agent"
+	}
+	runes := []rune(agent)
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
+}
+
 func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
 	status := sessionStatus{
 		Session:              session,
@@ -112,14 +151,27 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 
 	capture, err := tmuxCapturePaneFn(session, 220)
 	if err != nil {
-		return status, fmt.Errorf("failed to capture tmux pane: %w", err)
+		status = degradedSessionStatus(status, "tmux_capture_error", err)
+		if shouldAppendImmediateReadErrorEvent(pollCount) {
+			if eventErr := appendStatusEvent(projectRoot, session, "transition", pollCount, status); eventErr != nil {
+				status.Signals.EventsWriteError = eventErr.Error()
+			}
+		}
+		return status, nil
 	}
 	capture = filterInputBox(capture)
 	capture = strings.Join(trimLines(capture), "\n")
+	captureObservedAt := time.Now().Unix()
 
 	paneStatus, paneCommand, panePIDText, err := readPaneSnapshot(session)
 	if err != nil {
-		return status, err
+		status = degradedSessionStatus(status, "tmux_snapshot_error", err)
+		if shouldAppendImmediateReadErrorEvent(pollCount) {
+			if eventErr := appendStatusEvent(projectRoot, session, "transition", pollCount, status); eventErr != nil {
+				status.Signals.EventsWriteError = eventErr.Error()
+			}
+		}
+		return status, nil
 	}
 	status.PaneStatus = paneStatus
 	status.PaneCommand = paneCommand
@@ -154,7 +206,13 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	if panePIDText != "" {
 		panePID, err = strconv.Atoi(panePIDText)
 		if err != nil {
-			return status, fmt.Errorf("failed to parse tmux pane pid %q: %w", panePIDText, err)
+			status = degradedSessionStatus(status, "tmux_pane_pid_parse_error", fmt.Errorf("failed to parse tmux pane pid %q: %w", panePIDText, err))
+			if shouldAppendImmediateReadErrorEvent(pollCount) {
+				if eventErr := appendStatusEvent(projectRoot, session, "transition", pollCount, status); eventErr != nil {
+					status.Signals.EventsWriteError = eventErr.Error()
+				}
+			}
+			return status, nil
 		}
 	}
 	now := time.Now().Unix()
@@ -190,6 +248,9 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	paneIsShell := isShellCommand(paneCommand)
 	status.Signals.PaneIsShell = paneIsShell
 
+	var pendingEvent sessionEvent
+	pendingEventReady := false
+
 	lockMeta, err := withStateFileLockFn(statePath, func() error {
 		state, stateErr := loadSessionStateWithError(statePath)
 		if stateErr != nil {
@@ -204,13 +265,15 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 
 		hash := md5Hex8(capture)
 		if hash != "" && hash != state.LastOutputHash {
-			state.LastOutputHash = hash
-			state.LastOutputAt = now
+			if captureObservedAt >= state.LastOutputAt {
+				state.LastOutputHash = hash
+				state.LastOutputAt = captureObservedAt
+			}
 		}
 		if state.LastOutputAt == 0 {
-			state.LastOutputAt = now
+			state.LastOutputAt = captureObservedAt
 		}
-		outputAge := int(now - state.LastOutputAt)
+		outputAge := int(time.Now().Unix() - state.LastOutputAt)
 		if outputAge < 0 {
 			outputAge = 0
 		}
@@ -314,7 +377,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 				}
 			}
 			if status.Status == "active" && status.ActiveTask == "" {
-				status.ActiveTask = fmt.Sprintf("%s running", strings.Title(agent))
+				status.ActiveTask = fmt.Sprintf("%s running", agentDisplayName(agent))
 			}
 		}
 
@@ -334,7 +397,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			state.LastClassificationReason != status.ClassificationReason {
 			eventType = "transition"
 		}
-		if eventErr := appendSessionEventFn(projectRoot, session, sessionEvent{
+		pendingEvent = sessionEvent{
 			At:      time.Now().UTC().Format(time.RFC3339Nano),
 			Type:    eventType,
 			Session: session,
@@ -343,9 +406,8 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			Reason:  status.ClassificationReason,
 			Poll:    currentPoll,
 			Signals: status.Signals,
-		}); eventErr != nil {
-			status.Signals.EventsWriteError = eventErr.Error()
 		}
+		pendingEventReady = true
 
 		state.LastSessionState = status.SessionState
 		state.LastStatus = status.Status
@@ -363,21 +425,17 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			status.ClassificationReason = "state_lock_timeout"
 			status.Signals.StateLockTimedOut = true
 			status.Signals.StateLockWaitMS = waitMS
-			if eventErr := appendSessionEventFn(projectRoot, session, sessionEvent{
-				At:      time.Now().UTC().Format(time.RFC3339Nano),
-				Type:    "transition",
-				Session: session,
-				State:   status.SessionState,
-				Status:  status.Status,
-				Reason:  status.ClassificationReason,
-				Poll:    pollCount,
-				Signals: status.Signals,
-			}); eventErr != nil {
+			if eventErr := appendStatusEvent(projectRoot, session, "transition", pollCount, status); eventErr != nil {
 				status.Signals.EventsWriteError = eventErr.Error()
 			}
 			return status, nil
 		}
 		return status, fmt.Errorf("failed to update session state: %w", err)
+	}
+	if pendingEventReady {
+		if eventErr := appendSessionEventFn(projectRoot, session, pendingEvent); eventErr != nil {
+			status.Signals.EventsWriteError = eventErr.Error()
+		}
 	}
 
 	if full && (status.SessionState == "completed" || status.SessionState == "crashed" || status.SessionState == "stuck" || status.SessionState == "degraded") {
