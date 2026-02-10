@@ -96,9 +96,6 @@ func appendSessionEvent(projectRoot, session string, event sessionEvent) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	if err := trimSessionEventFile(path); err != nil {
-		return err
-	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err

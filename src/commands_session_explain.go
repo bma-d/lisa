@@ -111,6 +111,15 @@ func cmdSessionExplain(args []string) int {
 		status.Signals.HeartbeatFresh,
 		status.AgentPID,
 	)
+	if status.Signals.MetaReadError != "" {
+		fmt.Printf("meta_read_error: %s\n", status.Signals.MetaReadError)
+	}
+	if status.Signals.StateReadError != "" {
+		fmt.Printf("state_read_error: %s\n", status.Signals.StateReadError)
+	}
+	if status.Signals.EventsWriteError != "" {
+		fmt.Printf("events_write_error: %s\n", status.Signals.EventsWriteError)
+	}
 	if len(events) == 0 {
 		fmt.Println("events: none")
 		if eventTail.DroppedLines > 0 {

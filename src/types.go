@@ -84,6 +84,9 @@ type statusSignals struct {
 	AgentScanCached          bool   `json:"agentScanCached"`
 	StateLockWaitMS          int    `json:"stateLockWaitMs"`
 	StateLockTimedOut        bool   `json:"stateLockTimedOut"`
+	MetaReadError            string `json:"metaReadError,omitempty"`
+	StateReadError           string `json:"stateReadError,omitempty"`
+	EventsWriteError         string `json:"eventsWriteError,omitempty"`
 }
 
 type sessionEvent struct {

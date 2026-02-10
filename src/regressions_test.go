@@ -1353,6 +1353,58 @@ func TestCmdSessionMonitorRejectsNonLiteralBooleanStopOnWaiting(t *testing.T) {
 	}
 }
 
+func TestCmdSessionMonitorTreatsDegradedAsTerminal(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	origLock := withStateFileLockFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+		withStateFileLockFn = origLock
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "working", nil }
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tzsh\t123", nil
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) { return 80, 1.0 }
+	withStateFileLockFn = func(statePath string, fn func() error) (stateLockMeta, error) {
+		return stateLockMeta{WaitMS: 77}, &stateLockTimeoutError{WaitMS: 77}
+	}
+
+	stdout, _ := captureOutput(t, func() {
+		if code := cmdSessionMonitor([]string{"--session", "lisa-monitor-degraded", "--max-polls", "1", "--poll-interval", "1", "--json"}); code != 2 {
+			t.Fatalf("expected exit code 2 for degraded monitor stop, got %d", code)
+		}
+	})
+	if !strings.Contains(stdout, `"exitReason":"degraded"`) {
+		t.Fatalf("expected degraded exit reason, got %q", stdout)
+	}
+	if !strings.Contains(stdout, `"finalState":"degraded"`) {
+		t.Fatalf("expected degraded final state, got %q", stdout)
+	}
+}
+
 func TestCmdSessionKillAttemptsTmuxKillBeforeCleanup(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origKill := tmuxKillSessionFn
@@ -1412,6 +1464,44 @@ func TestCmdSessionKillReturnsErrorWhenTmuxKillFails(t *testing.T) {
 	}
 }
 
+func TestCmdSessionKillStillCleansArtifactsWhenTmuxKillFails(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origKill := tmuxKillSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxKillSessionFn = origKill
+	})
+
+	projectRoot := t.TempDir()
+	session := "lisa-kill-fail-cleanup"
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxKillSessionFn = func(session string) error {
+		return errors.New("kill failed")
+	}
+
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "exec",
+		ProjectRoot: projectRoot,
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("failed to write meta artifact: %v", err)
+	}
+
+	statePath := sessionStateFile(projectRoot, session)
+	if err := saveSessionState(statePath, sessionState{PollCount: 1}); err != nil {
+		t.Fatalf("failed to write state artifact: %v", err)
+	}
+
+	if code := cmdSessionKill([]string{"--session", session, "--project-root", projectRoot}); code == 0 {
+		t.Fatalf("expected non-zero exit when tmux kill fails")
+	}
+	if fileExists(sessionMetaFile(projectRoot, session)) || fileExists(statePath) {
+		t.Fatalf("expected cleanup to run even when tmux kill fails")
+	}
+}
+
 func TestCmdSessionKillAllReturnsErrorOnPartialFailure(t *testing.T) {
 	origList := tmuxListSessionsFn
 	origKill := tmuxKillSessionFn
@@ -1432,6 +1522,41 @@ func TestCmdSessionKillAllReturnsErrorOnPartialFailure(t *testing.T) {
 
 	if code := cmdSessionKillAll([]string{"--project-root", t.TempDir()}); code == 0 {
 		t.Fatalf("expected non-zero exit when any session kill fails")
+	}
+}
+
+func TestCmdSessionKillAllStillCleansArtifactsWhenKillFails(t *testing.T) {
+	origList := tmuxListSessionsFn
+	origKill := tmuxKillSessionFn
+	t.Cleanup(func() {
+		tmuxListSessionsFn = origList
+		tmuxKillSessionFn = origKill
+	})
+
+	projectRoot := t.TempDir()
+	session := "lisa-killall-fail-cleanup"
+	tmuxListSessionsFn = func(projectOnly bool, projectRoot string) ([]string, error) {
+		return []string{session}, nil
+	}
+	tmuxKillSessionFn = func(session string) error {
+		return errors.New("kill failed")
+	}
+
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "exec",
+		ProjectRoot: projectRoot,
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("failed to write meta artifact: %v", err)
+	}
+
+	if code := cmdSessionKillAll([]string{"--project-root", projectRoot}); code == 0 {
+		t.Fatalf("expected non-zero exit when tmux kill fails")
+	}
+	if fileExists(sessionMetaFile(projectRoot, session)) {
+		t.Fatalf("expected cleanup to run for kill-all even when tmux kill fails")
 	}
 }
 

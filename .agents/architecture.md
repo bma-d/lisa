@@ -1,6 +1,6 @@
 # Architecture
 
-Last Updated: 2026-02-09
+Last Updated: 2026-02-10
 Related Files: `src/status.go`, `src/tmux.go`, `src/session_files.go`, `src/commands_session.go`
 
 ## Overview
@@ -13,6 +13,7 @@ Lisa is a standalone Go CLI (zero dependencies) that orchestrates Claude/Codex A
 spawn → in_progress → waiting_input → completed
                    ↘ crashed
                    ↘ stuck (output stale, no agent process)
+                   ↘ degraded (infra contention/read failures)
                    ↘ just_started (first 3 polls, idle)
 ```
 

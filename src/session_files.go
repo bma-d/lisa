@@ -144,16 +144,26 @@ func sessionCommandScriptPattern(session string) string {
 }
 
 func loadSessionState(path string) sessionState {
-	if !fileExists(path) {
-		return sessionState{}
-	}
-	raw, err := os.ReadFile(path)
+	state, err := loadSessionStateWithError(path)
 	if err != nil {
 		return sessionState{}
 	}
-	var state sessionState
-	_ = json.Unmarshal(raw, &state)
 	return state
+}
+
+func loadSessionStateWithError(path string) (sessionState, error) {
+	if !fileExists(path) {
+		return sessionState{}, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return sessionState{}, err
+	}
+	var state sessionState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return sessionState{}, err
+	}
+	return state, nil
 }
 
 func saveSessionState(path string, state sessionState) error {

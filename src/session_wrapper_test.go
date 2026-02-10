@@ -380,7 +380,7 @@ func TestComputeSessionStatusEmitsTransitionAndSnapshotEvents(t *testing.T) {
 	}
 }
 
-func TestComputeSessionStatusStateLockTimeoutFallsBackToStuck(t *testing.T) {
+func TestComputeSessionStatusStateLockTimeoutFallsBackToDegraded(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn
 	origPaneStatus := tmuxPaneStatusFn
@@ -421,11 +421,167 @@ func TestComputeSessionStatusStateLockTimeoutFallsBackToStuck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected timeout to degrade to status payload, got %v", err)
 	}
-	if status.SessionState != "stuck" || status.ClassificationReason != "state_lock_timeout" {
+	if status.SessionState != "degraded" || status.ClassificationReason != "state_lock_timeout" {
 		t.Fatalf("expected state_lock_timeout classification, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
 	}
 	if !status.Signals.StateLockTimedOut || status.Signals.StateLockWaitMS != 77 {
 		t.Fatalf("expected lock timeout signals, got timedOut=%v wait=%d", status.Signals.StateLockTimedOut, status.Signals.StateLockWaitMS)
+	}
+}
+
+func TestComputeSessionStatusMetaReadErrorDoesNotTrustSessionDoneMarker(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "__LISA_SESSION_DONE__:run-4:0\nuser@host:~/repo$ ", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) { return 0, 0 }
+
+	projectRoot := t.TempDir()
+	session := "lisa-meta-unreadable"
+	metaPath := sessionMetaFile(projectRoot, session)
+	if err := os.WriteFile(metaPath, []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("failed to seed malformed metadata: %v", err)
+	}
+	staleCapture := "__LISA_SESSION_DONE__:run-4:0\nuser@host:~/repo$ "
+	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
+		LastOutputHash: md5Hex8(staleCapture),
+		LastOutputAt:   time.Now().Add(-15 * time.Minute).Unix(),
+	}); err != nil {
+		t.Fatalf("failed to seed stale state: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 4)
+	if err != nil {
+		t.Fatalf("expected status payload despite meta decode failure, got %v", err)
+	}
+	if status.SessionState == "completed" || status.SessionState == "crashed" {
+		t.Fatalf("expected marker to be ignored when metadata is unreadable, got state=%s", status.SessionState)
+	}
+	if status.Signals.MetaReadError == "" {
+		t.Fatalf("expected meta read error signal to be set")
+	}
+	if !status.Signals.SessionMarkerSeen {
+		t.Fatalf("expected marker visibility signal to remain true")
+	}
+}
+
+func TestComputeSessionStatusReportsEventWriteErrors(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	origAppend := appendSessionEventFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+		appendSessionEventFn = origAppend
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "working", nil }
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) { return 80, 1.0 }
+	appendSessionEventFn = func(projectRoot, session string, event sessionEvent) error {
+		return errors.New("disk full")
+	}
+
+	status, err := computeSessionStatus("lisa-events-write-failure", t.TempDir(), "auto", "auto", false, 1)
+	if err != nil {
+		t.Fatalf("expected status payload despite event write failure, got %v", err)
+	}
+	if status.Signals.EventsWriteError == "" {
+		t.Fatalf("expected events write error signal to be set")
+	}
+}
+
+func TestComputeSessionStatusReportsStateReadErrors(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "working", nil }
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64) { return 80, 1.0 }
+
+	projectRoot := t.TempDir()
+	session := "lisa-state-corrupt"
+	if err := os.WriteFile(sessionStateFile(projectRoot, session), []byte("{"), 0o600); err != nil {
+		t.Fatalf("failed to seed malformed state file: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 1)
+	if err != nil {
+		t.Fatalf("expected status payload despite state decode failure, got %v", err)
+	}
+	if status.Signals.StateReadError == "" {
+		t.Fatalf("expected state read error signal to be set")
 	}
 }
 

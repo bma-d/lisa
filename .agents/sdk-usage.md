@@ -11,7 +11,7 @@ How to use Lisa as infrastructure from an LLM orchestrator or script.
 
 1. **Spawn** one session per task (`session spawn --json`), store returned session name (custom `--session` values must start with `lisa-`)
 2. **Poll** with `session monitor --json` (blocking loop) or `session status --json` (one-shot)
-3. If state is `waiting_input` or `stuck`, send next instruction with `session send --text "..." --enter`
+3. If state is `waiting_input` or `stuck`, send next instruction with `session send --text "..." --enter`; if state is `degraded`, retry polling and inspect `signals.*Error`
 4. Fetch artifacts with `session capture --lines N`
 5. Kill and clean up with `session kill --session NAME`
 
@@ -39,7 +39,7 @@ lisa agent build-cmd --agent claude --mode exec --prompt "Fix lint"
 
 ## Exit Codes
 
-- `session monitor`: 0 on completed/waiting_input, 2 on crashed/stuck/not_found/timeout
+- `session monitor`: 0 on completed/waiting_input, 2 on crashed/stuck/degraded/not_found/timeout
 - `session status`: 0 always (unless arg parse error)
 - `session exists`: 0 if exists, 1 if not
 
@@ -52,6 +52,7 @@ lisa agent build-cmd --agent claude --mode exec --prompt "Fix lint"
 | `completed` | Exec done or pane exited cleanly |
 | `crashed` | Pane exited with non-zero or agent crashed |
 | `stuck` | Output stale, no agent process, no prompt detected |
+| `degraded` | Infrastructure contention/error state (e.g., lock timeout); retry polling |
 | `just_started` | Idle but within first 3 polls (grace period) |
 
 ## Related Context

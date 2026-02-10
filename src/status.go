@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -9,7 +10,22 @@ import (
 	"time"
 )
 
-var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+var (
+	ansiEscapeRe             = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+	todoCheckboxRe           = regexp.MustCompile(`(?i)\[( |x)\]`)
+	activeTaskKeywordRe      = regexp.MustCompile(`(?i)(working|running|checking|planning|writing|editing|creating|fixing|executing|reviewing)\b`)
+	activeTaskCurrentRe      = regexp.MustCompile(`(?i)^current task[:\s]+(.+)$`)
+	activeTaskActiveRe       = regexp.MustCompile(`(?i)^active task[:\s]+(.+)$`)
+	promptBusyKeywordRe      = regexp.MustCompile(`(?i)\b(working|running|checking|planning|writing|editing|creating|fixing|executing|reviewing|loading|reading|searching|parsing|building|compiling|installing)\b`)
+	codexPromptRe            = regexp.MustCompile(`❯\s*([0-9]+[smh]\s*)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}\s*$`)
+	waitReadLikeRe           = regexp.MustCompile(`loading|reading|searching|parsing`)
+	waitBuildLikeRe          = regexp.MustCompile(`running tests|testing|building|compiling|installing`)
+	waitWriteLikeRe          = regexp.MustCompile(`writing|editing|updating|creating|fixing`)
+	sessionCompletionLineRe  = regexp.MustCompile(`^` + regexp.QuoteMeta(sessionDonePrefix) + `(?:([A-Za-z0-9._-]+):)?(-?\d+)\s*$`)
+	execCompletionLineRe     = regexp.MustCompile(`^` + regexp.QuoteMeta(execDonePrefix) + `(-?\d+)\s*$`)
+	activeTaskIgnorePrefixes = []string{"$", ">", "To get started", "Usage:", "Error:", "warning:", "note:"}
+	activeTaskPatterns       = []*regexp.Regexp{activeTaskKeywordRe, activeTaskCurrentRe, activeTaskActiveRe}
+)
 
 type sessionCompletionMarker struct {
 	Seen     bool
@@ -80,12 +96,18 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		return status, nil
 	}
 
-	meta, _ := loadSessionMeta(projectRoot, session)
+	meta, metaErr := loadSessionMeta(projectRoot, session)
+	metaReadable := metaErr == nil || errors.Is(metaErr, os.ErrNotExist)
+	if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
+		status.Signals.MetaReadError = metaErr.Error()
+	}
 	agent := resolveAgent(agentHint, meta, session)
 	mode := resolveMode(modeHint, meta, session)
 	status.Agent = agent
 	status.Mode = mode
-	status.Signals.RunID = strings.TrimSpace(meta.RunID)
+	if metaErr == nil {
+		status.Signals.RunID = strings.TrimSpace(meta.RunID)
+	}
 
 	capture, err := tmuxCapturePaneFn(session, 220)
 	if err != nil {
@@ -102,7 +124,11 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	status.PaneCommand = paneCommand
 
 	statePath := sessionStateFile(projectRoot, session)
-	stateHint := loadSessionState(statePath)
+	stateHint, stateHintErr := loadSessionStateWithError(statePath)
+	if stateHintErr != nil {
+		status.Signals.StateReadError = stateHintErr.Error()
+		stateHint = sessionState{}
+	}
 
 	todoDone, todoTotal := parseTodos(capture)
 	status.TodosDone = todoDone
@@ -112,9 +138,13 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 
 	execDone, execExitCode := parseExecCompletion(capture)
 	sessionDone, sessionExitCode, markerRunID, markerRunMismatch := parseSessionCompletionForRun(capture, status.Signals.RunID)
+	sessionMarkerSeen := markerRunID != "" || sessionDone || markerRunMismatch
+	if !metaReadable {
+		sessionDone = false
+	}
 	status.Signals.ExecMarkerSeen = execDone
 	status.Signals.ExecExitCode = execExitCode
-	status.Signals.SessionMarkerSeen = markerRunID != "" || sessionDone || markerRunMismatch
+	status.Signals.SessionMarkerSeen = sessionMarkerSeen
 	status.Signals.SessionMarkerRunID = markerRunID
 	status.Signals.SessionMarkerRunMismatch = markerRunMismatch
 	status.Signals.SessionExitCode = sessionExitCode
@@ -156,7 +186,11 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	status.Signals.PaneIsShell = paneIsShell
 
 	lockMeta, err := withStateFileLockFn(statePath, func() error {
-		state := loadSessionState(statePath)
+		state, stateErr := loadSessionStateWithError(statePath)
+		if stateErr != nil {
+			status.Signals.StateReadError = stateErr.Error()
+			state = sessionState{}
+		}
 		state.LastAgentPID = agentPID
 		state.LastAgentCPU = agentCPU
 		if !useCachedProcessScan {
@@ -290,7 +324,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			state.LastClassificationReason != status.ClassificationReason {
 			eventType = "transition"
 		}
-		_ = appendSessionEventFn(projectRoot, session, sessionEvent{
+		if eventErr := appendSessionEventFn(projectRoot, session, sessionEvent{
 			At:      time.Now().UTC().Format(time.RFC3339Nano),
 			Type:    eventType,
 			Session: session,
@@ -299,7 +333,9 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			Reason:  status.ClassificationReason,
 			Poll:    currentPoll,
 			Signals: status.Signals,
-		})
+		}); eventErr != nil {
+			status.Signals.EventsWriteError = eventErr.Error()
+		}
 
 		state.LastSessionState = status.SessionState
 		state.LastStatus = status.Status
@@ -312,12 +348,12 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	if err != nil {
 		if waitMS, timedOut := stateLockTimeoutWaitMS(err); timedOut {
 			status.Status = "idle"
-			status.SessionState = "stuck"
+			status.SessionState = "degraded"
 			status.WaitEstimate = 0
 			status.ClassificationReason = "state_lock_timeout"
 			status.Signals.StateLockTimedOut = true
 			status.Signals.StateLockWaitMS = waitMS
-			_ = appendSessionEventFn(projectRoot, session, sessionEvent{
+			if eventErr := appendSessionEventFn(projectRoot, session, sessionEvent{
 				At:      time.Now().UTC().Format(time.RFC3339Nano),
 				Type:    "transition",
 				Session: session,
@@ -326,13 +362,15 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 				Reason:  status.ClassificationReason,
 				Poll:    pollCount,
 				Signals: status.Signals,
-			})
+			}); eventErr != nil {
+				status.Signals.EventsWriteError = eventErr.Error()
+			}
 			return status, nil
 		}
 		return status, fmt.Errorf("failed to update session state: %w", err)
 	}
 
-	if full && (status.SessionState == "completed" || status.SessionState == "crashed" || status.SessionState == "stuck") {
+	if full && (status.SessionState == "completed" || status.SessionState == "crashed" || status.SessionState == "stuck" || status.SessionState == "degraded") {
 		outputFile, err := writeSessionOutputFile(projectRoot, session)
 		if err == nil {
 			status.OutputFile = outputFile
@@ -389,9 +427,8 @@ func parseTodos(capture string) (int, int) {
 	lines := trimLines(capture)
 	done := 0
 	total := 0
-	checkRe := regexp.MustCompile(`(?i)\[( |x)\]`)
 	for _, line := range lines {
-		matches := checkRe.FindAllString(line, -1)
+		matches := todoCheckboxRe.FindAllString(line, -1)
 		for _, m := range matches {
 			total++
 			if strings.EqualFold(m, "[x]") {
@@ -408,25 +445,15 @@ func extractActiveTask(capture string) string {
 		return ""
 	}
 
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(working|running|checking|planning|writing|editing|creating|fixing|executing|reviewing)\b`),
-		regexp.MustCompile(`(?i)^current task[:\s]+(.+)$`),
-		regexp.MustCompile(`(?i)^active task[:\s]+(.+)$`),
-	}
-
-	ignorePrefixes := []string{
-		"$", ">", "To get started", "Usage:", "Error:", "warning:", "note:",
-	}
-
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {
 			continue
 		}
-		if containsAnyPrefix(line, ignorePrefixes) {
+		if containsAnyPrefix(line, activeTaskIgnorePrefixes) {
 			continue
 		}
-		for _, p := range patterns {
+		for _, p := range activeTaskPatterns {
 			if p.MatchString(line) {
 				if len(line) > 140 {
 					return strings.TrimSpace(line[:140])
@@ -458,12 +485,12 @@ func looksLikePromptWaiting(agent, capture string) bool {
 	last := tail[0]
 	lowerTail := strings.ToLower(strings.Join(tail, "\n"))
 
-	if regexp.MustCompile(`(?i)\b(working|running|checking|planning|writing|editing|creating|fixing|executing|reviewing|loading|reading|searching|parsing|building|compiling|installing)\b`).MatchString(last) {
+	if promptBusyKeywordRe.MatchString(last) {
 		return false
 	}
 
 	if agent == "codex" {
-		if regexp.MustCompile(`❯\s*([0-9]+[smh]\s*)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}\s*$`).MatchString(last) {
+		if codexPromptRe.MatchString(last) {
 			return true
 		}
 		if strings.Contains(lowerTail, "tokens used") && strings.Contains(last, "❯") {
@@ -488,11 +515,11 @@ func looksLikePromptWaiting(agent, capture string) bool {
 func estimateWait(task string, done, total int) int {
 	lower := strings.ToLower(task)
 	switch {
-	case regexp.MustCompile(`loading|reading|searching|parsing`).MatchString(lower):
+	case waitReadLikeRe.MatchString(lower):
 		return 30
-	case regexp.MustCompile(`running tests|testing|building|compiling|installing`).MatchString(lower):
+	case waitBuildLikeRe.MatchString(lower):
 		return 120
-	case regexp.MustCompile(`writing|editing|updating|creating|fixing`).MatchString(lower):
+	case waitWriteLikeRe.MatchString(lower):
 		return 60
 	}
 	if total > 0 {
@@ -512,7 +539,7 @@ func estimateWait(task string, done, total int) int {
 }
 
 func parseExecCompletion(capture string) (bool, int) {
-	return parseCompletionMarker(capture, execDonePrefix)
+	return parseCompletionMarker(capture, execCompletionLineRe)
 }
 
 func parseSessionCompletion(capture string) (bool, int) {
@@ -533,7 +560,6 @@ func parseSessionCompletionForRun(capture, runID string) (bool, int, string, boo
 }
 
 func parseSessionCompletionMarker(capture string) sessionCompletionMarker {
-	markerRe := regexp.MustCompile(`^` + regexp.QuoteMeta(sessionDonePrefix) + `(?:([A-Za-z0-9._-]+):)?(-?\d+)\s*$`)
 	tail := nonEmptyTailLines(capture, 24)
 	if len(tail) == 0 {
 		return sessionCompletionMarker{}
@@ -543,7 +569,7 @@ func parseSessionCompletionMarker(capture string) sessionCompletionMarker {
 	markerRunID := ""
 	markerCode := ""
 	for i := len(tail) - 1; i >= 0; i-- {
-		match := markerRe.FindStringSubmatch(tail[i])
+		match := sessionCompletionLineRe.FindStringSubmatch(tail[i])
 		if len(match) == 3 {
 			markerIdx = i
 			markerRunID = strings.TrimSpace(match[1])
@@ -566,8 +592,7 @@ func parseSessionCompletionMarker(capture string) sessionCompletionMarker {
 	return sessionCompletionMarker{Seen: true, RunID: markerRunID, ExitCode: code}
 }
 
-func parseCompletionMarker(capture, prefix string) (bool, int) {
-	markerRe := regexp.MustCompile(`^` + regexp.QuoteMeta(prefix) + `(-?\d+)\s*$`)
+func parseCompletionMarker(capture string, markerRe *regexp.Regexp) (bool, int) {
 	tail := nonEmptyTailLines(capture, 24)
 	if len(tail) == 0 {
 		return false, 0

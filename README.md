@@ -77,7 +77,7 @@ lisa session status --session <SESSION> --json
 lisa session monitor --session <SESSION> --json --poll-interval 20 --max-polls 120
 ```
 
-Session states: `just_started` | `in_progress` | `waiting_input` | `completed` | `stuck` | `crashed`
+Session states: `just_started` | `in_progress` | `waiting_input` | `completed` | `stuck` | `crashed` | `degraded`
 
 ### Send follow-up input
 
@@ -108,13 +108,13 @@ lisa session kill-all                      # kill all lisa sessions
 
 1. Spawn one session per task (`session spawn --json`), store the returned session name.
 2. Poll with `session monitor` or `session status`.
-3. On `waiting_input` or `stuck`, send next instruction with `session send --enter`.
+3. On `waiting_input` or `stuck`, send next instruction with `session send --enter`; on `degraded`, keep polling and inspect `signals.*Error`.
 4. Fetch output with `session capture`.
 5. Clean up with `session kill` when done.
 
 ## Exit codes
 
-- `session monitor`: `0` on `completed`/`waiting_input`, `2` on `crashed`/`stuck`/`not_found`/timeout.
+- `session monitor`: `0` on `completed`/`waiting_input`, `2` on `crashed`/`stuck`/`degraded`/`not_found`/timeout.
 - `session status`: always returns a status payload unless argument parsing fails.
 
 ## Build from source

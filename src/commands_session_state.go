@@ -207,6 +207,8 @@ func cmdSessionMonitor(args []string) int {
 			reason = "completed"
 		case "crashed":
 			reason = "crashed"
+		case "degraded":
+			reason = "degraded"
 		case "not_found":
 			reason = "not_found"
 		case "stuck":

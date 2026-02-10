@@ -94,12 +94,15 @@ func cmdSessionKill(args []string) int {
 		}
 		return 1
 	}
-	if err := tmuxKillSessionFn(session); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to kill session: %v\n", err)
-		return 1
-	}
-	if err := cleanupSessionArtifacts(projectRoot, session); err != nil {
-		fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", err)
+	killErr := tmuxKillSessionFn(session)
+	cleanupErr := cleanupSessionArtifacts(projectRoot, session)
+	if killErr != nil || cleanupErr != nil {
+		if killErr != nil {
+			fmt.Fprintf(os.Stderr, "failed to kill session: %v\n", killErr)
+		}
+		if cleanupErr != nil {
+			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
+		}
 		return 1
 	}
 	fmt.Println("ok")
@@ -133,13 +136,14 @@ func cmdSessionKillAll(args []string) int {
 	var errs []string
 	killed := 0
 	for _, s := range sessions {
-		if err := tmuxKillSessionFn(s); err != nil {
-			errs = append(errs, fmt.Sprintf("%s kill: %v", s, err))
-			continue
+		killErr := tmuxKillSessionFn(s)
+		if killErr != nil {
+			errs = append(errs, fmt.Sprintf("%s kill: %v", s, killErr))
+		} else {
+			killed++
 		}
-		killed++
-		if err := cleanupSessionArtifacts(projectRoot, s); err != nil {
-			errs = append(errs, fmt.Sprintf("%s cleanup: %v", s, err))
+		if cleanupErr := cleanupSessionArtifacts(projectRoot, s); cleanupErr != nil {
+			errs = append(errs, fmt.Sprintf("%s cleanup: %v", s, cleanupErr))
 		}
 	}
 	if len(errs) > 0 {

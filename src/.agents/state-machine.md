@@ -5,7 +5,7 @@ Related Files: `src/status.go`, `src/types.go`
 
 ## Overview
 
-`computeSessionStatus()` is the core function. It combines multiple signals to classify a session into one of: `in_progress`, `waiting_input`, `completed`, `crashed`, `stuck`, `just_started`.
+`computeSessionStatus()` is the core function. It combines multiple signals to classify a session into one of: `in_progress`, `waiting_input`, `completed`, `crashed`, `stuck`, `degraded`, `just_started`.
 
 ## Signal Sources
 
@@ -35,7 +35,12 @@ else → stuck
 ```
 
 Additional fallback:
-- state lock timeout (`LISA_STATE_LOCK_TIMEOUT_MS`, default 2500ms) -> `stuck` with reason `state_lock_timeout` (non-fatal status payload)
+- state lock timeout (`LISA_STATE_LOCK_TIMEOUT_MS`, default 2500ms) -> `degraded` with reason `state_lock_timeout` (non-fatal status payload)
+
+Infra observability signals:
+- `signals.metaReadError` when metadata read/parse fails
+- `signals.stateReadError` when state file read/parse fails
+- `signals.eventsWriteError` when event append fails
 
 ## Wait Estimation
 
