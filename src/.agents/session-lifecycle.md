@@ -36,16 +36,19 @@ All stored in `/tmp/`:
 
 ## Lifecycle Operations
 
-1. **Spawn** (`cmdSessionSpawn`): reset stale artifacts -> validate heartbeat path -> create tmux session -> wrap startup command (`__LISA_SESSION_START__:{runId}:{ts}` / `__LISA_SESSION_DONE__:{runId}:{exit}` + heartbeat loop + signal traps) -> send command -> save meta -> clear state. Metadata persistence is fail-fast: if meta write fails, Lisa kills the new tmux session and cleans artifacts before returning non-zero. If tmux session creation itself fails after heartbeat prep, Lisa now cleans artifacts before returning.
+1. **Spawn** (`cmdSessionSpawn`): reset stale artifacts -> validate heartbeat path -> create tmux session -> wrap startup command (`__LISA_SESSION_START__:{runId}:{ts}` / `__LISA_SESSION_DONE__:{runId}:{exit}` + heartbeat loop + signal traps) -> send command -> save meta -> clear state. Metadata persistence is fail-fast: if meta write fails, Lisa kills the new tmux session and cleans artifacts before returning non-zero. If tmux session creation itself fails after heartbeat prep, Lisa now cleans artifacts before returning. Spawn failure paths also emit lifecycle failure reasons (`spawn_*_error`) for observability.
 2. **Monitor** (`cmdSessionMonitor`): poll loop calling `computeSessionStatus()` at interval, stops on terminal state
 3. **Kill** (`cmdSessionKill`): kill tmux session -> cleanup runtime artifacts (preserve event log) -> append lifecycle event
-4. **Kill-all** (`cmdSessionKillAll`): list sessions -> kill each -> cleanup runtime artifacts (preserve event log) -> append lifecycle event
+4. **Kill-all** (`cmdSessionKillAll`): list sessions -> kill each -> cleanup runtime artifacts (preserve event log) -> append lifecycle event. Non-`--project-only` kill-all now cleans artifacts across hashes by default for the listed session IDs.
 
-Cleanup scope is hash-scoped by default (current project hash only). Cross-hash cleanup for spawn/kill paths requires explicit `--cleanup-all-hashes`.
+Cleanup scope is hash-scoped by default (current project hash only). Cross-hash cleanup for spawn/kill paths requires explicit `--cleanup-all-hashes`, except non-`--project-only` kill-all which now enables cross-hash cleanup automatically.
 
 ## Observability Retention
 
 Event logs are bounded: `appendSessionEvent()` trims `/tmp/.lisa-*-events.jsonl` files using both `LISA_EVENTS_MAX_BYTES` and `LISA_EVENTS_MAX_LINES` on every append. Appends + trims are serialized with an event-file lock (`.events.jsonl.lock`) and `LISA_EVENT_LOCK_TIMEOUT_MS`.
+`readSessionEventTail()` now takes a shared lock on the same lock file to avoid reading partial lines during concurrent append/trim operations.
+Trim now compacts from a bounded tail window (`~2x` max-bytes), preventing large historical logs from causing unbounded trim cost in the append path.
+Stale event artifacts are pruned by age via `LISA_EVENT_RETENTION_DAYS` (default 14) during spawn/kill/kill-all maintenance paths.
 
 ## Project Matching
 

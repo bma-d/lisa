@@ -235,10 +235,43 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 	seen := map[int]bool{}
 	primaryExec := agentPrimaryExecutable(agent)
 	customNeedles := agentProcessNeedles(agent)
+	processByPID := make(map[int]processInfo, len(procs))
+	for _, p := range procs {
+		processByPID[p.PID] = p
+	}
 
 	bestPID := 0
 	bestCPU := -1.0
 	bestScore := -1
+	considerProcess := func(p processInfo) {
+		cmdLower := strings.ToLower(p.Command)
+		execName := commandExecutableName(cmdLower)
+		strictMatch := executableMatchesAgent(execName, primaryExec)
+		wrapperMatch := commandReferencesPrimaryBinary(cmdLower, primaryExec)
+		customMatch := matchesAnyNeedleWord(cmdLower, customNeedles)
+		if !strictMatch && !wrapperMatch && !customMatch {
+			return
+		}
+		if strings.Contains(cmdLower, "grep") {
+			return
+		}
+		score := 1
+		if strictMatch {
+			score = 3
+		} else if wrapperMatch {
+			score = 2
+		}
+		if score > bestScore || (score == bestScore && (bestPID == 0 || p.CPU > bestCPU)) {
+			bestScore = score
+			bestCPU = p.CPU
+			bestPID = p.PID
+		}
+	}
+
+	if paneProc, ok := processByPID[panePID]; ok {
+		considerProcess(paneProc)
+	}
+
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -248,28 +281,7 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 		seen[cur] = true
 		for _, child := range children[cur] {
 			queue = append(queue, child.PID)
-			cmdLower := strings.ToLower(child.Command)
-			execName := commandExecutableName(cmdLower)
-			strictMatch := executableMatchesAgent(execName, primaryExec)
-			wrapperMatch := commandReferencesPrimaryBinary(cmdLower, primaryExec)
-			customMatch := matchesAnyNeedleWord(cmdLower, customNeedles)
-			if !strictMatch && !wrapperMatch && !customMatch {
-				continue
-			}
-			if strings.Contains(cmdLower, "grep") {
-				continue
-			}
-			score := 1
-			if strictMatch {
-				score = 3
-			} else if wrapperMatch {
-				score = 2
-			}
-			if score > bestScore || (score == bestScore && (bestPID == 0 || child.CPU > bestCPU)) {
-				bestScore = score
-				bestCPU = child.CPU
-				bestPID = child.PID
-			}
+			considerProcess(child)
 		}
 	}
 	if bestPID == 0 {

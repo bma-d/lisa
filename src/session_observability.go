@@ -2,9 +2,11 @@ package app
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +19,7 @@ var ensureHeartbeatWritableFn = ensureHeartbeatWritable
 var withStateFileLockFn = withStateFileLock
 var appendSessionEventFn = appendSessionEvent
 var readSessionEventTailFn = readSessionEventTail
+var pruneStaleSessionEventArtifactsFn = pruneStaleSessionEventArtifacts
 
 type stateLockMeta struct {
 	WaitMS int
@@ -93,6 +96,14 @@ func withStateFileLock(statePath string, fn func() error) (stateLockMeta, error)
 }
 
 func withExclusiveFileLock(lockPath string, timeoutMS int, fn func() error) error {
+	return withFileLock(lockPath, timeoutMS, syscall.LOCK_EX, "event lock", fn)
+}
+
+func withSharedFileLock(lockPath string, timeoutMS int, fn func() error) error {
+	return withFileLock(lockPath, timeoutMS, syscall.LOCK_SH, "event read lock", fn)
+}
+
+func withFileLock(lockPath string, timeoutMS int, lockMode int, timeoutLabel string, fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return err
 	}
@@ -108,11 +119,11 @@ func withExclusiveFileLock(lockPath string, timeoutMS int, fn func() error) erro
 
 	start := time.Now()
 	for {
-		if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if err := syscall.Flock(int(lockFile.Fd()), lockMode|syscall.LOCK_NB); err != nil {
 			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 				waited := int(time.Since(start).Milliseconds())
 				if waited >= timeoutMS {
-					return fmt.Errorf("event lock timeout after %dms", waited)
+					return fmt.Errorf("%s timeout after %dms", timeoutLabel, waited)
 				}
 				time.Sleep(10 * time.Millisecond)
 				continue
@@ -205,17 +216,17 @@ func trimSessionEventFile(path string) error {
 }
 
 func trimSessionEventFileAndCount(path string) (int, error) {
-	raw, err := os.ReadFile(path)
+	maxBytes := getIntEnv("LISA_EVENTS_MAX_BYTES", defaultEventsMaxBytes)
+	if maxBytes <= 0 {
+		maxBytes = defaultEventsMaxBytes
+	}
+
+	raw, err := readTrimCandidateBytes(path, maxBytes)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
 		}
 		return 0, err
-	}
-
-	maxBytes := getIntEnv("LISA_EVENTS_MAX_BYTES", defaultEventsMaxBytes)
-	if maxBytes <= 0 {
-		maxBytes = defaultEventsMaxBytes
 	}
 
 	maxLines := getIntEnv("LISA_EVENTS_MAX_LINES", defaultEventsMaxLines)
@@ -249,42 +260,119 @@ func trimSessionEventFileAndCount(path string) (int, error) {
 	return 0, nil
 }
 
+func readTrimCandidateBytes(path string, maxBytes int) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := info.Size()
+	if size <= 0 {
+		return []byte{}, nil
+	}
+
+	window := int64(maxBytes * 2)
+	if window < int64(maxBytes) {
+		window = int64(maxBytes)
+	}
+	if window < 64*1024 {
+		window = 64 * 1024
+	}
+	if window > size {
+		window = size
+	}
+	start := size - window
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(f, window))
+	if err != nil {
+		return nil, err
+	}
+	if start > 0 {
+		if idx := bytes.IndexByte(raw, '\n'); idx >= 0 {
+			raw = raw[idx+1:]
+		} else {
+			raw = []byte{}
+		}
+	}
+	return raw, nil
+}
+
 func readSessionEventTail(projectRoot, session string, max int) (sessionEventTail, error) {
 	if max <= 0 {
 		max = 1
 	}
 	path := sessionEventsFile(projectRoot, session)
-	f, err := os.Open(path)
+	lockTimeout := getIntEnv("LISA_EVENT_LOCK_TIMEOUT_MS", defaultEventLockTimeoutMS)
+	lockPath := path + ".lock"
+
+	var tail sessionEventTail
+	err := withSharedFileLock(lockPath, lockTimeout, func() error {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		r := bufio.NewReaderSize(f, 64*1024)
+		ring := make([]string, max)
+		readLines := 0
+		for {
+			line, readErr := r.ReadString('\n')
+			if line == "" && errors.Is(readErr, io.EOF) {
+				break
+			}
+			line = strings.TrimRight(line, "\r\n")
+			ring[readLines%max] = line
+			readLines++
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					break
+				}
+				return readErr
+			}
+		}
+
+		kept := readLines
+		if kept > max {
+			kept = max
+		}
+		lines := make([]string, 0, kept)
+		start := 0
+		if readLines > max {
+			start = readLines % max
+		}
+		for i := 0; i < kept; i++ {
+			lines = append(lines, ring[(start+i)%max])
+		}
+
+		events := make([]sessionEvent, 0, len(lines))
+		dropped := 0
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			var event sessionEvent
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				dropped++
+				continue
+			}
+			events = append(events, event)
+		}
+		tail = sessionEventTail{Events: events, DroppedLines: dropped}
+		return nil
+	})
 	if err != nil {
 		return sessionEventTail{}, err
 	}
-	defer f.Close()
-
-	lines := make([]string, 0, max)
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		return sessionEventTail{}, err
-	}
-	lines = tailLines(lines, max)
-
-	events := make([]sessionEvent, 0, len(lines))
-	dropped := 0
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		var event sessionEvent
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			dropped++
-			continue
-		}
-		events = append(events, event)
-	}
-	return sessionEventTail{Events: events, DroppedLines: dropped}, nil
+	return tail, nil
 }
 
 func sessionEventCountFile(path string) string {
@@ -346,4 +434,41 @@ func appendLifecycleEvent(projectRoot, session, eventType, state, status, reason
 		Poll:    0,
 		Signals: statusSignals{},
 	})
+}
+
+func pruneStaleSessionEventArtifacts() error {
+	retentionDays := getIntEnv("LISA_EVENT_RETENTION_DAYS", defaultEventRetentionDays)
+	if retentionDays <= 0 {
+		return nil
+	}
+	cutoff := nowFn().Add(-time.Duration(retentionDays) * 24 * time.Hour)
+	paths, err := filepath.Glob("/tmp/.lisa-*-session-*-events.jsonl")
+	if err != nil {
+		return err
+	}
+
+	var errs []string
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			errs = append(errs, err.Error())
+			continue
+		}
+		if !info.ModTime().Before(cutoff) {
+			continue
+		}
+		for _, target := range []string{path, sessionEventCountFile(path), path + ".lock"} {
+			if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, err.Error())
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
 }

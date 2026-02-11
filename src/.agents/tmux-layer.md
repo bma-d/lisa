@@ -37,7 +37,7 @@ Spawn path now hard-fails before session creation if heartbeat artifact path can
 
 ## Process Detection
 
-`detectAgentProcess()`: given pane PID, does BFS through process tree (`ps -axo pid=,ppid=,%cpu=,command=`), prefers strict executable-name matches (`claude`/`codex`), supports common wrapper runners (`python`, `node`, `bash`, etc.) when they invoke the agent binary directly, and only uses env-configured custom token matchers as fallback. Returns best match by score+CPU; no-match returns `(0, 0)` and `ps` failures return an error surfaced via `signals.agentScanError`.
+`detectAgentProcess()`: given pane PID, evaluates both the pane root process and BFS descendants from the process tree (`ps -axo pid=,ppid=,%cpu=,command=`), prefers strict executable-name matches (`claude`/`codex`), supports common wrapper runners (`python`, `node`, `bash`, etc.) when they invoke the agent binary directly, and only uses env-configured custom token matchers as fallback. Returns best match by score+CPU; no-match returns `(0, 0)` and `ps` failures return an error surfaced via `signals.agentScanError`.
 
 Process-table reads are shared through a short-lived cache (`LISA_PROCESS_LIST_CACHE_MS`, default 500ms) to reduce repeated full `ps` scans across concurrent status polls.
 Cache stores successful scans only; failed scans are not cached so status polling retries `ps` immediately on the next probe.

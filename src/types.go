@@ -9,6 +9,7 @@ const (
 	defaultEventLockTimeoutMS  = 2500
 	defaultEventsMaxBytes      = 1_000_000
 	defaultEventsMaxLines      = 2000
+	defaultEventRetentionDays  = 14
 	defaultProcessScanInterval = 8
 	defaultProcessListCacheMS  = 500
 	defaultCmdTimeoutSeconds   = 20

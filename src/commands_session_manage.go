@@ -115,6 +115,9 @@ func cmdSessionKill(args []string) int {
 	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", eventState, "idle", eventReason); err != nil {
 		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 	}
+	if err := pruneStaleSessionEventArtifactsFn(); err != nil {
+		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+	}
 	if killErr != nil || cleanupErr != nil {
 		if killErr != nil {
 			fmt.Fprintf(os.Stderr, "failed to kill session: %v\n", killErr)
@@ -150,8 +153,9 @@ func cmdSessionKillAll(args []string) int {
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
+	allHashes := cleanupAllHashes || !projectOnly
 	cleanupOpts := cleanupOptions{
-		AllHashes:  cleanupAllHashes,
+		AllHashes:  allHashes,
 		KeepEvents: true,
 	}
 	sessions, err := tmuxListSessionsFn(projectOnly, projectRoot)
@@ -181,6 +185,9 @@ func cmdSessionKillAll(args []string) int {
 		if cleanupErr != nil {
 			errs = append(errs, fmt.Sprintf("%s cleanup: %v", s, cleanupErr))
 		}
+	}
+	if pruneErr := pruneStaleSessionEventArtifactsFn(); pruneErr != nil {
+		errs = append(errs, fmt.Sprintf("event retention cleanup: %v", pruneErr))
 	}
 	if len(errs) > 0 {
 		fmt.Fprintf(os.Stderr, "killed %d/%d sessions\n", killed, len(sessions))

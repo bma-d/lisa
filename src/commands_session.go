@@ -211,14 +211,24 @@ func cmdSessionSpawn(args []string) int {
 		return 1
 	}
 	runID := fmt.Sprintf("%d", time.Now().UnixNano())
+	emitSpawnFailureEvent := func(reason string) {
+		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "degraded", "idle", reason); err != nil {
+			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+		}
+	}
+	if err := pruneStaleSessionEventArtifactsFn(); err != nil {
+		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+	}
 
 	cleanupOpts := cleanupOptions{AllHashes: cleanupAllHashes}
 	if err := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to reset previous session artifacts: %v\n", err)
+		emitSpawnFailureEvent("spawn_cleanup_error")
 		return 1
 	}
 	if err := ensureHeartbeatWritableFn(sessionHeartbeatFile(projectRoot, session)); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to prepare heartbeat file: %v\n", err)
+		emitSpawnFailureEvent("spawn_heartbeat_prepare_error")
 		return 1
 	}
 
@@ -226,6 +236,7 @@ func cmdSessionSpawn(args []string) int {
 		command, err = buildAgentCommand(agent, mode, prompt, agentArgs)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
+			emitSpawnFailureEvent("spawn_command_build_error")
 			return 1
 		}
 	}
@@ -235,6 +246,7 @@ func cmdSessionSpawn(args []string) int {
 		if cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); cleanupErr != nil {
 			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
 		}
+		emitSpawnFailureEvent("spawn_tmux_new_error")
 		return 1
 	}
 
@@ -257,6 +269,7 @@ func cmdSessionSpawn(args []string) int {
 			if cleanupErr != nil {
 				fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
 			}
+			emitSpawnFailureEvent("spawn_send_error")
 			return 1
 		}
 	}
@@ -281,6 +294,7 @@ func cmdSessionSpawn(args []string) int {
 		if cleanupErr != nil {
 			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
 		}
+		emitSpawnFailureEvent("spawn_meta_persist_error")
 		return 1
 	}
 	_ = os.Remove(sessionStateFile(projectRoot, session))
