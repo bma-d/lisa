@@ -65,6 +65,40 @@ func TestParseSessionCompletionForRunHandlesANSIMarkers(t *testing.T) {
 	}
 }
 
+func TestReadSessionDoneFileMatchesRunID(t *testing.T) {
+	projectRoot := t.TempDir()
+	session := "lisa-done-file"
+	donePath := sessionDoneFile(projectRoot, session)
+	if err := os.WriteFile(donePath, []byte("run-1:0\n"), 0o600); err != nil {
+		t.Fatalf("failed to write done file: %v", err)
+	}
+
+	done, code, fileRunID, mismatch, err := readSessionDoneFile(projectRoot, session, "run-1")
+	if err != nil {
+		t.Fatalf("unexpected done file read error: %v", err)
+	}
+	if !done || mismatch || code != 0 || fileRunID != "run-1" {
+		t.Fatalf("unexpected done-file parse result done=%v code=%d run=%q mismatch=%v", done, code, fileRunID, mismatch)
+	}
+}
+
+func TestReadSessionDoneFileRejectsMismatchedRunID(t *testing.T) {
+	projectRoot := t.TempDir()
+	session := "lisa-done-file-mismatch"
+	donePath := sessionDoneFile(projectRoot, session)
+	if err := os.WriteFile(donePath, []byte("run-2:3\n"), 0o600); err != nil {
+		t.Fatalf("failed to write done file: %v", err)
+	}
+
+	done, code, fileRunID, mismatch, err := readSessionDoneFile(projectRoot, session, "run-1")
+	if err != nil {
+		t.Fatalf("unexpected done file read error: %v", err)
+	}
+	if done || !mismatch || code != 3 || fileRunID != "run-2" {
+		t.Fatalf("unexpected done-file mismatch result done=%v code=%d run=%q mismatch=%v", done, code, fileRunID, mismatch)
+	}
+}
+
 func TestSessionHeartbeatAgeUsesMTime(t *testing.T) {
 	projectRoot := t.TempDir()
 	session := "lisa-heartbeat-mtime"
@@ -180,6 +214,143 @@ func TestComputeSessionStatusHeartbeatStaleFallsBackToStuck(t *testing.T) {
 	}
 	if status.ClassificationReason != "stuck_no_signals" {
 		t.Fatalf("expected stuck_no_signals reason, got %s", status.ClassificationReason)
+	}
+}
+
+func TestComputeSessionStatusUsesDoneFileWhenCaptureHasNoMarker(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "output chunk\nstill output\nwithout done marker", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "101", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		return "", errors.New("unset")
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 0, 0, nil }
+
+	projectRoot := t.TempDir()
+	session := "lisa-donefile-complete"
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "exec",
+		RunID:       "run-done",
+		ProjectRoot: projectRoot,
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("failed to save meta: %v", err)
+	}
+	if err := os.WriteFile(sessionDoneFile(projectRoot, session), []byte("run-done:0\n"), 0o600); err != nil {
+		t.Fatalf("failed to write done file: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", true, 4)
+	if err != nil {
+		t.Fatalf("expected status compute to succeed: %v", err)
+	}
+	if status.SessionState != "completed" || status.Status != "idle" {
+		t.Fatalf("expected done-file completion, got state=%s status=%s", status.SessionState, status.Status)
+	}
+	if status.ClassificationReason != "done_file" {
+		t.Fatalf("expected done_file classification, got %s", status.ClassificationReason)
+	}
+	if !status.Signals.DoneFileSeen || status.Signals.DoneFileExitCode != 0 {
+		t.Fatalf("expected done-file signals, got %+v", status.Signals)
+	}
+}
+
+func TestComputeSessionStatusMalformedDoneFileIsDegraded(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "idle output", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "101", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		return "", errors.New("unset")
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 0, 0, nil }
+
+	projectRoot := t.TempDir()
+	session := "lisa-donefile-malformed"
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "exec",
+		RunID:       "run-bad",
+		ProjectRoot: projectRoot,
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("failed to save meta: %v", err)
+	}
+	if err := os.WriteFile(sessionDoneFile(projectRoot, session), []byte("bad marker payload\n"), 0o600); err != nil {
+		t.Fatalf("failed to write malformed done file: %v", err)
+	}
+	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
+		LastOutputHash: md5Hex8("idle output"),
+		LastOutputAt:   time.Now().Add(-10 * time.Minute).Unix(),
+	}); err != nil {
+		t.Fatalf("failed to save stale state: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 4)
+	if err != nil {
+		t.Fatalf("expected status compute to succeed: %v", err)
+	}
+	if status.SessionState != "degraded" || status.ClassificationReason != "done_file_read_error" {
+		t.Fatalf("expected malformed done file to degrade classification, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
+	}
+	if status.Signals.DoneFileReadError == "" {
+		t.Fatalf("expected done-file read error signal")
 	}
 }
 
@@ -856,8 +1027,12 @@ func TestComputeSessionStatusConcurrentStateWritesNoCorruption(t *testing.T) {
 func TestWrapSessionCommandTrapEmitsDoneOnInterrupt(t *testing.T) {
 	runID := "run-interrupt"
 	heartbeatPath := filepath.Join(t.TempDir(), "heartbeat.txt")
-	cmd := exec.Command("bash", "-lc", wrapSessionCommand("sleep 10", runID))
-	cmd.Env = append(os.Environ(), "LISA_HEARTBEAT_FILE="+heartbeatPath)
+	donePath := filepath.Join(t.TempDir(), "done.txt")
+	cmd := exec.Command("bash", "-lc", wrapSessionCommand("sleep 5", runID))
+	cmd.Env = append(os.Environ(),
+		"LISA_HEARTBEAT_FILE="+heartbeatPath,
+		"LISA_DONE_FILE="+donePath,
+	)
 	var outBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &outBuf
@@ -865,7 +1040,16 @@ func TestWrapSessionCommandTrapEmitsDoneOnInterrupt(t *testing.T) {
 		t.Fatalf("failed to start wrapped command: %v", err)
 	}
 
-	time.Sleep(400 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if fileExists(heartbeatPath) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for heartbeat file from wrapped command")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("failed to interrupt process: %v", err)
 	}
@@ -879,6 +1063,13 @@ func TestWrapSessionCommandTrapEmitsDoneOnInterrupt(t *testing.T) {
 	}
 	if !fileExists(heartbeatPath) {
 		t.Fatalf("expected heartbeat file to exist")
+	}
+	doneRaw, err := os.ReadFile(donePath)
+	if err != nil {
+		t.Fatalf("expected done file to exist: %v", err)
+	}
+	if strings.TrimSpace(string(doneRaw)) != runID+":130" {
+		t.Fatalf("unexpected done file payload: %q", doneRaw)
 	}
 }
 

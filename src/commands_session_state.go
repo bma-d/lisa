@@ -80,6 +80,37 @@ func cmdSessionStatus(args []string) int {
 		return 0
 	}
 
+	if full {
+		if err := writeCSVRecord(
+			"status_full_v1",
+			status.Status,
+			strconv.Itoa(status.TodosDone),
+			strconv.Itoa(status.TodosTotal),
+			status.ActiveTask,
+			strconv.Itoa(status.WaitEstimate),
+			status.SessionState,
+			status.ClassificationReason,
+			status.PaneStatus,
+			strconv.Itoa(status.AgentPID),
+			fmt.Sprintf("%.2f", status.AgentCPU),
+			strconv.Itoa(status.OutputAgeSeconds),
+			strconv.Itoa(status.HeartbeatAge),
+			strconv.FormatBool(status.Signals.PromptWaiting),
+			strconv.FormatBool(status.Signals.HeartbeatFresh),
+			strconv.FormatBool(status.Signals.StateLockTimedOut),
+			strconv.Itoa(status.Signals.StateLockWaitMS),
+			status.Signals.AgentScanError,
+			status.Signals.TMUXReadError,
+			status.Signals.StateReadError,
+			status.Signals.MetaReadError,
+			status.Signals.DoneFileReadError,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write status output: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
 	if err := writeCSVRecord(
 		status.Status,
 		strconv.Itoa(status.TodosDone),

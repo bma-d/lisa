@@ -167,12 +167,30 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
 		status.Signals.MetaReadError = metaErr.Error()
 	}
-	agent := resolveAgent(agentHint, meta, session)
-	mode := resolveMode(modeHint, meta, session)
+	statePath := sessionStateFile(projectRoot, session)
+	stateHint, stateHintErr := loadSessionStateWithError(statePath)
+	if stateHintErr != nil {
+		status.Signals.StateReadError = stateHintErr.Error()
+		stateHint = sessionState{}
+	}
+
+	agent := resolveAgent(agentHint, meta, session, strings.ToLower(strings.TrimSpace(stateHint.LastResolvedAgent)))
+	mode := resolveMode(modeHint, meta, session, strings.ToLower(strings.TrimSpace(stateHint.LastResolvedMode)))
 	status.Agent = agent
 	status.Mode = mode
 	if metaErr == nil {
 		status.Signals.RunID = strings.TrimSpace(meta.RunID)
+	}
+	doneFileDone, doneFileExitCode, doneFileRunID, doneFileRunMismatch, doneFileErr := readSessionDoneFile(projectRoot, session, status.Signals.RunID)
+	if doneFileErr != nil {
+		status.Signals.DoneFileReadError = doneFileErr.Error()
+	}
+	status.Signals.DoneFileSeen = doneFileDone || doneFileRunMismatch || doneFileRunID != ""
+	status.Signals.DoneFileRunID = doneFileRunID
+	status.Signals.DoneFileRunMismatch = doneFileRunMismatch
+	status.Signals.DoneFileExitCode = doneFileExitCode
+	if !metaReadable {
+		doneFileDone = false
 	}
 
 	paneStatus, paneCommand, panePIDText, err := readPaneSnapshot(session)
@@ -191,7 +209,16 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	capture, err := tmuxCapturePaneFn(session, 220)
 	if err != nil {
 		status.Signals.TMUXReadError = err.Error()
-		if terminalStatus, terminal := applyTerminalPaneStatus(status, paneStatus); terminal {
+		if doneFileDone {
+			status.Status = "idle"
+			status.WaitEstimate = 0
+			status.ClassificationReason = "done_file"
+			if doneFileExitCode == 0 {
+				status.SessionState = "completed"
+			} else {
+				status.SessionState = "crashed"
+			}
+		} else if terminalStatus, terminal := applyTerminalPaneStatus(status, paneStatus); terminal {
 			status = terminalStatus
 		} else {
 			status = degradedSessionStatus(status, "tmux_capture_error", err)
@@ -207,13 +234,6 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	capture = strings.Join(trimLines(capture), "\n")
 	captureObservedAtNanos := nowFn().UnixNano()
 
-	statePath := sessionStateFile(projectRoot, session)
-	stateHint, stateHintErr := loadSessionStateWithError(statePath)
-	if stateHintErr != nil {
-		status.Signals.StateReadError = stateHintErr.Error()
-		stateHint = sessionState{}
-	}
-
 	todoDone, todoTotal := parseTodos(capture)
 	status.TodosDone = todoDone
 	status.TodosTotal = todoTotal
@@ -221,10 +241,15 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	status.WaitEstimate = estimateWait(status.ActiveTask, todoDone, todoTotal)
 
 	execDone, execExitCode := parseExecCompletion(capture)
-	sessionDone, sessionExitCode, markerRunID, markerRunMismatch := parseSessionCompletionForRun(capture, status.Signals.RunID)
-	sessionMarkerSeen := markerRunID != "" || sessionDone || markerRunMismatch
+	sessionDoneMarker, sessionExitCode, markerRunID, markerRunMismatch := parseSessionCompletionForRun(capture, status.Signals.RunID)
+	sessionDone := sessionDoneMarker || doneFileDone
+	if doneFileDone {
+		sessionExitCode = doneFileExitCode
+	}
+	sessionMarkerSeen := markerRunID != "" || sessionDoneMarker || markerRunMismatch
 	if !metaReadable {
 		sessionDone = false
+		sessionDoneMarker = false
 	}
 	status.Signals.ExecMarkerSeen = execDone
 	status.Signals.ExecExitCode = execExitCode
@@ -290,6 +315,8 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		}
 		state.LastAgentPID = agentPID
 		state.LastAgentCPU = agentCPU
+		state.LastResolvedAgent = agent
+		state.LastResolvedMode = mode
 		if !useCachedProcessScan {
 			state.LastAgentProbeAt = now
 		}
@@ -355,7 +382,11 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			case sessionDone:
 				status.Status = "idle"
 				status.WaitEstimate = 0
-				status.ClassificationReason = "session_done_marker"
+				if doneFileDone {
+					status.ClassificationReason = "done_file"
+				} else {
+					status.ClassificationReason = "session_done_marker"
+				}
 				if sessionExitCode == 0 {
 					status.SessionState = "completed"
 				} else {
@@ -396,6 +427,11 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 				status.Status = "active"
 				status.SessionState = "in_progress"
 				status.ClassificationReason = "non_shell_command"
+			case status.Signals.DoneFileReadError != "":
+				status.Status = "idle"
+				status.SessionState = "degraded"
+				status.WaitEstimate = 0
+				status.ClassificationReason = "done_file_read_error"
 			case agentScanErr != nil:
 				status.Status = "idle"
 				status.SessionState = "degraded"

@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
@@ -44,6 +45,7 @@ func tmuxNewSession(session, projectRoot, agent, mode string, width, height int)
 		"-e", "LISA_MODE="+mode,
 		"-e", "LISA_PROJECT_HASH="+projectHash(projectRoot),
 		"-e", "LISA_HEARTBEAT_FILE="+sessionHeartbeatFile(projectRoot, session),
+		"-e", "LISA_DONE_FILE="+sessionDoneFile(projectRoot, session),
 	)
 	return err
 }
@@ -231,10 +233,12 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 
 	queue := []int{panePID}
 	seen := map[int]bool{}
-	needles := agentProcessNeedles(agent)
+	primaryExec := agentPrimaryExecutable(agent)
+	customNeedles := agentProcessNeedles(agent)
 
 	bestPID := 0
 	bestCPU := -1.0
+	bestScore := -1
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -245,11 +249,26 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 		for _, child := range children[cur] {
 			queue = append(queue, child.PID)
 			cmdLower := strings.ToLower(child.Command)
-			if matchesAnyNeedle(cmdLower, needles) && !strings.Contains(cmdLower, "grep") {
-				if bestPID == 0 || child.CPU > bestCPU {
-					bestCPU = child.CPU
-					bestPID = child.PID
-				}
+			execName := commandExecutableName(cmdLower)
+			strictMatch := executableMatchesAgent(execName, primaryExec)
+			wrapperMatch := commandReferencesPrimaryBinary(cmdLower, primaryExec)
+			customMatch := matchesAnyNeedleWord(cmdLower, customNeedles)
+			if !strictMatch && !wrapperMatch && !customMatch {
+				continue
+			}
+			if strings.Contains(cmdLower, "grep") {
+				continue
+			}
+			score := 1
+			if strictMatch {
+				score = 3
+			} else if wrapperMatch {
+				score = 2
+			}
+			if score > bestScore || (score == bestScore && (bestPID == 0 || child.CPU > bestCPU)) {
+				bestScore = score
+				bestCPU = child.CPU
+				bestPID = child.PID
 			}
 		}
 	}
@@ -298,16 +317,9 @@ func listProcessesCached() ([]processInfo, error) {
 }
 
 func agentProcessNeedles(agent string) []string {
-	agent = strings.ToLower(strings.TrimSpace(agent))
 	needles := []string{}
-	switch agent {
-	case "codex":
-		needles = append(needles, "codex", "openai")
-	default:
-		needles = append(needles, "claude", "anthropic")
-	}
-
 	needles = append(needles, parseNeedleEnv("LISA_AGENT_PROCESS_MATCH")...)
+	agent = strings.ToLower(strings.TrimSpace(agent))
 	switch agent {
 	case "codex":
 		needles = append(needles, parseNeedleEnv("LISA_AGENT_PROCESS_MATCH_CODEX")...)
@@ -328,6 +340,75 @@ func agentProcessNeedles(agent string) []string {
 	return out
 }
 
+func agentPrimaryExecutable(agent string) string {
+	agent = strings.ToLower(strings.TrimSpace(agent))
+	if agent == "codex" {
+		return "codex"
+	}
+	return "claude"
+}
+
+func commandExecutableName(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(filepath.Base(fields[0])))
+}
+
+func executableMatchesAgent(executable, primary string) bool {
+	if executable == "" || primary == "" {
+		return false
+	}
+	return executable == primary ||
+		strings.HasPrefix(executable, primary+"-") ||
+		strings.HasSuffix(executable, "-"+primary)
+}
+
+func commandReferencesPrimaryBinary(command, primary string) bool {
+	if primary == "" {
+		return false
+	}
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) < 2 {
+		return false
+	}
+
+	runner := strings.ToLower(strings.TrimSpace(filepath.Base(fields[0])))
+	idx := 1
+	if runner == "env" {
+		for idx < len(fields) && strings.Contains(fields[idx], "=") {
+			idx++
+		}
+		if idx >= len(fields) {
+			return false
+		}
+		runner = strings.ToLower(strings.TrimSpace(filepath.Base(fields[idx])))
+		idx++
+	}
+	if !isWrapperRunner(runner) {
+		return false
+	}
+	for ; idx < len(fields); idx++ {
+		token := strings.TrimSpace(fields[idx])
+		if token == "" || strings.HasPrefix(token, "-") {
+			continue
+		}
+		target := strings.ToLower(strings.TrimSpace(filepath.Base(token)))
+		return executableMatchesAgent(target, primary)
+	}
+	return false
+}
+
+func isWrapperRunner(executable string) bool {
+	switch executable {
+	case "bash", "sh", "zsh", "dash", "fish", "python", "python3", "node", "ruby", "perl":
+		return true
+	default:
+		return false
+	}
+}
+
 func parseNeedleEnv(key string) []string {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -344,13 +425,46 @@ func parseNeedleEnv(key string) []string {
 	return out
 }
 
-func matchesAnyNeedle(command string, needles []string) bool {
+func matchesAnyNeedleWord(command string, needles []string) bool {
 	for _, needle := range needles {
-		if needle != "" && strings.Contains(command, needle) {
+		if needle != "" && containsWordToken(command, needle) {
 			return true
 		}
 	}
 	return false
+}
+
+func containsWordToken(haystack, needle string) bool {
+	haystack = strings.ToLower(haystack)
+	needle = strings.ToLower(strings.TrimSpace(needle))
+	if haystack == "" || needle == "" {
+		return false
+	}
+	start := 0
+	for {
+		idx := strings.Index(haystack[start:], needle)
+		if idx < 0 {
+			return false
+		}
+		pos := start + idx
+		prevOK := pos == 0 || !isTokenChar(rune(haystack[pos-1]))
+		next := pos + len(needle)
+		nextOK := next == len(haystack) || !isTokenChar(rune(haystack[next]))
+		if prevOK && nextOK {
+			return true
+		}
+		start = pos + 1
+		if start >= len(haystack) {
+			return false
+		}
+	}
+}
+
+func isTokenChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') ||
+		(r >= 'A' && r <= 'Z') ||
+		(r >= '0' && r <= '9') ||
+		r == '_' || r == '-'
 }
 
 func listProcesses() ([]processInfo, error) {

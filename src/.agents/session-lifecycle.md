@@ -1,6 +1,6 @@
 # Session Lifecycle & File Management
 
-Last Updated: 2026-02-10
+Last Updated: 2026-02-11
 Related Files: `src/session_files.go`, `src/commands_session.go`
 
 ## Overview
@@ -30,6 +30,7 @@ All stored in `/tmp/`:
 | State | `.lisa-{hash}-session-{id}-state.json` | `sessionState`: pollCount, hasEverBeenActive, output freshness fields, last classification |
 | Output | `lisa-{hash}-output-{id}.txt` | Captured pane output (up to 260 lines) |
 | Heartbeat | `.lisa-{hash}-session-{id}-heartbeat.txt` | File mtime refreshed by wrapper heartbeat loop |
+| Done | `.lisa-{hash}-session-{id}-done.txt` | Wrapper trap writes `{runId}:{exitCode}` completion sidecar |
 | Events | `.lisa-{hash}-session-{id}-events.jsonl` | Snapshot/transition events for observability (`status`, `reason`, `signals`) |
 | Scripts | `lisa-cmd-{id}-{nano}.sh` | Temp scripts for long commands |
 

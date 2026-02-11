@@ -1,11 +1,11 @@
 # Testing
 
-Last Updated: 2026-02-10
-Related Files: `src/regressions_test.go`, `src/command_coverage_test.go`, `src/session_wrapper_test.go`, `src/e2e_claude_test.go`, `src/e2e_codex_test.go`
+Last Updated: 2026-02-11
+Related Files: `src/regressions_test.go`, `src/command_coverage_test.go`, `src/session_wrapper_test.go`, `src/e2e_claude_test.go`, `src/e2e_codex_test.go`, `src/e2e_exec_fake_test.go`
 
 ## Overview
 
-Five test files covering regression/unit, command-branch coverage, wrapper/observability tests, and Claude/Codex E2E integration tests.
+Test suite covers regression/unit, command-branch coverage, wrapper/observability tests, hermetic tmux integration, and opt-in Claude/Codex real-agent E2E integration tests.
 
 ## Unit/Regression Tests
 
@@ -39,6 +39,7 @@ Requires real tmux server + matching agent on PATH. Spawns actual sessions, moni
 
 Additional hermetic integration:
 - `e2e_interactive_fake_test.go` runs by default when tmux is available and exercises interactive spawn/send/monitor/capture lifecycle using a local one-line shell script (no external agent dependency).
+- `e2e_exec_fake_test.go` runs by default when tmux is available and exercises exec-mode spawn/monitor/capture lifecycle using a local command (no external agent dependency).
 
 ## Writing New Tests
 

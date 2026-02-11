@@ -1,12 +1,17 @@
 package app
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"os"
 	"strings"
 	"testing"
 )
+
+func parseSingleCSVLine(input string) ([]string, error) {
+	return csv.NewReader(strings.NewReader(input)).Read()
+}
 
 func TestParseAgentAndModeHints(t *testing.T) {
 	for _, tc := range []struct {
@@ -105,6 +110,63 @@ func TestCmdSessionStatusJSONAndHintValidation(t *testing.T) {
 	}
 }
 
+func TestCmdSessionStatusFullTextIncludesSignals(t *testing.T) {
+	origCompute := computeSessionStatusFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origCompute
+	})
+
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		if !full {
+			t.Fatalf("expected full status request")
+		}
+		return sessionStatus{
+			Session:              session,
+			Status:               "idle",
+			SessionState:         "degraded",
+			ClassificationReason: "tmux_snapshot_error",
+			PaneStatus:           "alive",
+			AgentPID:             0,
+			AgentCPU:             0,
+			OutputAgeSeconds:     120,
+			HeartbeatAge:         5,
+			Signals: statusSignals{
+				PromptWaiting:     false,
+				HeartbeatFresh:    false,
+				StateLockTimedOut: true,
+				StateLockWaitMS:   2500,
+				TMUXReadError:     "display failed",
+			},
+		}, nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionStatus([]string{"--session", "lisa-status-full", "--full"})
+		if code != 0 {
+			t.Fatalf("expected full text status success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	fields, err := parseSingleCSVLine(stdout)
+	if err != nil {
+		t.Fatalf("failed to parse CSV status output: %v (%q)", err, stdout)
+	}
+	if len(fields) < 10 {
+		t.Fatalf("expected expanded full status output columns, got %d (%q)", len(fields), stdout)
+	}
+	if fields[0] != "status_full_v1" {
+		t.Fatalf("expected schema prefix in full status output, got %v", fields)
+	}
+	if fields[6] != "degraded" || fields[7] != "tmux_snapshot_error" {
+		t.Fatalf("unexpected state/reason columns: %v", fields)
+	}
+	if fields[18] != "display failed" {
+		t.Fatalf("expected tmux read error column, got %v", fields)
+	}
+}
+
 func TestCmdSessionSendValidationAndLifecycle(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origSendKeys := tmuxSendKeysFn
@@ -165,6 +227,18 @@ func TestCmdSessionSendValidationAndLifecycle(t *testing.T) {
 	}
 	if gotReason != "send_keys" {
 		t.Fatalf("expected lifecycle reason send_keys, got %q", gotReason)
+	}
+}
+
+func TestCmdSessionExplainRejectsInvalidEventsFlag(t *testing.T) {
+	_, stderr := captureOutput(t, func() {
+		code := cmdSessionExplain([]string{"--session", "lisa-explain", "--events", "0"})
+		if code == 0 {
+			t.Fatalf("expected invalid events flag failure")
+		}
+	})
+	if !strings.Contains(stderr, "invalid --events") {
+		t.Fatalf("unexpected stderr: %q", stderr)
 	}
 }
 

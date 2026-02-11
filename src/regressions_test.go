@@ -637,6 +637,50 @@ func TestDetectAgentProcessHonorsCustomMatchEnv(t *testing.T) {
 	}
 }
 
+func TestDetectAgentProcessMatchesWrappedPrimaryBinary(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 31, PPID: 1, CPU: 0.3, Command: "python /usr/local/bin/codex exec task"},
+			{PID: 32, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 31 {
+		t.Fatalf("expected wrapped codex command to match pid=31, got %d", pid)
+	}
+}
+
+func TestDetectAgentProcessDoesNotTreatArgumentTokenAsAgent(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 41, PPID: 1, CPU: 0.8, Command: "python worker.py --label codex"},
+			{PID: 42, PPID: 1, CPU: 0.7, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 0 {
+		t.Fatalf("expected no strict codex executable match, got pid=%d", pid)
+	}
+}
+
 func TestDetectAgentProcessDoesNotCacheErrors(t *testing.T) {
 	origList := listProcessesFn
 	origCacheMS := os.Getenv("LISA_PROCESS_LIST_CACHE_MS")
@@ -905,6 +949,7 @@ func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifacts(t *testing.T) {
 	statePath := sessionStateFile(projectTwo, session)
 	outputPath := sessionOutputFile(projectTwo, session)
 	heartbeatPath := sessionHeartbeatFile(projectTwo, session)
+	donePath := sessionDoneFile(projectTwo, session)
 	scriptPath := sessionCommandScriptPath(session, time.Now().UnixNano())
 
 	meta := sessionMeta{
@@ -925,6 +970,9 @@ func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifacts(t *testing.T) {
 	if err := os.WriteFile(heartbeatPath, []byte(strconv.FormatInt(time.Now().Unix(), 10)), 0o600); err != nil {
 		t.Fatalf("failed to save heartbeat: %v", err)
 	}
+	if err := os.WriteFile(donePath, []byte("run-1:0\n"), 0o600); err != nil {
+		t.Fatalf("failed to save done marker: %v", err)
+	}
 	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\n"), 0o700); err != nil {
 		t.Fatalf("failed to write script: %v", err)
 	}
@@ -933,7 +981,7 @@ func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifacts(t *testing.T) {
 		t.Fatalf("cleanup returned error: %v", err)
 	}
 
-	if fileExists(metaPath) || fileExists(statePath) || fileExists(outputPath) || fileExists(heartbeatPath) || fileExists(scriptPath) {
+	if fileExists(metaPath) || fileExists(statePath) || fileExists(outputPath) || fileExists(heartbeatPath) || fileExists(donePath) || fileExists(scriptPath) {
 		t.Fatalf("expected all artifacts to be removed across project hashes")
 	}
 }
@@ -1001,6 +1049,12 @@ func TestSessionArtifactsAreNotWorldReadable(t *testing.T) {
 func TestCmdSessionSpawnRejectsInvalidWidth(t *testing.T) {
 	if code := cmdSessionSpawn([]string{"--width", "oops"}); code == 0 {
 		t.Fatalf("expected non-zero exit for invalid width")
+	}
+}
+
+func TestCmdSessionSpawnRejectsInvalidHeight(t *testing.T) {
+	if code := cmdSessionSpawn([]string{"--height", "oops"}); code == 0 {
+		t.Fatalf("expected non-zero exit for invalid height")
 	}
 }
 
@@ -1327,6 +1381,26 @@ func TestCmdSessionListUsesMockableFn(t *testing.T) {
 	}
 	if stdout != "lisa-a\nlisa-b" {
 		t.Fatalf("unexpected stdout: %q", stdout)
+	}
+}
+
+func TestCmdSessionListReturnsErrorWhenListingFails(t *testing.T) {
+	origList := tmuxListSessionsFn
+	t.Cleanup(func() {
+		tmuxListSessionsFn = origList
+	})
+
+	tmuxListSessionsFn = func(projectOnly bool, projectRoot string) ([]string, error) {
+		return nil, errors.New("tmux list failed")
+	}
+
+	_, stderr := captureOutput(t, func() {
+		if code := cmdSessionList([]string{"--project-only", "--project-root", t.TempDir()}); code == 0 {
+			t.Fatalf("expected list failure")
+		}
+	})
+	if !strings.Contains(stderr, "failed to list sessions") {
+		t.Fatalf("expected listing failure stderr, got %q", stderr)
 	}
 }
 

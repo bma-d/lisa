@@ -34,6 +34,8 @@ type sessionMeta struct {
 type sessionState struct {
 	PollCount                 int     `json:"pollCount"`
 	HasEverBeenActive         bool    `json:"hasEverBeenActive"`
+	LastResolvedAgent         string  `json:"lastResolvedAgent,omitempty"`
+	LastResolvedMode          string  `json:"lastResolvedMode,omitempty"`
 	LastOutputHash            string  `json:"lastOutputHash"`
 	LastOutputAt              int64   `json:"lastOutputAt"`
 	LastOutputAtNanos         int64   `json:"lastOutputAtNanos,omitempty"`
@@ -71,6 +73,11 @@ type sessionStatus struct {
 
 type statusSignals struct {
 	RunID                    string `json:"runId,omitempty"`
+	DoneFileSeen             bool   `json:"doneFileSeen"`
+	DoneFileRunID            string `json:"doneFileRunId,omitempty"`
+	DoneFileRunMismatch      bool   `json:"doneFileRunMismatch"`
+	DoneFileExitCode         int    `json:"doneFileExitCode"`
+	DoneFileReadError        string `json:"doneFileReadError,omitempty"`
 	SessionMarkerSeen        bool   `json:"sessionMarkerSeen"`
 	SessionMarkerRunID       string `json:"sessionMarkerRunId,omitempty"`
 	SessionMarkerRunMismatch bool   `json:"sessionMarkerRunMismatch"`

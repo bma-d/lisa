@@ -80,13 +80,13 @@ func TestResolveAgentModeAndEstimateWaitBranches(t *testing.T) {
 		}
 		return "", errors.New("not set")
 	}
-	if got := resolveAgent("auto", sessionMeta{}, "lisa"); got != "codex" {
+	if got := resolveAgent("auto", sessionMeta{}, "lisa", ""); got != "codex" {
 		t.Fatalf("expected env-resolved agent codex, got %q", got)
 	}
-	if got := resolveMode("auto", sessionMeta{}, "lisa"); got != "exec" {
+	if got := resolveMode("auto", sessionMeta{}, "lisa", ""); got != "exec" {
 		t.Fatalf("expected env-resolved mode exec, got %q", got)
 	}
-	if got := resolveAgent("auto", sessionMeta{}, ""); got == "" {
+	if got := resolveAgent("auto", sessionMeta{}, "", ""); got == "" {
 		t.Fatalf("expected non-empty default agent")
 	}
 

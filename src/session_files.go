@@ -71,6 +71,10 @@ func sessionHeartbeatFile(projectRoot, session string) string {
 	return fmt.Sprintf("/tmp/.lisa-%s-session-%s-heartbeat.txt", projectHash(projectRoot), sessionArtifactID(session))
 }
 
+func sessionDoneFile(projectRoot, session string) string {
+	return fmt.Sprintf("/tmp/.lisa-%s-session-%s-done.txt", projectHash(projectRoot), sessionArtifactID(session))
+}
+
 func sessionEventsFile(projectRoot, session string) string {
 	return fmt.Sprintf("/tmp/.lisa-%s-session-%s-events.jsonl", projectHash(projectRoot), sessionArtifactID(session))
 }
@@ -206,6 +210,7 @@ func cleanupSessionArtifacts(projectRoot, session string) error {
 		sessionMetaFile(projectRoot, session),
 		sessionOutputFile(projectRoot, session),
 		sessionHeartbeatFile(projectRoot, session),
+		sessionDoneFile(projectRoot, session),
 		sessionEventsFile(projectRoot, session),
 		sessionEventCountFile(sessionEventsFile(projectRoot, session)),
 		sessionStateLockFile(projectRoot, session),
@@ -219,6 +224,7 @@ func cleanupSessionArtifacts(projectRoot, session string) error {
 		fmt.Sprintf("/tmp/.lisa-*-session-%s-meta.json", sid),
 		fmt.Sprintf("/tmp/lisa-*-output-%s.txt", sid),
 		fmt.Sprintf("/tmp/.lisa-*-session-%s-heartbeat.txt", sid),
+		fmt.Sprintf("/tmp/.lisa-*-session-%s-done.txt", sid),
 		fmt.Sprintf("/tmp/.lisa-*-session-%s-events.jsonl", sid),
 		fmt.Sprintf("/tmp/.lisa-*-session-%s-events.jsonl.lines", sid),
 		fmt.Sprintf("/tmp/.lisa-*-session-%s-state.json.lock", sid),

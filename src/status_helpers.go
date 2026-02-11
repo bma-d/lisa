@@ -1,19 +1,33 @@
 package app
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-func resolveAgent(agentHint string, meta sessionMeta, session string) string {
+var doneFileCompletionLineRe = regexp.MustCompile(`^([A-Za-z0-9._-]+):(-?\d+)\s*$`)
+
+func resolveAgent(agentHint string, meta sessionMeta, session string, cached string) string {
 	agentHint = strings.ToLower(strings.TrimSpace(agentHint))
 	if agentHint == "claude" || agentHint == "codex" {
 		return agentHint
 	}
 	if v := strings.ToLower(strings.TrimSpace(meta.Agent)); v == "claude" || v == "codex" {
 		return v
+	}
+	if cached == "claude" || cached == "codex" {
+		return cached
+	}
+	name := strings.ToLower(strings.TrimSpace(session))
+	if strings.Contains(name, "-codex-") || strings.HasSuffix(name, "-codex") {
+		return "codex"
+	}
+	if strings.Contains(name, "-claude-") || strings.HasSuffix(name, "-claude") {
+		return "claude"
 	}
 	if envAgent, err := tmuxShowEnvironmentFn(session, "LISA_AGENT"); err == nil {
 		envAgent = strings.ToLower(strings.TrimSpace(envAgent))
@@ -30,13 +44,23 @@ func resolveAgent(agentHint string, meta sessionMeta, session string) string {
 	return "claude"
 }
 
-func resolveMode(modeHint string, meta sessionMeta, session string) string {
+func resolveMode(modeHint string, meta sessionMeta, session string, cached string) string {
 	modeHint = strings.ToLower(strings.TrimSpace(modeHint))
 	if modeHint == "interactive" || modeHint == "exec" {
 		return modeHint
 	}
 	if v := strings.ToLower(strings.TrimSpace(meta.Mode)); v == "interactive" || v == "exec" {
 		return v
+	}
+	if cached == "interactive" || cached == "exec" {
+		return cached
+	}
+	name := strings.ToLower(strings.TrimSpace(session))
+	if strings.HasSuffix(name, "-exec") || strings.Contains(name, "-exec-") {
+		return "exec"
+	}
+	if strings.HasSuffix(name, "-interactive") || strings.Contains(name, "-interactive-") {
+		return "interactive"
 	}
 	if v, err := tmuxShowEnvironmentFn(session, "LISA_MODE"); err == nil {
 		v = strings.ToLower(strings.TrimSpace(v))
@@ -181,6 +205,34 @@ func parseSessionCompletionForRun(capture, runID string) (bool, int, string, boo
 		return false, marker.ExitCode, marker.RunID, true
 	}
 	return true, marker.ExitCode, marker.RunID, false
+}
+
+func readSessionDoneFile(projectRoot, session, runID string) (bool, int, string, bool, error) {
+	raw, err := os.ReadFile(sessionDoneFile(projectRoot, session))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, 0, "", false, nil
+		}
+		return false, 0, "", false, err
+	}
+	line := strings.TrimSpace(string(raw))
+	if line == "" {
+		return false, 0, "", false, nil
+	}
+	match := doneFileCompletionLineRe.FindStringSubmatch(line)
+	if len(match) != 3 {
+		return false, 0, "", false, fmt.Errorf("invalid done file marker in %s", filepath.Base(sessionDoneFile(projectRoot, session)))
+	}
+	fileRunID := strings.TrimSpace(match[1])
+	code, err := strconv.Atoi(match[2])
+	if err != nil {
+		code = 1
+	}
+	runMismatch := runID != "" && fileRunID != "" && fileRunID != runID
+	if runMismatch {
+		return false, code, fileRunID, true, nil
+	}
+	return true, code, fileRunID, false, nil
 }
 
 func parseSessionCompletionMarker(capture string) sessionCompletionMarker {

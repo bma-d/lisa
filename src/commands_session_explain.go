@@ -104,13 +104,17 @@ func cmdSessionExplain(args []string) int {
 	fmt.Printf("agent: %s mode: %s\n", status.Agent, status.Mode)
 	fmt.Printf("output_age: %ds (fresh<=%ds)\n", status.OutputAgeSeconds, status.OutputFreshSeconds)
 	fmt.Printf("heartbeat_age: %ds (fresh<=%ds)\n", status.HeartbeatAge, status.HeartbeatFreshSecs)
-	fmt.Printf("signals: session_marker=%t exec_marker=%t prompt_waiting=%t heartbeat_fresh=%t agent_pid=%d\n",
+	fmt.Printf("signals: done_file=%t session_marker=%t exec_marker=%t prompt_waiting=%t heartbeat_fresh=%t agent_pid=%d\n",
+		status.Signals.DoneFileSeen,
 		status.Signals.SessionMarkerSeen,
 		status.Signals.ExecMarkerSeen,
 		status.Signals.PromptWaiting,
 		status.Signals.HeartbeatFresh,
 		status.AgentPID,
 	)
+	if status.Signals.DoneFileReadError != "" {
+		fmt.Printf("done_file_read_error: %s\n", status.Signals.DoneFileReadError)
+	}
 	if status.Signals.MetaReadError != "" {
 		fmt.Printf("meta_read_error: %s\n", status.Signals.MetaReadError)
 	}
