@@ -509,6 +509,9 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		return status, fmt.Errorf("failed to update session state: %w", err)
 	}
 	if pendingEventReady {
+		// lock wait is known only after withStateFileLockFn returns; propagate to event payload.
+		pendingEvent.Signals.StateLockWaitMS = status.Signals.StateLockWaitMS
+		pendingEvent.Signals.StateLockTimedOut = status.Signals.StateLockTimedOut
 		if eventErr := appendSessionEventFn(projectRoot, session, pendingEvent); eventErr != nil {
 			status.Signals.EventsWriteError = eventErr.Error()
 		}

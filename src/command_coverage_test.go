@@ -177,6 +177,84 @@ func TestCmdSessionMonitorRetriesDegradedUntilCompletion(t *testing.T) {
 	}
 }
 
+func TestCmdSessionMonitorStopsOnWaitingInput(t *testing.T) {
+	origCompute := computeSessionStatusFn
+	origAppend := appendSessionEventFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origCompute
+		appendSessionEventFn = origAppend
+	})
+
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:      session,
+			Status:       "idle",
+			SessionState: "waiting_input",
+		}, nil
+	}
+
+	var observedReason string
+	appendSessionEventFn = func(projectRoot, session string, event sessionEvent) error {
+		observedReason = event.Reason
+		return nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionMonitor([]string{
+			"--session", "lisa-monitor-waiting",
+			"--poll-interval", "1",
+			"--max-polls", "3",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected waiting-input monitor exit 0, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"finalState":"waiting_input"`) || !strings.Contains(stdout, `"exitReason":"waiting_input"`) {
+		t.Fatalf("expected waiting_input monitor payload, got %q", stdout)
+	}
+	if observedReason != "monitor_waiting_input" {
+		t.Fatalf("expected lifecycle reason monitor_waiting_input, got %q", observedReason)
+	}
+}
+
+func TestCmdSessionMonitorVerboseWritesProgressLine(t *testing.T) {
+	origCompute := computeSessionStatusFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origCompute
+	})
+
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:      session,
+			Status:       "idle",
+			SessionState: "completed",
+		}, nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionMonitor([]string{
+			"--session", "lisa-monitor-verbose",
+			"--poll-interval", "1",
+			"--max-polls", "1",
+			"--verbose",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected completed monitor exit 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stderr, "poll=1 state=completed status=idle") {
+		t.Fatalf("expected verbose monitor progress line in stderr, got %q", stderr)
+	}
+	if !strings.Contains(stdout, `"finalState":"completed"`) {
+		t.Fatalf("expected completed monitor payload, got %q", stdout)
+	}
+}
+
 func TestCmdSessionExplainTextOutputWithTmuxReadError(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn

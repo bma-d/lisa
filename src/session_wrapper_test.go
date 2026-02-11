@@ -551,6 +551,67 @@ func TestComputeSessionStatusEmitsTransitionAndSnapshotEvents(t *testing.T) {
 	}
 }
 
+func TestComputeSessionStatusEventIncludesStateLockWait(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	origLock := withStateFileLockFn
+	origAppend := appendSessionEventFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+		withStateFileLockFn = origLock
+		appendSessionEventFn = origAppend
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "working", nil }
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 90, 1.2, nil }
+
+	withStateFileLockFn = func(statePath string, fn func() error) (stateLockMeta, error) {
+		if err := fn(); err != nil {
+			return stateLockMeta{}, err
+		}
+		return stateLockMeta{WaitMS: 42}, nil
+	}
+
+	var observed sessionEvent
+	appendSessionEventFn = func(projectRoot, session string, event sessionEvent) error {
+		observed = event
+		return nil
+	}
+
+	status, err := computeSessionStatus("lisa-lock-wait-event", t.TempDir(), "auto", "auto", false, 2)
+	if err != nil {
+		t.Fatalf("expected status payload, got %v", err)
+	}
+	if status.Signals.StateLockWaitMS != 42 {
+		t.Fatalf("expected status lock wait to be propagated, got %d", status.Signals.StateLockWaitMS)
+	}
+	if observed.Signals.StateLockWaitMS != 42 {
+		t.Fatalf("expected event lock wait to match status, got %d", observed.Signals.StateLockWaitMS)
+	}
+}
+
 func TestComputeSessionStatusStateLockTimeoutFallsBackToDegraded(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn

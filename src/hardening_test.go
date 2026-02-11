@@ -447,10 +447,11 @@ func TestTmuxWrappersWithFakeBinary(t *testing.T) {
 	_ = os.Setenv("TMUX_LOG_FILE", logPath)
 	_ = os.Setenv("TMUX_HAS_SESSION", "1")
 
-	if err := tmuxNewSession("lisa-tmux-test", t.TempDir(), "claude", "interactive", 120, 50); err != nil {
+	projectRoot := t.TempDir()
+	if err := tmuxNewSession("lisa-tmux-test", projectRoot, "claude", "interactive", 120, 50); err != nil {
 		t.Fatalf("tmuxNewSession failed: %v", err)
 	}
-	if err := tmuxSendCommandWithFallback("lisa-tmux-test", strings.Repeat("x", 550), true); err != nil {
+	if err := tmuxSendCommandWithFallback(projectRoot, "lisa-tmux-test", strings.Repeat("x", 550), true); err != nil {
 		t.Fatalf("tmuxSendCommandWithFallback failed: %v", err)
 	}
 	if err := tmuxSendText("lisa-tmux-test", "hello", true); err != nil {

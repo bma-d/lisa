@@ -336,7 +336,7 @@ func TestCmdSessionSpawnAndKillEmitLifecycleEvents(t *testing.T) {
 	}
 	tmuxHasSessionFn = func(session string) bool { return false }
 	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
-	tmuxSendCommandWithFallbackFn = func(session, command string, enter bool) error { return nil }
+	tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error { return nil }
 	tmuxKillSessionFn = func(session string) error { return nil }
 	ensureHeartbeatWritableFn = func(path string) error {
 		return os.WriteFile(path, []byte(""), 0o600)
@@ -428,7 +428,7 @@ func TestCmdSessionRoutesCoreSubcommands(t *testing.T) {
 		}
 		return nil
 	}
-	tmuxSendCommandWithFallbackFn = func(session, command string, enter bool) error { return nil }
+	tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error { return nil }
 	tmuxKillSessionFn = func(session string) error {
 		if session == "lisa-route-spawn" {
 			routeSessionAlive = false

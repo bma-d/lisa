@@ -32,14 +32,16 @@ All stored in `/tmp/`:
 | Heartbeat | `.lisa-{hash}-session-{id}-heartbeat.txt` | File mtime refreshed by wrapper heartbeat loop |
 | Done | `.lisa-{hash}-session-{id}-done.txt` | Wrapper trap writes `{runId}:{exitCode}` completion sidecar |
 | Events | `.lisa-{hash}-session-{id}-events.jsonl` | Snapshot/transition events for observability (`status`, `reason`, `signals`) |
-| Scripts | `lisa-cmd-{id}-{nano}.sh` | Temp scripts for long commands |
+| Scripts | `lisa-cmd-{hash}-{id}-{nano}.sh` | Temp scripts for long commands (project-hash scoped) |
 
 ## Lifecycle Operations
 
-1. **Spawn** (`cmdSessionSpawn`): reset stale artifacts -> validate heartbeat path -> create tmux session -> wrap startup command (`__LISA_SESSION_START__:{runId}:{ts}` / `__LISA_SESSION_DONE__:{runId}:{exit}` + heartbeat loop + signal traps) -> send command -> save meta -> clear state. Metadata persistence is now fail-fast: if meta write fails, Lisa kills the new tmux session and cleans artifacts before returning non-zero.
+1. **Spawn** (`cmdSessionSpawn`): reset stale artifacts -> validate heartbeat path -> create tmux session -> wrap startup command (`__LISA_SESSION_START__:{runId}:{ts}` / `__LISA_SESSION_DONE__:{runId}:{exit}` + heartbeat loop + signal traps) -> send command -> save meta -> clear state. Metadata persistence is fail-fast: if meta write fails, Lisa kills the new tmux session and cleans artifacts before returning non-zero. If tmux session creation itself fails after heartbeat prep, Lisa now cleans artifacts before returning.
 2. **Monitor** (`cmdSessionMonitor`): poll loop calling `computeSessionStatus()` at interval, stops on terminal state
-3. **Kill** (`cmdSessionKill`): cleanup artifacts -> kill tmux session (order matters: artifacts first)
-4. **Kill-all** (`cmdSessionKillAll`): list sessions -> kill each with cleanup
+3. **Kill** (`cmdSessionKill`): kill tmux session -> cleanup runtime artifacts (preserve event log) -> append lifecycle event
+4. **Kill-all** (`cmdSessionKillAll`): list sessions -> kill each -> cleanup runtime artifacts (preserve event log) -> append lifecycle event
+
+Cleanup scope is hash-scoped by default (current project hash only). Cross-hash cleanup for spawn/kill paths requires explicit `--cleanup-all-hashes`.
 
 ## Observability Retention
 

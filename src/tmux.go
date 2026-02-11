@@ -50,12 +50,12 @@ func tmuxNewSession(session, projectRoot, agent, mode string, width, height int)
 	return err
 }
 
-func tmuxSendCommandWithFallback(session, command string, enter bool) error {
+func tmuxSendCommandWithFallback(projectRoot, session, command string, enter bool) error {
 	if len(command) <= maxInlineSendLength {
 		return tmuxSendKeys(session, []string{command}, enter)
 	}
 
-	scriptPath := sessionCommandScriptPath(session, time.Now().UnixNano())
+	scriptPath := sessionCommandScriptPath(projectRoot, session, time.Now().UnixNano())
 	body := buildFallbackScriptBody(command)
 	if err := os.WriteFile(scriptPath, []byte(body), 0o700); err != nil {
 		return fmt.Errorf("failed to write long command script: %w", err)

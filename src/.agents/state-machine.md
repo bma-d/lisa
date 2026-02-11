@@ -19,7 +19,7 @@ Related Files: `src/status.go`, `src/types.go`
 6. **Exec completion** (`parseExecCompletion`): searches for `__LISA_EXEC_DONE__:N` marker
 7. **Heartbeat freshness**: reads `/tmp/.lisa-*-heartbeat.txt` mtime (`LISA_HEARTBEAT_FILE`), stale after `LISA_HEARTBEAT_STALE_SECONDS` (default 8s)
 8. **Todo progress** (`parseTodos`): counts `[x]`/`[ ]` checkboxes in output
-9. **State lock observability**: lock wait timing in `signals.stateLockWaitMs`, timeout fallback to `state_lock_timeout` classification
+9. **State lock observability**: lock wait timing in `signals.stateLockWaitMs`, timeout fallback to `state_lock_timeout` classification. Snapshot/transition event payloads now carry the final measured lock wait from the same poll.
 10. **Structured signals**: status payload includes `classificationReason` + `signals` block for observability and debugging
 11. **Process scan errors**: `signals.agentScanError` captures `ps`/scan failures; classification falls back to `degraded` (`agent_scan_error`) when no stronger activity signals exist
 12. **Capture fallback**: when pane capture fails, pane terminal status (`exited`/`crashed`) still takes precedence so completed/crashed sessions are not misclassified as degraded

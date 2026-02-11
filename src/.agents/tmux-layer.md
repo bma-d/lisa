@@ -22,7 +22,7 @@ Spawn path now hard-fails before session creation if heartbeat artifact path can
 | Strategy | When | Implementation |
 |----------|------|----------------|
 | `send-keys` | Command ≤ 500 chars | `tmuxSendKeys()` — direct key injection |
-| Script fallback | Command > 500 chars | Write to `/tmp/lisa-cmd-*.sh`, send `bash <script>` |
+| Script fallback | Command > 500 chars | Write to hash-scoped `/tmp/lisa-cmd-{projectHash}-*.sh`, send `bash <script>` |
 | Buffer paste | `--text` input | `tmuxSendText()` — `load-buffer` + `paste-buffer` (safe for multi-line) |
 
 ## Key Functions

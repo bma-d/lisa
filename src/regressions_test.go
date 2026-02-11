@@ -933,7 +933,7 @@ func TestCleanupSessionArtifactsDoesNotExpandSessionWildcards(t *testing.T) {
 	}
 }
 
-func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifacts(t *testing.T) {
+func TestCleanupSessionArtifactsDoesNotRemoveCrossProjectHashArtifactsByDefault(t *testing.T) {
 	base := t.TempDir()
 	projectOne := filepath.Join(base, "one")
 	projectTwo := filepath.Join(base, "two")
@@ -950,7 +950,71 @@ func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifacts(t *testing.T) {
 	outputPath := sessionOutputFile(projectTwo, session)
 	heartbeatPath := sessionHeartbeatFile(projectTwo, session)
 	donePath := sessionDoneFile(projectTwo, session)
-	scriptPath := sessionCommandScriptPath(session, time.Now().UnixNano())
+	scriptPath := sessionCommandScriptPath(projectTwo, session, time.Now().UnixNano())
+
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "exec",
+		ProjectRoot: projectTwo,
+	}
+	if err := saveSessionMeta(projectTwo, session, meta); err != nil {
+		t.Fatalf("failed to save metadata: %v", err)
+	}
+	if err := saveSessionState(statePath, sessionState{PollCount: 2}); err != nil {
+		t.Fatalf("failed to save state: %v", err)
+	}
+	if err := os.WriteFile(outputPath, []byte("output"), 0o600); err != nil {
+		t.Fatalf("failed to save output: %v", err)
+	}
+	if err := os.WriteFile(heartbeatPath, []byte(strconv.FormatInt(time.Now().Unix(), 10)), 0o600); err != nil {
+		t.Fatalf("failed to save heartbeat: %v", err)
+	}
+	if err := os.WriteFile(donePath, []byte("run-1:0\n"), 0o600); err != nil {
+		t.Fatalf("failed to save done marker: %v", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\n"), 0o700); err != nil {
+		t.Fatalf("failed to write script: %v", err)
+	}
+
+	if err := cleanupSessionArtifacts(projectOne, session); err != nil {
+		t.Fatalf("cleanup returned error: %v", err)
+	}
+
+	if !fileExists(metaPath) || !fileExists(statePath) || !fileExists(outputPath) || !fileExists(heartbeatPath) || !fileExists(donePath) {
+		t.Fatalf("expected artifacts for other project hash to remain by default")
+	}
+	if !fileExists(scriptPath) {
+		t.Fatalf("expected command script artifact for another project hash to remain by default")
+	}
+}
+
+func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifactsWhenEnabled(t *testing.T) {
+	base := t.TempDir()
+	projectOne := filepath.Join(base, "one")
+	projectTwo := filepath.Join(base, "two")
+	if err := os.MkdirAll(projectOne, 0o755); err != nil {
+		t.Fatalf("failed to create projectOne: %v", err)
+	}
+	if err := os.MkdirAll(projectTwo, 0o755); err != nil {
+		t.Fatalf("failed to create projectTwo: %v", err)
+	}
+
+	origEnv := os.Getenv("LISA_CLEANUP_ALL_HASHES")
+	if err := os.Setenv("LISA_CLEANUP_ALL_HASHES", "true"); err != nil {
+		t.Fatalf("failed to set LISA_CLEANUP_ALL_HASHES: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("LISA_CLEANUP_ALL_HASHES", origEnv)
+	})
+
+	session := "lisa-cross-project-cleanup-enabled"
+	metaPath := sessionMetaFile(projectTwo, session)
+	statePath := sessionStateFile(projectTwo, session)
+	outputPath := sessionOutputFile(projectTwo, session)
+	heartbeatPath := sessionHeartbeatFile(projectTwo, session)
+	donePath := sessionDoneFile(projectTwo, session)
+	scriptPath := sessionCommandScriptPath(projectTwo, session, time.Now().UnixNano())
 
 	meta := sessionMeta{
 		Session:     session,
@@ -982,7 +1046,7 @@ func TestCleanupSessionArtifactsRemovesCrossProjectHashArtifacts(t *testing.T) {
 	}
 
 	if fileExists(metaPath) || fileExists(statePath) || fileExists(outputPath) || fileExists(heartbeatPath) || fileExists(donePath) || fileExists(scriptPath) {
-		t.Fatalf("expected all artifacts to be removed across project hashes")
+		t.Fatalf("expected all artifacts to be removed across project hashes when cleanup-all-hashes is enabled")
 	}
 }
 
@@ -1126,17 +1190,20 @@ func TestCmdSessionSpawnJSONOutputAndExecWrapping(t *testing.T) {
 	tmuxHasSessionFn = func(session string) bool { return false }
 	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
 
+	projectRoot := t.TempDir()
 	sentCommand := ""
-	tmuxSendCommandWithFallbackFn = func(session, command string, enter bool) error {
+	tmuxSendCommandWithFallbackFn = func(root, session, command string, enter bool) error {
 		if !enter {
 			t.Fatalf("expected startup command send to include enter")
+		}
+		if root != canonicalProjectRoot(projectRoot) {
+			t.Fatalf("expected canonical project root to propagate to command fallback sender; got %q want %q", root, canonicalProjectRoot(projectRoot))
 		}
 		sentCommand = command
 		return nil
 	}
 
 	session := "lisa-spawn-json"
-	projectRoot := t.TempDir()
 	stdout, stderr := captureOutput(t, func() {
 		code := cmdSessionSpawn([]string{
 			"--agent", "codex",
@@ -1187,7 +1254,7 @@ func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
 
 	tmuxHasSessionFn = func(session string) bool { return false }
 	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
-	tmuxSendCommandWithFallbackFn = func(session, command string, enter bool) error {
+	tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error {
 		return errors.New("send failed")
 	}
 	killCalled := false
@@ -1198,7 +1265,7 @@ func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	session := "lisa-send-failure-cleanup"
-	scriptPath := sessionCommandScriptPath(session, time.Now().UnixNano())
+	scriptPath := sessionCommandScriptPath(projectRoot, session, time.Now().UnixNano())
 	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\n"), 0o700); err != nil {
 		t.Fatalf("failed to create script artifact: %v", err)
 	}
@@ -1224,6 +1291,44 @@ func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
 	}
 }
 
+func TestCmdSessionSpawnNewSessionFailureCleansHeartbeatArtifact(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionFn = origNew
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return false }
+	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error {
+		return errors.New("tmux create failed")
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-new-session-failure-cleanup"
+	heartbeatPath := sessionHeartbeatFile(projectRoot, session)
+	if fileExists(heartbeatPath) {
+		_ = os.Remove(heartbeatPath)
+	}
+
+	_, stderr := captureOutput(t, func() {
+		if code := cmdSessionSpawn([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--command", "echo hello",
+		}); code == 0 {
+			t.Fatalf("expected spawn to fail when tmux session creation fails")
+		}
+	})
+
+	if !strings.Contains(stderr, "failed to create tmux session") {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if fileExists(heartbeatPath) {
+		t.Fatalf("expected heartbeat artifact cleanup after tmux session creation failure")
+	}
+}
+
 func TestCmdSessionSpawnMetaFailureKillsSession(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origNew := tmuxNewSessionFn
@@ -1240,7 +1345,7 @@ func TestCmdSessionSpawnMetaFailureKillsSession(t *testing.T) {
 
 	tmuxHasSessionFn = func(session string) bool { return false }
 	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
-	tmuxSendCommandWithFallbackFn = func(session, command string, enter bool) error { return nil }
+	tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error { return nil }
 	killCalled := false
 	tmuxKillSessionFn = func(session string) error {
 		killCalled = true

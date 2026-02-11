@@ -64,6 +64,7 @@ func cmdSessionExists(args []string) int {
 func cmdSessionKill(args []string) int {
 	session := ""
 	projectRoot := getPWD()
+	cleanupAllHashes := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--session":
@@ -78,6 +79,8 @@ func cmdSessionKill(args []string) int {
 			}
 			projectRoot = args[i+1]
 			i++
+		case "--cleanup-all-hashes":
+			cleanupAllHashes = true
 		default:
 			return unknownFlagError(args[i])
 		}
@@ -87,9 +90,13 @@ func cmdSessionKill(args []string) int {
 		return 1
 	}
 	projectRoot = canonicalProjectRoot(projectRoot)
+	cleanupOpts := cleanupOptions{
+		AllHashes:  cleanupAllHashes,
+		KeepEvents: true,
+	}
 	if !tmuxHasSessionFn(session) {
 		fmt.Fprintln(os.Stderr, "session not found")
-		if err := cleanupSessionArtifacts(projectRoot, session); err != nil {
+		if err := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); err != nil {
 			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", err)
 		}
 		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "not_found", "idle", "kill_not_found"); err != nil {
@@ -98,7 +105,16 @@ func cmdSessionKill(args []string) int {
 		return 1
 	}
 	killErr := tmuxKillSessionFn(session)
-	cleanupErr := cleanupSessionArtifacts(projectRoot, session)
+	cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts)
+	eventState := "terminated"
+	eventReason := "kill_success"
+	if killErr != nil {
+		eventState = "degraded"
+		eventReason = "kill_error"
+	}
+	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", eventState, "idle", eventReason); err != nil {
+		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+	}
 	if killErr != nil || cleanupErr != nil {
 		if killErr != nil {
 			fmt.Fprintf(os.Stderr, "failed to kill session: %v\n", killErr)
@@ -106,13 +122,7 @@ func cmdSessionKill(args []string) int {
 		if cleanupErr != nil {
 			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
 		}
-		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "degraded", "idle", "kill_error"); err != nil {
-			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
-		}
 		return 1
-	}
-	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "terminated", "idle", "kill_success"); err != nil {
-		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 	}
 	fmt.Println("ok")
 	return 0
@@ -121,6 +131,7 @@ func cmdSessionKill(args []string) int {
 func cmdSessionKillAll(args []string) int {
 	projectOnly := false
 	projectRoot := getPWD()
+	cleanupAllHashes := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--project-only":
@@ -131,12 +142,18 @@ func cmdSessionKillAll(args []string) int {
 			}
 			projectRoot = args[i+1]
 			i++
+		case "--cleanup-all-hashes":
+			cleanupAllHashes = true
 		default:
 			return unknownFlagError(args[i])
 		}
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
+	cleanupOpts := cleanupOptions{
+		AllHashes:  cleanupAllHashes,
+		KeepEvents: true,
+	}
 	sessions, err := tmuxListSessionsFn(projectOnly, projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to list sessions: %v\n", err)
@@ -151,22 +168,18 @@ func cmdSessionKillAll(args []string) int {
 		} else {
 			killed++
 		}
-		cleanupErr := cleanupSessionArtifacts(projectRoot, s)
-		if cleanupErr != nil {
-			errs = append(errs, fmt.Sprintf("%s cleanup: %v", s, cleanupErr))
-		}
-
+		cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, s, cleanupOpts)
 		eventState := "terminated"
 		eventReason := "kill_all_success"
 		if killErr != nil {
 			eventState = "degraded"
 			eventReason = "kill_all_error"
-		} else if cleanupErr != nil {
-			eventState = "degraded"
-			eventReason = "kill_all_cleanup_error"
 		}
 		if eventErr := appendLifecycleEvent(projectRoot, s, "lifecycle", eventState, "idle", eventReason); eventErr != nil {
 			errs = append(errs, fmt.Sprintf("%s observability: %v", s, eventErr))
+		}
+		if cleanupErr != nil {
+			errs = append(errs, fmt.Sprintf("%s cleanup: %v", s, cleanupErr))
 		}
 	}
 	if len(errs) > 0 {

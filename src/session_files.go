@@ -12,6 +12,11 @@ import (
 
 var saveSessionMetaFn = saveSessionMeta
 
+type cleanupOptions struct {
+	AllHashes  bool
+	KeepEvents bool
+}
+
 func generateSessionName(projectRoot, agent, mode, tag string) string {
 	now := time.Now()
 	stamp := fmt.Sprintf("%s-%09d", now.Format("060102-150405"), now.Nanosecond())
@@ -141,12 +146,12 @@ func sanitizeSessionToken(session string) string {
 	return out
 }
 
-func sessionCommandScriptPath(session string, createdAtNanos int64) string {
-	return fmt.Sprintf("/tmp/lisa-cmd-%s-%d.sh", sessionArtifactID(session), createdAtNanos)
+func sessionCommandScriptPath(projectRoot, session string, createdAtNanos int64) string {
+	return fmt.Sprintf("/tmp/lisa-cmd-%s-%s-%d.sh", projectHash(projectRoot), sessionArtifactID(session), createdAtNanos)
 }
 
-func sessionCommandScriptPattern(session string) string {
-	return fmt.Sprintf("/tmp/lisa-cmd-%s-*.sh", sessionArtifactID(session))
+func sessionCommandScriptPattern(projectRoot, session string) string {
+	return fmt.Sprintf("/tmp/lisa-cmd-%s-%s-*.sh", projectHash(projectRoot), sessionArtifactID(session))
 }
 
 func loadSessionState(path string) sessionState {
@@ -203,6 +208,12 @@ func loadSessionMeta(projectRoot, session string) (sessionMeta, error) {
 }
 
 func cleanupSessionArtifacts(projectRoot, session string) error {
+	return cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOptions{
+		AllHashes: cleanupAllHashesEnabled(),
+	})
+}
+
+func cleanupSessionArtifactsWithOptions(projectRoot, session string, opts cleanupOptions) error {
 	var errs []string
 	files := make(map[string]struct{}, 8)
 	for _, path := range []string{
@@ -211,24 +222,37 @@ func cleanupSessionArtifacts(projectRoot, session string) error {
 		sessionOutputFile(projectRoot, session),
 		sessionHeartbeatFile(projectRoot, session),
 		sessionDoneFile(projectRoot, session),
-		sessionEventsFile(projectRoot, session),
-		sessionEventCountFile(sessionEventsFile(projectRoot, session)),
 		sessionStateLockFile(projectRoot, session),
 	} {
 		files[path] = struct{}{}
 	}
+	if !opts.KeepEvents {
+		eventsPath := sessionEventsFile(projectRoot, session)
+		files[eventsPath] = struct{}{}
+		files[sessionEventCountFile(eventsPath)] = struct{}{}
+	}
 
 	sid := sessionArtifactID(session)
 	globPatterns := []string{
-		fmt.Sprintf("/tmp/.lisa-*-session-%s-state.json", sid),
-		fmt.Sprintf("/tmp/.lisa-*-session-%s-meta.json", sid),
-		fmt.Sprintf("/tmp/lisa-*-output-%s.txt", sid),
-		fmt.Sprintf("/tmp/.lisa-*-session-%s-heartbeat.txt", sid),
-		fmt.Sprintf("/tmp/.lisa-*-session-%s-done.txt", sid),
-		fmt.Sprintf("/tmp/.lisa-*-session-%s-events.jsonl", sid),
-		fmt.Sprintf("/tmp/.lisa-*-session-%s-events.jsonl.lines", sid),
-		fmt.Sprintf("/tmp/.lisa-*-session-%s-state.json.lock", sid),
-		sessionCommandScriptPattern(session),
+		sessionCommandScriptPattern(projectRoot, session),
+		fmt.Sprintf("/tmp/lisa-cmd-%s-*.sh", sid), // legacy pattern
+	}
+	if opts.AllHashes {
+		globPatterns = append(globPatterns,
+			fmt.Sprintf("/tmp/.lisa-*-session-%s-state.json", sid),
+			fmt.Sprintf("/tmp/.lisa-*-session-%s-meta.json", sid),
+			fmt.Sprintf("/tmp/lisa-*-output-%s.txt", sid),
+			fmt.Sprintf("/tmp/.lisa-*-session-%s-heartbeat.txt", sid),
+			fmt.Sprintf("/tmp/.lisa-*-session-%s-done.txt", sid),
+			fmt.Sprintf("/tmp/.lisa-*-session-%s-state.json.lock", sid),
+			fmt.Sprintf("/tmp/lisa-cmd-*-%s-*.sh", sid),
+		)
+		if !opts.KeepEvents {
+			globPatterns = append(globPatterns,
+				fmt.Sprintf("/tmp/.lisa-*-session-%s-events.jsonl", sid),
+				fmt.Sprintf("/tmp/.lisa-*-session-%s-events.jsonl.lines", sid),
+			)
+		}
 	}
 	for _, pattern := range globPatterns {
 		matches, err := filepath.Glob(pattern)
@@ -251,6 +275,15 @@ func cleanupSessionArtifacts(projectRoot, session string) error {
 		return errors.New(strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+func cleanupAllHashesEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LISA_CLEANUP_ALL_HASHES"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func writeSessionOutputFile(projectRoot, session string) (string, error) {

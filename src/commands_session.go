@@ -107,6 +107,7 @@ func cmdSessionSpawn(args []string) int {
 	agentArgs := ""
 	width := defaultTmuxWidth
 	height := defaultTmuxHeight
+	cleanupAllHashes := false
 	jsonOut := false
 
 	for i := 0; i < len(args); i++ {
@@ -175,6 +176,8 @@ func cmdSessionSpawn(args []string) int {
 			}
 			height = n
 			i++
+		case "--cleanup-all-hashes":
+			cleanupAllHashes = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -209,7 +212,8 @@ func cmdSessionSpawn(args []string) int {
 	}
 	runID := fmt.Sprintf("%d", time.Now().UnixNano())
 
-	if err := cleanupSessionArtifacts(projectRoot, session); err != nil {
+	cleanupOpts := cleanupOptions{AllHashes: cleanupAllHashes}
+	if err := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to reset previous session artifacts: %v\n", err)
 		return 1
 	}
@@ -228,6 +232,9 @@ func cmdSessionSpawn(args []string) int {
 
 	if err := tmuxNewSessionFn(session, projectRoot, agent, mode, width, height); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create tmux session: %v\n", err)
+		if cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); cleanupErr != nil {
+			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
+		}
 		return 1
 	}
 
@@ -240,9 +247,9 @@ func cmdSessionSpawn(args []string) int {
 	}
 
 	if commandToSend != "" {
-		if err := tmuxSendCommandWithFallbackFn(session, commandToSend, true); err != nil {
+		if err := tmuxSendCommandWithFallbackFn(projectRoot, session, commandToSend, true); err != nil {
 			killErr := tmuxKillSessionFn(session)
-			cleanupErr := cleanupSessionArtifacts(projectRoot, session)
+			cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts)
 			fmt.Fprintf(os.Stderr, "failed to send startup command: %v\n", err)
 			if killErr != nil {
 				fmt.Fprintf(os.Stderr, "failed to kill session after send error: %v\n", killErr)
@@ -266,7 +273,7 @@ func cmdSessionSpawn(args []string) int {
 	}
 	if err := saveSessionMetaFn(projectRoot, session, meta); err != nil {
 		killErr := tmuxKillSessionFn(session)
-		cleanupErr := cleanupSessionArtifacts(projectRoot, session)
+		cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts)
 		fmt.Fprintf(os.Stderr, "failed to persist metadata: %v\n", err)
 		if killErr != nil {
 			fmt.Fprintf(os.Stderr, "failed to kill session after metadata error: %v\n", killErr)
