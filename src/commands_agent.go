@@ -99,6 +99,7 @@ func cmdAgentBuildCmd(args []string) int {
 	mode := "interactive"
 	prompt := ""
 	agentArgs := ""
+	skipPermissions := true
 	jsonOut := false
 
 	for i := 0; i < len(args); i++ {
@@ -127,6 +128,8 @@ func cmdAgentBuildCmd(args []string) int {
 			}
 			agentArgs = args[i+1]
 			i++
+		case "--no-dangerously-skip-permissions":
+			skipPermissions = false
 		case "--json":
 			jsonOut = true
 		default:
@@ -134,7 +137,7 @@ func cmdAgentBuildCmd(args []string) int {
 		}
 	}
 
-	cmd, err := buildAgentCommand(agent, mode, prompt, agentArgs)
+	cmd, err := buildAgentCommandWithOptions(agent, mode, prompt, agentArgs, skipPermissions)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1

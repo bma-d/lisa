@@ -7,6 +7,10 @@ import (
 )
 
 func buildAgentCommand(agent, mode, prompt, agentArgs string) (string, error) {
+	return buildAgentCommandWithOptions(agent, mode, prompt, agentArgs, true)
+}
+
+func buildAgentCommandWithOptions(agent, mode, prompt, agentArgs string, skipPermissions bool) (string, error) {
 	var err error
 	agent, err = parseAgent(agent)
 	if err != nil {
@@ -15,6 +19,16 @@ func buildAgentCommand(agent, mode, prompt, agentArgs string) (string, error) {
 	mode, err = parseMode(mode)
 	if err != nil {
 		return "", err
+	}
+
+	// For Claude agents, inject --dangerously-skip-permissions by default
+	// so spawned sessions can use tools without interactive permission prompts.
+	if skipPermissions && agent == "claude" && !strings.Contains(agentArgs, "--dangerously-skip-permissions") {
+		if strings.TrimSpace(agentArgs) != "" {
+			agentArgs = "--dangerously-skip-permissions " + strings.TrimSpace(agentArgs)
+		} else {
+			agentArgs = "--dangerously-skip-permissions"
+		}
 	}
 
 	switch mode {

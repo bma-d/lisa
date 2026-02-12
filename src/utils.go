@@ -131,6 +131,9 @@ func filterInputBox(input string) string {
 	startRe := regexp.MustCompile(`^\s*[╭┌]`)
 	endRe := regexp.MustCompile(`^\s*[╰└]`)
 	boxLineRe := regexp.MustCompile(`^\s*[│|]`)
+	separatorRe := regexp.MustCompile(`^\s*─+\s*$`)
+	modeIndicatorRe := regexp.MustCompile(`^\s*--\s*(INSERT|NORMAL)\s*--`)
+	statusBarRe := regexp.MustCompile(`\|\s*ctx\(\d+%\)\s*\|`)
 
 	for _, line := range lines {
 		if startRe.MatchString(line) {
@@ -142,6 +145,15 @@ func filterInputBox(input string) string {
 			continue
 		}
 		if inBox && boxLineRe.MatchString(line) {
+			continue
+		}
+		if separatorRe.MatchString(line) {
+			continue
+		}
+		if modeIndicatorRe.MatchString(line) {
+			continue
+		}
+		if statusBarRe.MatchString(line) {
 			continue
 		}
 		out = append(out, line)

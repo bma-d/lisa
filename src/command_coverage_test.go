@@ -15,7 +15,7 @@ func TestBuildAgentCommandInteractiveVariants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentCommand interactive claude failed: %v", err)
 	}
-	if cmd != "claude --model sonnet 'hello world'" {
+	if cmd != "claude --dangerously-skip-permissions --model sonnet 'hello world'" {
 		t.Fatalf("unexpected claude interactive command: %q", cmd)
 	}
 
@@ -47,7 +47,7 @@ func TestCmdAgentBuildCmdExecPath(t *testing.T) {
 		t.Fatalf("expected codex exec JSON payload, got %q", stdout)
 	}
 	if !strings.Contains(stdout, `codex exec 'ship release' --full-auto`) {
-		t.Fatalf("expected codex exec command in payload, got %q", stdout)
+		t.Fatalf("expected codex exec command in payload (codex should not have --dangerously-skip-permissions), got %q", stdout)
 	}
 
 	_, stderr = captureOutput(t, func() {

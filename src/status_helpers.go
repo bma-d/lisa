@@ -153,6 +153,9 @@ func looksLikePromptWaiting(agent, capture string) bool {
 		if strings.TrimSpace(last) == ">" {
 			return true
 		}
+		if strings.TrimSpace(last) == "❯" {
+			return true
+		}
 		if strings.Contains(lowerTail, "press enter to send") && (strings.TrimSpace(last) == ">" || strings.HasSuffix(last, "›")) {
 			return true
 		}

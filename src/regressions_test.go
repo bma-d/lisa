@@ -2260,3 +2260,105 @@ func TestComputeSessionStatusDetectsExecCompletionWithoutModeHint(t *testing.T) 
 		t.Fatalf("expected exec completion marker to be detected even when mode resolves to interactive, got state=%s", status.SessionState)
 	}
 }
+
+func TestFilterInputBoxStripsClaudeCLIChrome(t *testing.T) {
+	input := strings.Join([]string{
+		"some output",
+		"10",
+		"─────────────────────────────",
+		"❯",
+		"─────────────────────────────",
+		"  lisa | ctx(26%) | 07:03:12",
+		"  -- INSERT -- ⏵⏵ don't ask on (shift+tab to cycle)",
+	}, "\n")
+	filtered := filterInputBox(input)
+	lines := strings.Split(filtered, "\n")
+	var nonEmpty []string
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			nonEmpty = append(nonEmpty, strings.TrimSpace(l))
+		}
+	}
+	if len(nonEmpty) != 3 {
+		t.Fatalf("expected 3 non-empty lines after filtering, got %d: %v", len(nonEmpty), nonEmpty)
+	}
+	if nonEmpty[2] != "❯" {
+		t.Fatalf("expected ❯ as last non-empty line, got %q", nonEmpty[2])
+	}
+}
+
+func TestLooksLikePromptWaitingDetectsClaudeCLIChromeWithPrompt(t *testing.T) {
+	// Simulates Claude CLI capture after filterInputBox strips chrome.
+	// The ❯ prompt should be detected as waiting_input.
+	capture := strings.Join([]string{
+		"some output",
+		"10",
+		"❯",
+	}, "\n")
+	if !looksLikePromptWaiting("claude", capture) {
+		t.Fatalf("expected ❯ prompt to be detected as waiting for claude")
+	}
+}
+
+func TestLooksLikePromptWaitingRejectsClaudeBusyWithChrome(t *testing.T) {
+	// Even with ❯ present, if the last non-empty line is busy output, reject.
+	capture := strings.Join([]string{
+		"❯",
+		"Working on task...",
+	}, "\n")
+	if looksLikePromptWaiting("claude", capture) {
+		t.Fatalf("expected busy output after ❯ to not be detected as waiting")
+	}
+}
+
+func TestBuildAgentCommandDefaultsToSkipPermissionsForClaude(t *testing.T) {
+	// Regression: Claude agents spawned without --dangerously-skip-permissions
+	// run in "don't ask" mode, causing Bash tool calls to be denied.
+	// --dangerously-skip-permissions must be injected by default.
+
+	cmd, err := buildAgentCommand("claude", "interactive", "hello", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
+		t.Fatalf("expected --dangerously-skip-permissions in claude interactive command, got %q", cmd)
+	}
+
+	cmd, err = buildAgentCommand("claude", "exec", "hello", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
+		t.Fatalf("expected --dangerously-skip-permissions in claude exec command, got %q", cmd)
+	}
+}
+
+func TestBuildAgentCommandSkipPermissionsNotDuplicatedWhenAlreadyInAgentArgs(t *testing.T) {
+	cmd, err := buildAgentCommand("claude", "interactive", "hello", "--dangerously-skip-permissions --model haiku")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Count(cmd, "--dangerously-skip-permissions") != 1 {
+		t.Fatalf("expected exactly one --dangerously-skip-permissions, got %q", cmd)
+	}
+}
+
+func TestBuildAgentCommandSkipPermissionsNotInjectedForCodex(t *testing.T) {
+	cmd, err := buildAgentCommand("codex", "interactive", "hello", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(cmd, "--dangerously-skip-permissions") {
+		t.Fatalf("codex should not get --dangerously-skip-permissions, got %q", cmd)
+	}
+}
+
+func TestBuildAgentCommandWithOptionsCanDisableSkipPermissions(t *testing.T) {
+	cmd, err := buildAgentCommandWithOptions("claude", "interactive", "hello", "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(cmd, "--dangerously-skip-permissions") {
+		t.Fatalf("expected no --dangerously-skip-permissions when disabled, got %q", cmd)
+	}
+}

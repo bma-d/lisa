@@ -108,6 +108,7 @@ func cmdSessionSpawn(args []string) int {
 	width := defaultTmuxWidth
 	height := defaultTmuxHeight
 	cleanupAllHashes := false
+	skipPermissions := true
 	jsonOut := false
 
 	for i := 0; i < len(args); i++ {
@@ -178,6 +179,8 @@ func cmdSessionSpawn(args []string) int {
 			i++
 		case "--cleanup-all-hashes":
 			cleanupAllHashes = true
+		case "--no-dangerously-skip-permissions":
+			skipPermissions = false
 		case "--json":
 			jsonOut = true
 		default:
@@ -233,7 +236,7 @@ func cmdSessionSpawn(args []string) int {
 	}
 
 	if command == "" {
-		command, err = buildAgentCommand(agent, mode, prompt, agentArgs)
+		command, err = buildAgentCommandWithOptions(agent, mode, prompt, agentArgs, skipPermissions)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			emitSpawnFailureEvent("spawn_command_build_error")
