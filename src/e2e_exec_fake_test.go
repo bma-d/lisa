@@ -67,6 +67,7 @@ func TestE2EExecLifecycleWithLocalCommand(t *testing.T) {
 	captureRaw := runAndRequireSuccess(t, repoRoot, nil,
 		binPath, "session", "capture",
 		"--session", session,
+		"--raw",
 		"--lines", "200",
 		"--json",
 	)

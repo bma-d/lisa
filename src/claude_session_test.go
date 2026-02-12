@@ -153,7 +153,7 @@ func TestFindClaudeSessionIDFromHistory(t *testing.T) {
 	}
 }
 
-func TestCmdSessionCaptureTranscriptFlag(t *testing.T) {
+func TestCmdSessionCaptureDefaultTranscript(t *testing.T) {
 	origFindFn := findClaudeSessionIDFn
 	origReadFn := readClaudeTranscriptFn
 	origMetaGlobFn := loadSessionMetaByGlobFn
@@ -181,10 +181,10 @@ func TestCmdSessionCaptureTranscriptFlag(t *testing.T) {
 		}, nil
 	}
 
+	// Default (no --raw) should use transcript
 	stdout, stderr := captureOutput(t, func() {
 		code := cmdSessionCapture([]string{
 			"--session", "lisa-test-transcript",
-			"--transcript",
 			"--json",
 		})
 		if code != 0 {
@@ -199,6 +199,35 @@ func TestCmdSessionCaptureTranscriptFlag(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"role":"user"`) || !strings.Contains(stdout, `"role":"assistant"`) {
 		t.Fatalf("expected user and assistant messages in output, got %q", stdout)
+	}
+}
+
+func TestCmdSessionCaptureRawFlag(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "raw pane output", nil }
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionCapture([]string{
+			"--session", "lisa-test-raw",
+			"--raw",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected raw capture success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"capture":"raw pane output"`) {
+		t.Fatalf("expected raw capture in output, got %q", stdout)
 	}
 }
 

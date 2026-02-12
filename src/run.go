@@ -49,7 +49,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  session explain --session NAME [--agent auto|claude|codex] [--mode auto|interactive|exec] [--project-root PATH] [--events N] [--json]")
 	fmt.Fprintln(os.Stderr, "  session monitor --session NAME [--agent auto|claude|codex] [--mode auto|interactive|exec] [--project-root PATH]")
 	fmt.Fprintln(os.Stderr, "                  [--poll-interval N] [--max-polls N] [--stop-on-waiting true|false] [--json] [--verbose]")
-	fmt.Fprintln(os.Stderr, "  session capture --session NAME [--lines N] [--transcript] [--project-root PATH] [--json]")
+	fmt.Fprintln(os.Stderr, "  session capture --session NAME [--raw] [--lines N] [--project-root PATH] [--json]")
 	fmt.Fprintln(os.Stderr, "  session list [--project-only] [--project-root PATH]")
 	fmt.Fprintln(os.Stderr, "  session exists --session NAME")
 	fmt.Fprintln(os.Stderr, "  session kill --session NAME [--project-root PATH] [--cleanup-all-hashes]")

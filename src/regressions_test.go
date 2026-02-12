@@ -1437,6 +1437,7 @@ func TestCmdSessionCaptureUsesMockableFns(t *testing.T) {
 		if code := cmdSessionCapture([]string{
 			"--session", "lisa-capture",
 			"--lines", "123",
+			"--raw",
 			"--json",
 		}); code != 0 {
 			t.Fatalf("expected capture success, got %d", code)

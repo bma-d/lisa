@@ -333,7 +333,7 @@ func cmdSessionCapture(args []string) int {
 	session := ""
 	lines := 200
 	jsonOut := false
-	transcript := false
+	raw := false
 	projectRoot := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -354,8 +354,8 @@ func cmdSessionCapture(args []string) int {
 			}
 			lines = n
 			i++
-		case "--transcript":
-			transcript = true
+		case "--raw":
+			raw = true
 		case "--project-root":
 			if i+1 >= len(args) {
 				return flagValueError("--project-root")
@@ -373,7 +373,7 @@ func cmdSessionCapture(args []string) int {
 		return 1
 	}
 
-	if transcript {
+	if !raw {
 		return cmdSessionCaptureTranscript(session, projectRoot, jsonOut)
 	}
 
