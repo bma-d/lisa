@@ -258,14 +258,19 @@ func TestCmdSessionMonitorVerboseWritesProgressLine(t *testing.T) {
 func TestCmdSessionExplainTextOutputWithTmuxReadError(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn
+	origDisplay := tmuxDisplayFn
 	origReadTail := readSessionEventTailFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
 		tmuxCapturePaneFn = origCapture
+		tmuxDisplayFn = origDisplay
 		readSessionEventTailFn = origReadTail
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		return "0\t\tbash\t12345", nil
+	}
 	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
 		return "", errors.New("tmux server busy")
 	}
