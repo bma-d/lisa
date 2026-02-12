@@ -48,6 +48,7 @@ type sessionState struct {
 	LastClassificationReason  string  `json:"lastClassificationReason,omitempty"`
 	LastClassificationPollRef int     `json:"lastClassificationPollRef,omitempty"`
 	ClaudeSessionID           string  `json:"claudeSessionId,omitempty"`
+	CodexSessionID            string  `json:"codexSessionId,omitempty"`
 }
 
 type sessionStatus struct {

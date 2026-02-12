@@ -320,6 +320,9 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		if stateHint.ClaudeSessionID != "" {
 			state.ClaudeSessionID = stateHint.ClaudeSessionID
 		}
+		if stateHint.CodexSessionID != "" {
+			state.CodexSessionID = stateHint.CodexSessionID
+		}
 		if !useCachedProcessScan {
 			state.LastAgentProbeAt = now
 		}
@@ -361,17 +364,32 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		status.Signals.ActiveProcessBusy = activeProcessBusy
 
 		var transcriptTurnComplete bool
-		if mode == "interactive" && agent == "claude" && metaErr == nil {
-			cached := stateHint.ClaudeSessionID
-			tc, tAge, sid, tErr := checkTranscriptTurnCompleteFn(meta.ProjectRoot, meta.Prompt, meta.CreatedAt, cached)
-			transcriptTurnComplete = tc
-			status.Signals.TranscriptTurnComplete = tc
-			status.Signals.TranscriptFileAge = tAge
-			if tErr != nil {
-				status.Signals.TranscriptError = tErr.Error()
-			}
-			if sid != "" && sid != stateHint.ClaudeSessionID {
-				state.ClaudeSessionID = sid
+		if mode == "interactive" && metaErr == nil {
+			switch agent {
+			case "claude":
+				cached := stateHint.ClaudeSessionID
+				tc, tAge, sid, tErr := checkTranscriptTurnCompleteFn(meta.ProjectRoot, meta.Prompt, meta.CreatedAt, cached)
+				transcriptTurnComplete = tc
+				status.Signals.TranscriptTurnComplete = tc
+				status.Signals.TranscriptFileAge = tAge
+				if tErr != nil {
+					status.Signals.TranscriptError = tErr.Error()
+				}
+				if sid != "" && sid != stateHint.ClaudeSessionID {
+					state.ClaudeSessionID = sid
+				}
+			case "codex":
+				cached := stateHint.CodexSessionID
+				tc, tAge, sid, tErr := checkCodexTranscriptTurnCompleteFn(meta.Prompt, meta.CreatedAt, cached)
+				transcriptTurnComplete = tc
+				status.Signals.TranscriptTurnComplete = tc
+				status.Signals.TranscriptFileAge = tAge
+				if tErr != nil {
+					status.Signals.TranscriptError = tErr.Error()
+				}
+				if sid != "" && sid != stateHint.CodexSessionID {
+					state.CodexSessionID = sid
+				}
 			}
 		}
 

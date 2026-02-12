@@ -2568,3 +2568,78 @@ func TestComputeSessionStatusTranscriptPlusHighCPU(t *testing.T) {
 		t.Fatalf("expected transcript_turn_complete, got %q", status.ClassificationReason)
 	}
 }
+
+func TestComputeSessionStatusCodexTranscriptTurnComplete(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	origCodexTranscript := checkCodexTranscriptTurnCompleteFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+		checkCodexTranscriptTurnCompleteFn = origCodexTranscript
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	capture := "working on stuff"
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return capture, nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tnode\t123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 456, 0.05, nil }
+	checkCodexTranscriptTurnCompleteFn = func(prompt, createdAt, cachedSessionID string) (bool, int, string, error) {
+		return true, 12, "mock-codex-session-id", nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-codex-transcript-test"
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "codex",
+		Mode:        "interactive",
+		ProjectRoot: projectRoot,
+		Prompt:      "test prompt",
+		CreatedAt:   "2026-01-01T00:00:00Z",
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("failed to save meta: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(sessionMetaFile(projectRoot, session)) })
+	t.Cleanup(func() { os.Remove(sessionStateFile(projectRoot, session)) })
+
+	status, err := computeSessionStatus(session, projectRoot, "codex", "interactive", false, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "waiting_input" {
+		t.Fatalf("expected waiting_input, got %q", status.SessionState)
+	}
+	if status.ClassificationReason != "transcript_turn_complete" {
+		t.Fatalf("expected transcript_turn_complete reason, got %q", status.ClassificationReason)
+	}
+	if !status.Signals.TranscriptTurnComplete {
+		t.Fatal("expected TranscriptTurnComplete signal to be true")
+	}
+	if status.Signals.TranscriptFileAge != 12 {
+		t.Fatalf("expected TranscriptFileAge=12, got %d", status.Signals.TranscriptFileAge)
+	}
+
+	state, err := loadSessionStateWithError(sessionStateFile(projectRoot, session))
+	if err != nil {
+		t.Fatalf("expected session state to persist, got error: %v", err)
+	}
+	if state.CodexSessionID != "mock-codex-session-id" {
+		t.Fatalf("expected cached CodexSessionID=mock-codex-session-id, got %q", state.CodexSessionID)
+	}
+}
