@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,8 +41,15 @@ type claudeHistoryEntry struct {
 	SessionID string `json:"sessionId"`
 }
 
+type claudeJSONLTailEntry struct {
+	Type    string          `json:"type"`
+	Subtype string          `json:"subtype"`
+	Message json.RawMessage `json:"message"`
+}
+
 var findClaudeSessionIDFn = findClaudeSessionID
 var readClaudeTranscriptFn = readClaudeTranscript
+var checkTranscriptTurnCompleteFn = checkTranscriptTurnComplete
 
 func encodeClaudePath(absPath string) string {
 	return strings.NewReplacer("/", "-", ".", "-").Replace(absPath)
@@ -256,6 +264,95 @@ func extractMessageText(raw json.RawMessage, role string) string {
 		}
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func checkTranscriptTurnComplete(projectRoot, prompt, createdAt, cachedSessionID string) (turnComplete bool, fileAge int, sessionID string, err error) {
+	sid := cachedSessionID
+	if sid == "" {
+		sid, err = findClaudeSessionIDFn(projectRoot, prompt, createdAt)
+		if err != nil {
+			return false, 0, "", err
+		}
+	}
+	sessionID = sid
+
+	projDir := claudeProjectDir(projectRoot)
+	jsonlPath := filepath.Join(projDir, sid+".jsonl")
+
+	info, err := os.Stat(jsonlPath)
+	if err != nil {
+		return false, 0, sessionID, fmt.Errorf("cannot stat transcript: %w", err)
+	}
+	fileAge = int(time.Since(info.ModTime()).Seconds())
+	if fileAge < 3 {
+		return false, fileAge, sessionID, nil
+	}
+
+	f, err := os.Open(jsonlPath)
+	if err != nil {
+		return false, fileAge, sessionID, fmt.Errorf("cannot open transcript: %w", err)
+	}
+	defer f.Close()
+
+	// Read last 8KB
+	const tailBytes = 8 * 1024
+	fSize := info.Size()
+	offset := int64(0)
+	if fSize > tailBytes {
+		offset = fSize - tailBytes
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return false, fileAge, sessionID, fmt.Errorf("cannot seek transcript: %w", err)
+	}
+
+	var entries []claudeJSONLTailEntry
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, tailBytes), tailBytes+1024)
+	first := offset > 0
+	for scanner.Scan() {
+		if first {
+			first = false
+			continue // skip potentially partial first line
+		}
+		var entry claudeJSONLTailEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+
+	// Walk backwards, skip non-meaningful entries
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		switch e.Type {
+		case "progress", "system", "file-history-snapshot":
+			continue
+		case "assistant":
+			return assistantHasTextBlock(e.Message), fileAge, sessionID, nil
+		default:
+			// user, tool_result, etc. → not turn-complete
+			return false, fileAge, sessionID, nil
+		}
+	}
+
+	return false, fileAge, sessionID, nil
+}
+
+func assistantHasTextBlock(raw json.RawMessage) bool {
+	var msg claudeMessage
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return false
+	}
+	var blocks []claudeContentBlock
+	if err := json.Unmarshal(msg.Content, &blocks); err != nil {
+		return false
+	}
+	for _, b := range blocks {
+		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func formatTranscriptPlain(messages []transcriptMessage) string {

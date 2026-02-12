@@ -231,6 +231,171 @@ func TestCmdSessionCaptureRawFlag(t *testing.T) {
 	}
 }
 
+func TestCheckTranscriptTurnCompleteTextBlock(t *testing.T) {
+	dir := t.TempDir()
+	projDir := filepath.Join(dir, ".claude", "projects", encodeClaudePath("/test/project"))
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	jsonlPath := filepath.Join(projDir, "test-session.jsonl")
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"hello"},"timestamp":"2026-01-01T00:00:01Z"}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done!"}]},"timestamp":"2026-01-01T00:00:02Z"}`,
+	}
+	if err := os.WriteFile(jsonlPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write jsonl: %v", err)
+	}
+	// Backdate mtime so fileAge >= 3
+	past := time.Now().Add(-10 * time.Second)
+	os.Chtimes(jsonlPath, past, past)
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", dir)
+
+	turnComplete, fileAge, sid, err := checkTranscriptTurnComplete("/test/project", "", "", "test-session")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !turnComplete {
+		t.Fatal("expected turnComplete=true for assistant text block")
+	}
+	if fileAge < 3 {
+		t.Fatalf("expected fileAge >= 3, got %d", fileAge)
+	}
+	if sid != "test-session" {
+		t.Fatalf("expected sid 'test-session', got %q", sid)
+	}
+}
+
+func TestCheckTranscriptTurnCompleteToolUse(t *testing.T) {
+	dir := t.TempDir()
+	projDir := filepath.Join(dir, ".claude", "projects", encodeClaudePath("/test/project"))
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	jsonlPath := filepath.Join(projDir, "mid-turn.jsonl")
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"fix the bug"},"timestamp":"2026-01-01T00:00:01Z"}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{}}]},"timestamp":"2026-01-01T00:00:02Z"}`,
+	}
+	if err := os.WriteFile(jsonlPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write jsonl: %v", err)
+	}
+	past := time.Now().Add(-10 * time.Second)
+	os.Chtimes(jsonlPath, past, past)
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", dir)
+
+	turnComplete, _, _, err := checkTranscriptTurnComplete("/test/project", "", "", "mid-turn")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if turnComplete {
+		t.Fatal("expected turnComplete=false for tool_use-only assistant")
+	}
+}
+
+func TestCheckTranscriptTurnCompleteSkipsProgress(t *testing.T) {
+	dir := t.TempDir()
+	projDir := filepath.Join(dir, ".claude", "projects", encodeClaudePath("/test/project"))
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	jsonlPath := filepath.Join(projDir, "progress-trail.jsonl")
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"hello"},"timestamp":"2026-01-01T00:00:01Z"}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"All done."}]},"timestamp":"2026-01-01T00:00:02Z"}`,
+		`{"type":"progress","message":null,"timestamp":"2026-01-01T00:00:03Z"}`,
+		`{"type":"system","message":null,"timestamp":"2026-01-01T00:00:04Z"}`,
+	}
+	if err := os.WriteFile(jsonlPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write jsonl: %v", err)
+	}
+	past := time.Now().Add(-10 * time.Second)
+	os.Chtimes(jsonlPath, past, past)
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", dir)
+
+	turnComplete, _, _, err := checkTranscriptTurnComplete("/test/project", "", "", "progress-trail")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !turnComplete {
+		t.Fatal("expected turnComplete=true — progress/system entries should be skipped")
+	}
+}
+
+func TestCheckTranscriptTurnCompleteFreshFile(t *testing.T) {
+	dir := t.TempDir()
+	projDir := filepath.Join(dir, ".claude", "projects", encodeClaudePath("/test/project"))
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	jsonlPath := filepath.Join(projDir, "fresh.jsonl")
+	lines := []string{
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]},"timestamp":"2026-01-01T00:00:02Z"}`,
+	}
+	// Write with current mtime (fresh)
+	if err := os.WriteFile(jsonlPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write jsonl: %v", err)
+	}
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", dir)
+
+	turnComplete, fileAge, _, err := checkTranscriptTurnComplete("/test/project", "", "", "fresh")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if turnComplete {
+		t.Fatal("expected turnComplete=false for fresh file (age < 3)")
+	}
+	if fileAge >= 3 {
+		t.Fatalf("expected fileAge < 3 for just-written file, got %d", fileAge)
+	}
+}
+
+func TestCheckTranscriptTurnCompleteUserLast(t *testing.T) {
+	dir := t.TempDir()
+	projDir := filepath.Join(dir, ".claude", "projects", encodeClaudePath("/test/project"))
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	jsonlPath := filepath.Join(projDir, "user-last.jsonl")
+	lines := []string{
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Sure."}]},"timestamp":"2026-01-01T00:00:01Z"}`,
+		`{"type":"user","message":{"role":"user","content":"do more"},"timestamp":"2026-01-01T00:00:02Z"}`,
+	}
+	if err := os.WriteFile(jsonlPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write jsonl: %v", err)
+	}
+	past := time.Now().Add(-10 * time.Second)
+	os.Chtimes(jsonlPath, past, past)
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", dir)
+
+	turnComplete, _, _, err := checkTranscriptTurnComplete("/test/project", "", "", "user-last")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if turnComplete {
+		t.Fatal("expected turnComplete=false when last meaningful entry is user")
+	}
+}
+
 func TestLoadSessionMetaByGlob(t *testing.T) {
 	dir := t.TempDir()
 	session := "lisa-test-glob-session"

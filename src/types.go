@@ -47,6 +47,7 @@ type sessionState struct {
 	LastStatus                string  `json:"lastStatus,omitempty"`
 	LastClassificationReason  string  `json:"lastClassificationReason,omitempty"`
 	LastClassificationPollRef int     `json:"lastClassificationPollRef,omitempty"`
+	ClaudeSessionID           string  `json:"claudeSessionId,omitempty"`
 }
 
 type sessionStatus struct {
@@ -95,6 +96,9 @@ type statusSignals struct {
 	PaneIsShell              bool   `json:"paneIsShell"`
 	AgentScanCached          bool   `json:"agentScanCached"`
 	AgentScanError           string `json:"agentScanError,omitempty"`
+	TranscriptTurnComplete   bool   `json:"transcriptTurnComplete"`
+	TranscriptFileAge        int    `json:"transcriptFileAge"`
+	TranscriptError          string `json:"transcriptError,omitempty"`
 	StateLockWaitMS          int    `json:"stateLockWaitMs"`
 	StateLockTimedOut        bool   `json:"stateLockTimedOut"`
 	TMUXReadError            string `json:"tmuxReadError,omitempty"`

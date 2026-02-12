@@ -2312,6 +2312,71 @@ func TestLooksLikePromptWaitingRejectsClaudeBusyWithChrome(t *testing.T) {
 	}
 }
 
+func TestPromptWaitingDetectedEvenWithHighCPU(t *testing.T) {
+	// Regression: when agent just finished a task, CPU may still be >= 0.2
+	// but the prompt (❯) is clearly visible. promptWaiting should classify
+	// as waiting_input regardless of CPU, since prompt presence is definitive.
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "some output\n10\n❯", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "node", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		switch key {
+		case "LISA_AGENT":
+			return "claude", nil
+		case "LISA_MODE":
+			return "interactive", nil
+		default:
+			return "", errors.New("missing")
+		}
+	}
+	// Agent detected with HIGH CPU (>= 0.2) — previously blocked waiting_input
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 999, 0.5, nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-prompt-busy-cpu"
+
+	status, err := computeSessionStatus(session, projectRoot, "claude", "interactive", false, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "waiting_input" {
+		t.Fatalf("expected waiting_input when prompt visible despite high CPU, got state=%s reason=%s",
+			status.SessionState, status.ClassificationReason)
+	}
+	if status.ClassificationReason != "prompt_waiting" {
+		t.Fatalf("expected prompt_waiting reason, got %s", status.ClassificationReason)
+	}
+}
+
 func TestBuildAgentCommandDefaultsToSkipPermissionsForClaude(t *testing.T) {
 	// Regression: Claude agents spawned without --dangerously-skip-permissions
 	// run in "don't ask" mode, causing Bash tool calls to be denied.
@@ -2361,5 +2426,136 @@ func TestBuildAgentCommandWithOptionsCanDisableSkipPermissions(t *testing.T) {
 	}
 	if strings.Contains(cmd, "--dangerously-skip-permissions") {
 		t.Fatalf("expected no --dangerously-skip-permissions when disabled, got %q", cmd)
+	}
+}
+
+func TestComputeSessionStatusTranscriptTurnComplete(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	origTranscript := checkTranscriptTurnCompleteFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+		checkTranscriptTurnCompleteFn = origTranscript
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	capture := "working on stuff"
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return capture, nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tnode\t123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	// Agent alive but low CPU — not enough for interactiveWaiting because output is fresh
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 456, 0.05, nil }
+	checkTranscriptTurnCompleteFn = func(projectRoot, prompt, createdAt, cachedSessionID string) (bool, int, string, error) {
+		return true, 15, "mock-session-id", nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-transcript-test"
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "interactive",
+		ProjectRoot: projectRoot,
+		Prompt:      "test prompt",
+		CreatedAt:   "2026-01-01T00:00:00Z",
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("failed to save meta: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(sessionMetaFile(projectRoot, session)) })
+
+	status, err := computeSessionStatus(session, projectRoot, "claude", "interactive", false, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "waiting_input" {
+		t.Fatalf("expected waiting_input, got %q", status.SessionState)
+	}
+	if status.ClassificationReason != "transcript_turn_complete" {
+		t.Fatalf("expected transcript_turn_complete reason, got %q", status.ClassificationReason)
+	}
+	if !status.Signals.TranscriptTurnComplete {
+		t.Fatal("expected TranscriptTurnComplete signal to be true")
+	}
+	if status.Signals.TranscriptFileAge != 15 {
+		t.Fatalf("expected TranscriptFileAge=15, got %d", status.Signals.TranscriptFileAge)
+	}
+}
+
+func TestComputeSessionStatusTranscriptPlusHighCPU(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	origTranscript := checkTranscriptTurnCompleteFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+		checkTranscriptTurnCompleteFn = origTranscript
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	capture := "working on stuff"
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return capture, nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tnode\t123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	// High CPU — normally would classify as agent_pid_alive
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 456, 5.0, nil }
+	checkTranscriptTurnCompleteFn = func(projectRoot, prompt, createdAt, cachedSessionID string) (bool, int, string, error) {
+		return true, 20, "mock-session-id", nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-transcript-cpu"
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "interactive",
+		ProjectRoot: projectRoot,
+		Prompt:      "test prompt",
+		CreatedAt:   "2026-01-01T00:00:00Z",
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("failed to save meta: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(sessionMetaFile(projectRoot, session)) })
+
+	status, err := computeSessionStatus(session, projectRoot, "claude", "interactive", false, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// transcriptTurnComplete is between interactiveWaiting and promptWaiting,
+	// but agentPID > 0 with high CPU still allows it because interactiveWaiting
+	// requires low CPU. The transcript case fires before agentPID alive.
+	if status.SessionState != "waiting_input" {
+		t.Fatalf("expected waiting_input despite high CPU, got %q", status.SessionState)
+	}
+	if status.ClassificationReason != "transcript_turn_complete" {
+		t.Fatalf("expected transcript_turn_complete, got %q", status.ClassificationReason)
 	}
 }

@@ -317,6 +317,9 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		state.LastAgentCPU = agentCPU
 		state.LastResolvedAgent = agent
 		state.LastResolvedMode = mode
+		if stateHint.ClaudeSessionID != "" {
+			state.ClaudeSessionID = stateHint.ClaudeSessionID
+		}
 		if !useCachedProcessScan {
 			state.LastAgentProbeAt = now
 		}
@@ -356,6 +359,21 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		status.Signals.InteractiveWaiting = interactiveWaiting
 		status.Signals.PromptWaiting = promptWaiting
 		status.Signals.ActiveProcessBusy = activeProcessBusy
+
+		var transcriptTurnComplete bool
+		if mode == "interactive" && agent == "claude" && metaErr == nil {
+			cached := stateHint.ClaudeSessionID
+			tc, tAge, sid, tErr := checkTranscriptTurnCompleteFn(meta.ProjectRoot, meta.Prompt, meta.CreatedAt, cached)
+			transcriptTurnComplete = tc
+			status.Signals.TranscriptTurnComplete = tc
+			status.Signals.TranscriptFileAge = tAge
+			if tErr != nil {
+				status.Signals.TranscriptError = tErr.Error()
+			}
+			if sid != "" && sid != stateHint.ClaudeSessionID {
+				stateHint.ClaudeSessionID = sid
+			}
+		}
 
 		switch {
 		case strings.HasPrefix(paneStatus, "crashed:"):
@@ -406,7 +424,12 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 				status.SessionState = "waiting_input"
 				status.WaitEstimate = 0
 				status.ClassificationReason = "interactive_waiting_idle"
-			case promptWaiting && !activeProcessBusy:
+			case transcriptTurnComplete:
+				status.Status = "idle"
+				status.SessionState = "waiting_input"
+				status.WaitEstimate = 0
+				status.ClassificationReason = "transcript_turn_complete"
+			case promptWaiting:
 				status.Status = "idle"
 				status.SessionState = "waiting_input"
 				status.WaitEstimate = 0
