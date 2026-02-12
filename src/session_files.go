@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -218,16 +219,53 @@ func loadSessionMetaByGlob(session string) (sessionMeta, error) {
 	if len(matches) == 0 {
 		return sessionMeta{}, fmt.Errorf("no metadata file found for session %q", session)
 	}
-	// Use the first match (most common case: single project)
-	raw, err := os.ReadFile(matches[0])
-	if err != nil {
-		return sessionMeta{}, err
+
+	sort.Strings(matches)
+	type candidate struct {
+		meta    sessionMeta
+		path    string
+		modTime time.Time
 	}
-	var meta sessionMeta
-	if err := json.Unmarshal(raw, &meta); err != nil {
-		return sessionMeta{}, err
+	var (
+		candidates []candidate
+		roots      = make(map[string]struct{})
+	)
+	for _, path := range matches {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		var meta sessionMeta
+		if unmarshalErr := json.Unmarshal(raw, &meta); unmarshalErr != nil {
+			continue
+		}
+		root := strings.TrimSpace(meta.ProjectRoot)
+		if root != "" {
+			roots[canonicalProjectRoot(root)] = struct{}{}
+		}
+		modTime := time.Time{}
+		if info, statErr := os.Stat(path); statErr == nil {
+			modTime = info.ModTime()
+		}
+		candidates = append(candidates, candidate{
+			meta:    meta,
+			path:    path,
+			modTime: modTime,
+		})
 	}
-	return meta, nil
+	if len(candidates) == 0 {
+		return sessionMeta{}, fmt.Errorf("no readable metadata file found for session %q", session)
+	}
+	if len(roots) > 1 {
+		return sessionMeta{}, fmt.Errorf("multiple metadata files found for session %q across projects; provide --project-root", session)
+	}
+	best := candidates[0]
+	for _, c := range candidates[1:] {
+		if c.modTime.After(best.modTime) || (c.modTime.Equal(best.modTime) && c.path > best.path) {
+			best = c
+		}
+	}
+	return best.meta, nil
 }
 
 func cleanupSessionArtifacts(projectRoot, session string) error {

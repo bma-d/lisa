@@ -2477,6 +2477,7 @@ func TestComputeSessionStatusTranscriptTurnComplete(t *testing.T) {
 		t.Fatalf("failed to save meta: %v", err)
 	}
 	t.Cleanup(func() { os.Remove(sessionMetaFile(projectRoot, session)) })
+	t.Cleanup(func() { os.Remove(sessionStateFile(projectRoot, session)) })
 
 	status, err := computeSessionStatus(session, projectRoot, "claude", "interactive", false, 5)
 	if err != nil {
@@ -2493,6 +2494,14 @@ func TestComputeSessionStatusTranscriptTurnComplete(t *testing.T) {
 	}
 	if status.Signals.TranscriptFileAge != 15 {
 		t.Fatalf("expected TranscriptFileAge=15, got %d", status.Signals.TranscriptFileAge)
+	}
+
+	state, err := loadSessionStateWithError(sessionStateFile(projectRoot, session))
+	if err != nil {
+		t.Fatalf("expected session state to persist, got error: %v", err)
+	}
+	if state.ClaudeSessionID != "mock-session-id" {
+		t.Fatalf("expected cached ClaudeSessionID=mock-session-id, got %q", state.ClaudeSessionID)
 	}
 }
 

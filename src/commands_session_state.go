@@ -379,8 +379,11 @@ func cmdSessionCapture(args []string) int {
 		return 1
 	}
 
-	if !raw {
-		return cmdSessionCaptureTranscript(session, projectRoot, jsonOut)
+	if !raw && shouldUseTranscriptCapture(session, projectRoot) {
+		sessionID, messages, err := captureSessionTranscript(session, projectRoot)
+		if err == nil {
+			return writeTranscriptCapture(session, sessionID, messages, jsonOut)
+		}
 	}
 
 	if !tmuxHasSessionFn(session) {
@@ -402,6 +405,23 @@ func cmdSessionCapture(args []string) int {
 	}
 	fmt.Print(capture)
 	return 0
+}
+
+func shouldUseTranscriptCapture(session, projectRoot string) bool {
+	root := strings.TrimSpace(projectRoot)
+	if root != "" {
+		meta, err := loadSessionMeta(canonicalProjectRoot(root), session)
+		if err != nil {
+			return false
+		}
+		return normalizeAgent(meta.Agent) == "claude"
+	}
+
+	meta, err := loadSessionMetaByGlobFn(session)
+	if err != nil {
+		return false
+	}
+	return normalizeAgent(meta.Agent) == "claude"
 }
 
 func parseAgentHint(agent string) (string, error) {

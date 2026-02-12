@@ -373,51 +373,58 @@ func formatTranscriptPlain(messages []transcriptMessage) string {
 	return sb.String()
 }
 
-func cmdSessionCaptureTranscript(session, projectRoot string, jsonOut bool) int {
-	if projectRoot == "" {
-		// Try to discover from meta file
-		meta, err := loadSessionMetaByGlobFn(session)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "cannot determine project root: provide --project-root or ensure session metadata exists: %v\n", err)
-			return 1
-		}
-		projectRoot = meta.ProjectRoot
-	}
-	projectRoot = canonicalProjectRoot(projectRoot)
-
-	meta, err := loadSessionMeta(projectRoot, session)
-	if err != nil {
-		// Fallback to glob
-		meta, err = loadSessionMetaByGlobFn(session)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "cannot load session metadata: %v\n", err)
-			return 1
-		}
-	}
-
-	sessionID, err := findClaudeSessionIDFn(meta.ProjectRoot, meta.Prompt, meta.CreatedAt)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "cannot find Claude session: %v\n", err)
-		return 1
-	}
-
-	projDir := claudeProjectDir(meta.ProjectRoot)
-	jsonlPath := filepath.Join(projDir, sessionID+".jsonl")
-	messages, err := readClaudeTranscriptFn(jsonlPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "cannot read Claude transcript: %v\n", err)
-		return 1
-	}
-
+func writeTranscriptCapture(session, sessionID string, messages []transcriptMessage, jsonOut bool) int {
 	if jsonOut {
 		writeJSON(map[string]any{
-			"session":      session,
+			"session":       session,
 			"claudeSession": sessionID,
-			"messages":     messages,
+			"messages":      messages,
 		})
 		return 0
 	}
 
 	fmt.Print(formatTranscriptPlain(messages))
 	return 0
+}
+
+func captureSessionTranscript(session, projectRoot string) (string, []transcriptMessage, error) {
+	var (
+		meta sessionMeta
+		err  error
+	)
+	if strings.TrimSpace(projectRoot) == "" {
+		meta, err = loadSessionMetaByGlobFn(session)
+		if err != nil {
+			return "", nil, fmt.Errorf("cannot determine project root: provide --project-root or ensure session metadata exists: %w", err)
+		}
+		projectRoot = canonicalProjectRoot(meta.ProjectRoot)
+	} else {
+		projectRoot = canonicalProjectRoot(projectRoot)
+		meta, err = loadSessionMeta(projectRoot, session)
+		if err != nil {
+			return "", nil, fmt.Errorf("cannot load session metadata: %w", err)
+		}
+	}
+
+	sessionID, err := findClaudeSessionIDFn(meta.ProjectRoot, meta.Prompt, meta.CreatedAt)
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot find Claude session: %w", err)
+	}
+
+	projDir := claudeProjectDir(meta.ProjectRoot)
+	jsonlPath := filepath.Join(projDir, sessionID+".jsonl")
+	messages, err := readClaudeTranscriptFn(jsonlPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot read Claude transcript: %w", err)
+	}
+	return sessionID, messages, nil
+}
+
+func cmdSessionCaptureTranscript(session, projectRoot string, jsonOut bool) int {
+	sessionID, messages, err := captureSessionTranscript(session, projectRoot)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	return writeTranscriptCapture(session, sessionID, messages, jsonOut)
 }

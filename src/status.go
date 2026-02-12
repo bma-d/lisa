@@ -371,7 +371,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 				status.Signals.TranscriptError = tErr.Error()
 			}
 			if sid != "" && sid != stateHint.ClaudeSessionID {
-				stateHint.ClaudeSessionID = sid
+				state.ClaudeSessionID = sid
 			}
 		}
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,6 +167,7 @@ func TestCmdSessionCaptureDefaultTranscript(t *testing.T) {
 	loadSessionMetaByGlobFn = func(session string) (sessionMeta, error) {
 		return sessionMeta{
 			Session:     session,
+			Agent:       "claude",
 			ProjectRoot: "/tmp/test-project",
 			Prompt:      "Say hello",
 			CreatedAt:   "2026-01-01T00:00:00Z",
@@ -228,6 +230,93 @@ func TestCmdSessionCaptureRawFlag(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"capture":"raw pane output"`) {
 		t.Fatalf("expected raw capture in output, got %q", stdout)
+	}
+}
+
+func TestCmdSessionCaptureDefaultFallsBackToRawForNonClaude(t *testing.T) {
+	origMetaGlobFn := loadSessionMetaByGlobFn
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	t.Cleanup(func() {
+		loadSessionMetaByGlobFn = origMetaGlobFn
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+	})
+
+	loadSessionMetaByGlobFn = func(session string) (sessionMeta, error) {
+		return sessionMeta{
+			Session:     session,
+			Agent:       "codex",
+			ProjectRoot: "/tmp/test-project",
+		}, nil
+	}
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "raw pane output", nil }
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionCapture([]string{
+			"--session", "lisa-test-default-codex-capture",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected raw capture success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"capture":"raw pane output"`) {
+		t.Fatalf("expected raw capture in output, got %q", stdout)
+	}
+	if strings.Contains(stdout, `"claudeSession"`) {
+		t.Fatalf("did not expect transcript output for non-claude session, got %q", stdout)
+	}
+}
+
+func TestCmdSessionCaptureDefaultFallsBackToRawWhenTranscriptReadFails(t *testing.T) {
+	origMetaGlobFn := loadSessionMetaByGlobFn
+	origFindFn := findClaudeSessionIDFn
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	t.Cleanup(func() {
+		loadSessionMetaByGlobFn = origMetaGlobFn
+		findClaudeSessionIDFn = origFindFn
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+	})
+
+	loadSessionMetaByGlobFn = func(session string) (sessionMeta, error) {
+		return sessionMeta{
+			Session:     session,
+			Agent:       "claude",
+			ProjectRoot: "/tmp/test-project",
+			Prompt:      "Say hello",
+			CreatedAt:   "2026-01-01T00:00:00Z",
+		}, nil
+	}
+	findClaudeSessionIDFn = func(projectRoot, prompt, createdAt string) (string, error) {
+		return "", fmt.Errorf("no transcript session")
+	}
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "raw pane output", nil }
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionCapture([]string{
+			"--session", "lisa-test-transcript-fallback",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected raw fallback capture success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"capture":"raw pane output"`) {
+		t.Fatalf("expected raw fallback capture in output, got %q", stdout)
+	}
+	if strings.Contains(stdout, `"claudeSession"`) {
+		t.Fatalf("did not expect transcript output on fallback, got %q", stdout)
 	}
 }
 
@@ -398,7 +487,7 @@ func TestCheckTranscriptTurnCompleteUserLast(t *testing.T) {
 
 func TestLoadSessionMetaByGlob(t *testing.T) {
 	dir := t.TempDir()
-	session := "lisa-test-glob-session"
+	session := fmt.Sprintf("lisa-test-glob-session-%d", time.Now().UnixNano())
 	aid := sessionArtifactID(session)
 
 	meta := sessionMeta{
@@ -437,5 +526,54 @@ func TestLoadSessionMetaByGlob(t *testing.T) {
 	}
 	if got.ProjectRoot != "/tmp/test-project" {
 		t.Fatalf("expected project root /tmp/test-project, got %q", got.ProjectRoot)
+	}
+}
+
+func TestLoadSessionMetaByGlobRejectsAmbiguousProjects(t *testing.T) {
+	session := fmt.Sprintf("lisa-test-glob-ambiguous-%d", time.Now().UnixNano())
+	aid := sessionArtifactID(session)
+
+	metaOne := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "interactive",
+		ProjectRoot: "/tmp/project-one",
+		Prompt:      "test prompt",
+		CreatedAt:   "2026-01-01T00:00:00Z",
+	}
+	dataOne, err := json.MarshalIndent(metaOne, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to marshal first meta: %v", err)
+	}
+	pathOne := filepath.Join("/tmp", ".lisa-abcd1111-session-"+aid+"-meta.json")
+	if err := os.WriteFile(pathOne, dataOne, 0o600); err != nil {
+		t.Fatalf("failed to write first meta file: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(pathOne) })
+
+	metaTwo := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		Mode:        "interactive",
+		ProjectRoot: "/tmp/project-two",
+		Prompt:      "test prompt",
+		CreatedAt:   "2026-01-01T00:00:00Z",
+	}
+	dataTwo, err := json.MarshalIndent(metaTwo, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to marshal second meta: %v", err)
+	}
+	pathTwo := filepath.Join("/tmp", ".lisa-abcd2222-session-"+aid+"-meta.json")
+	if err := os.WriteFile(pathTwo, dataTwo, 0o600); err != nil {
+		t.Fatalf("failed to write second meta file: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(pathTwo) })
+
+	_, err = loadSessionMetaByGlob(session)
+	if err == nil {
+		t.Fatal("expected ambiguous-project metadata lookup error")
+	}
+	if !strings.Contains(err.Error(), "multiple metadata files found") {
+		t.Fatalf("expected ambiguity error, got: %v", err)
 	}
 }
