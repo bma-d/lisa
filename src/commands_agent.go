@@ -41,6 +41,8 @@ func cmdDoctor(args []string) int {
 	jsonOut := false
 	for _, arg := range args {
 		switch arg {
+		case "--help", "-h":
+			return showHelp("doctor")
 		case "--json":
 			jsonOut = true
 		default:
@@ -85,6 +87,15 @@ func cmdAgent(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: lisa agent <subcommand>")
 		return 1
 	}
+	if args[0] == "--help" || args[0] == "-h" {
+		return showHelp("agent")
+	}
+	if args[0] == "help" {
+		if len(args) > 1 {
+			return showHelp("agent " + args[1])
+		}
+		return showHelp("agent")
+	}
 	switch args[0] {
 	case "build-cmd":
 		return cmdAgentBuildCmd(args[1:])
@@ -104,6 +115,8 @@ func cmdAgentBuildCmd(args []string) int {
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("agent build-cmd")
 		case "--agent":
 			if i+1 >= len(args) {
 				return flagValueError("--agent")

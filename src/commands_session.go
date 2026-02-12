@@ -14,6 +14,16 @@ func cmdSession(args []string) int {
 		return 1
 	}
 
+	if args[0] == "--help" || args[0] == "-h" {
+		return showHelp("session")
+	}
+	if args[0] == "help" {
+		if len(args) > 1 {
+			return showHelp("session " + args[1])
+		}
+		return showHelp("session")
+	}
+
 	switch args[0] {
 	case "name":
 		return cmdSessionName(args[1:])
@@ -50,6 +60,8 @@ func cmdSessionName(args []string) int {
 	tag := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session name")
 		case "--agent":
 			if i+1 >= len(args) {
 				return flagValueError("--agent")
@@ -113,6 +125,8 @@ func cmdSessionSpawn(args []string) int {
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session spawn")
 		case "--agent":
 			if i+1 >= len(args) {
 				return flagValueError("--agent")
@@ -330,6 +344,8 @@ func cmdSessionSend(args []string) int {
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session send")
 		case "--session":
 			if i+1 >= len(args) {
 				return flagValueError("--session")

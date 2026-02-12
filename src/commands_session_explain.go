@@ -17,6 +17,8 @@ func cmdSessionExplain(args []string) int {
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session explain")
 		case "--session":
 			if i+1 >= len(args) {
 				return flagValueError("--session")

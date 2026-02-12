@@ -12,6 +12,8 @@ func cmdSessionList(args []string) int {
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session list")
 		case "--project-only":
 			projectOnly = true
 		case "--project-root":
@@ -39,6 +41,8 @@ func cmdSessionExists(args []string) int {
 	session := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session exists")
 		case "--session":
 			if i+1 >= len(args) {
 				return flagValueError("--session")
@@ -67,6 +71,8 @@ func cmdSessionKill(args []string) int {
 	cleanupAllHashes := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session kill")
 		case "--session":
 			if i+1 >= len(args) {
 				return flagValueError("--session")
@@ -137,6 +143,8 @@ func cmdSessionKillAll(args []string) int {
 	cleanupAllHashes := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session kill-all")
 		case "--project-only":
 			projectOnly = true
 		case "--project-root":

@@ -20,6 +20,8 @@ func cmdSessionStatus(args []string) int {
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session status")
 		case "--session":
 			if i+1 >= len(args) {
 				return flagValueError("--session")
@@ -138,6 +140,8 @@ func cmdSessionMonitor(args []string) int {
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session monitor")
 		case "--session":
 			if i+1 >= len(args) {
 				return flagValueError("--session")
@@ -337,6 +341,8 @@ func cmdSessionCapture(args []string) int {
 	projectRoot := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session capture")
 		case "--session":
 			if i+1 >= len(args) {
 				return flagValueError("--session")
