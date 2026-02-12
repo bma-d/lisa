@@ -333,6 +333,8 @@ func cmdSessionCapture(args []string) int {
 	session := ""
 	lines := 200
 	jsonOut := false
+	transcript := false
+	projectRoot := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--session":
@@ -352,6 +354,14 @@ func cmdSessionCapture(args []string) int {
 			}
 			lines = n
 			i++
+		case "--transcript":
+			transcript = true
+		case "--project-root":
+			if i+1 >= len(args) {
+				return flagValueError("--project-root")
+			}
+			projectRoot = args[i+1]
+			i++
 		case "--json":
 			jsonOut = true
 		default:
@@ -362,6 +372,11 @@ func cmdSessionCapture(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
+
+	if transcript {
+		return cmdSessionCaptureTranscript(session, projectRoot, jsonOut)
+	}
+
 	if !tmuxHasSessionFn(session) {
 		fmt.Fprintln(os.Stderr, "session not found")
 		return 1

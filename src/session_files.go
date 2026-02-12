@@ -11,6 +11,7 @@ import (
 )
 
 var saveSessionMetaFn = saveSessionMeta
+var loadSessionMetaByGlobFn = loadSessionMetaByGlob
 
 type cleanupOptions struct {
 	AllHashes  bool
@@ -197,6 +198,28 @@ func saveSessionMeta(projectRoot, session string, meta sessionMeta) error {
 func loadSessionMeta(projectRoot, session string) (sessionMeta, error) {
 	path := sessionMetaFile(projectRoot, session)
 	raw, err := os.ReadFile(path)
+	if err != nil {
+		return sessionMeta{}, err
+	}
+	var meta sessionMeta
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return sessionMeta{}, err
+	}
+	return meta, nil
+}
+
+func loadSessionMetaByGlob(session string) (sessionMeta, error) {
+	aid := sessionArtifactID(session)
+	pattern := fmt.Sprintf("/tmp/.lisa-*-session-%s-meta.json", aid)
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return sessionMeta{}, fmt.Errorf("glob failed: %w", err)
+	}
+	if len(matches) == 0 {
+		return sessionMeta{}, fmt.Errorf("no metadata file found for session %q", session)
+	}
+	// Use the first match (most common case: single project)
+	raw, err := os.ReadFile(matches[0])
 	if err != nil {
 		return sessionMeta{}, err
 	}
