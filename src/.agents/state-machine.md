@@ -34,7 +34,7 @@ session done marker (matching runId) → completed/crashed based on exit code
 exec mode + exec done marker → completed/crashed based on exit code
 interactive waiting (low CPU + stale output) → waiting_input
 transcript turn complete (Claude only, stale JSONL + assistant text block) → waiting_input
-prompt regex → waiting_input
+prompt regex + agent not busy → waiting_input
 agent PID alive OR output fresh OR heartbeat fresh OR non-shell pane command → in_progress
 process scan failure with no stronger activity signals → degraded
 tmux read/snapshot/pid parse failures → degraded (non-fatal payload)

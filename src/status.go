@@ -447,7 +447,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 				status.SessionState = "waiting_input"
 				status.WaitEstimate = 0
 				status.ClassificationReason = "transcript_turn_complete"
-			case promptWaiting:
+			case promptWaiting && !activeProcessBusy:
 				status.Status = "idle"
 				status.SessionState = "waiting_input"
 				status.WaitEstimate = 0

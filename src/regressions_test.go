@@ -2312,10 +2312,10 @@ func TestLooksLikePromptWaitingRejectsClaudeBusyWithChrome(t *testing.T) {
 	}
 }
 
-func TestPromptWaitingDetectedEvenWithHighCPU(t *testing.T) {
-	// Regression: when agent just finished a task, CPU may still be >= 0.2
-	// but the prompt (❯) is clearly visible. promptWaiting should classify
-	// as waiting_input regardless of CPU, since prompt presence is definitive.
+func TestPromptWaitingNotTriggeredWhenProcessBusy(t *testing.T) {
+	// When agent process is busy (high CPU), prompt (❯) should NOT classify
+	// as waiting_input — the prompt is always visible in Claude's split UI
+	// even during long-running commands.
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn
 	origPaneStatus := tmuxPaneStatusFn
@@ -2356,7 +2356,7 @@ func TestPromptWaitingDetectedEvenWithHighCPU(t *testing.T) {
 			return "", errors.New("missing")
 		}
 	}
-	// Agent detected with HIGH CPU (>= 0.2) — previously blocked waiting_input
+	// Agent detected with HIGH CPU (>= 0.2) — process is busy
 	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
 		return 999, 0.5, nil
 	}
@@ -2368,12 +2368,72 @@ func TestPromptWaitingDetectedEvenWithHighCPU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status.SessionState != "waiting_input" {
-		t.Fatalf("expected waiting_input when prompt visible despite high CPU, got state=%s reason=%s",
+	if status.SessionState != "in_progress" {
+		t.Fatalf("expected in_progress when process is busy despite visible prompt, got state=%s reason=%s",
 			status.SessionState, status.ClassificationReason)
 	}
-	if status.ClassificationReason != "prompt_waiting" {
-		t.Fatalf("expected prompt_waiting reason, got %s", status.ClassificationReason)
+}
+
+func TestPromptWaitingDuringLongBashCommand(t *testing.T) {
+	// Regression: Claude's split UI shows ❯ prompt at the bottom even while
+	// a long bash command (e.g. sleep 3 x20) is running. With activeProcessBusy=true,
+	// the session should remain in_progress, not be misclassified as waiting_input.
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		// Simulates Claude running a long bash command — output with ❯ at bottom
+		return "⏺ Running bash command: sleep 3\n\nCounting: 5 of 20\n\n❯", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "node", nil
+		case "#{pane_pid}":
+			return "456", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		switch key {
+		case "LISA_AGENT":
+			return "claude", nil
+		case "LISA_MODE":
+			return "interactive", nil
+		default:
+			return "", errors.New("missing")
+		}
+	}
+	// Agent is actively running — high CPU from bash command execution
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 789, 0.8, nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-long-bash-cmd"
+
+	status, err := computeSessionStatus(session, projectRoot, "claude", "interactive", false, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "in_progress" {
+		t.Fatalf("expected in_progress during long bash command, got state=%s reason=%s",
+			status.SessionState, status.ClassificationReason)
 	}
 }
 
