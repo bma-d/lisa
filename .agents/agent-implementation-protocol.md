@@ -1,7 +1,7 @@
 # Agent Implementation Protocol
 
-Last Updated: 2026-02-01
-Related Files: `.agents/AGENTS.md`, `.agents/agentic-jit-framework.md`, `.breadcrumbs/`
+Last Updated: 2026-02-14
+Related Files: `AGENTS.md`, `.agents/agentic-jit-framework.md`, `.breadcrumbs/`
 
 ## Overview
 
@@ -154,4 +154,4 @@ Revisit this protocol after major repo restructuring or quarterly.
 
 - @.agents/agentic-jit-framework.md
 - @.agents/jit-repo-overrides.md
-- @.agents/AGENTS.md
+- @AGENTS.md

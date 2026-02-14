@@ -13,7 +13,7 @@ All application source code. Single `package app` with thin `main.go` entrypoint
 
 ## Key Decisions
 
-- `status.go` is the core: multi-signal state machine combining pane status, process tree, output freshness, prompt regex
-- `tmux.go` wraps all tmux calls; uses `send-keys` for short commands, temp script fallback for long ones
-- `session_files.go` manages `/tmp/` artifacts with atomic writes and MD5-based project isolation
-- `agent_command.go` builds agent CLI invocations; `wrapExecCommand()` injects completion markers
+- Status classification is centralized in `status.go`.
+- All tmux IO stays in `tmux.go`.
+- Session artifacts are hash-scoped under `/tmp/`.
+- Agent command assembly is centralized in `agent_command.go`.

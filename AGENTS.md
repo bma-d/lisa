@@ -37,4 +37,5 @@ Commands: `doctor` | `session {name,spawn,send,status,monitor,capture,list,exist
 | `.agents/conventions.md` | Go patterns, build/test, agent guidelines | Writing or reviewing code |
 | `.agents/sdk-usage.md` | CLI usage, integration patterns, exit codes | Using Lisa as orchestrator |
 | `.agents/agent-implementation-protocol.md` | Mandatory preflight/postflight rules | ANY implementation task |
+| `.agents/jit-repo-overrides.md` | Repo-specific JIT formatting and index constraints | Maintaining context docs |
 | `.agents/agentic-jit-framework.md` | JIT context injection rules | Managing context files |
