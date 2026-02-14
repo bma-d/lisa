@@ -294,8 +294,8 @@ func TestCmdSessionExplainTextOutputWithTmuxReadError(t *testing.T) {
 
 	for _, token := range []string{
 		"session: lisa-explain-text",
-		"state: degraded (idle)",
-		"reason: tmux_capture_error",
+		"state: stuck (idle)",
+		"reason: stuck_no_signals",
 		"tmux_read_error: tmux server busy",
 		"events: none",
 	} {

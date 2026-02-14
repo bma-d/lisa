@@ -1,6 +1,6 @@
 # SDK Usage Guide
 
-Last Updated: 2026-02-10
+Last Updated: 2026-02-14
 Related Files: `agent.md`, `src/commands_session.go`, `src/commands_agent.go`
 
 ## Overview
@@ -11,7 +11,7 @@ How to use Lisa as infrastructure from an LLM orchestrator or script.
 
 1. **Spawn** one session per task (`session spawn --json`), store returned session name (custom `--session` values must start with `lisa-`)
 2. **Poll** with `session monitor --json` (blocking loop) or `session status --json` (one-shot)
-3. If state is `waiting_input` or `stuck`, send next instruction with `session send --text "..." --enter`; if state is `degraded`, retry polling and inspect `signals.*Error`
+3. If state is `stuck`, send next instruction with `session send --text "..." --enter`; if state is `degraded`, retry polling and inspect `signals.*Error`
 4. Fetch artifacts with `session capture --lines N`
 5. Kill and clean up with `session kill --session NAME`
 
@@ -39,7 +39,7 @@ lisa agent build-cmd --agent claude --mode exec --prompt "Fix lint"
 
 ## Exit Codes
 
-- `session monitor`: 0 on completed/waiting_input, 2 on crashed/stuck/not_found/timeout
+- `session monitor`: 0 on completed/waiting_input, 2 on crashed/stuck/not_found/timeout (`waiting_input` remains reserved/non-emitting by default)
 - `session status`: 0 always (unless arg parse error)
 - `session exists`: 0 if exists, 1 if not
 
@@ -48,10 +48,10 @@ lisa agent build-cmd --agent claude --mode exec --prompt "Fix lint"
 | State | Meaning |
 |-------|---------|
 | `in_progress` | Agent appears active (process running or output fresh) |
-| `waiting_input` | Session idle, agent waiting for user input |
+| `waiting_input` | Reserved compatibility state; currently non-emitting in default classification |
 | `completed` | Exec done or pane exited cleanly |
 | `crashed` | Pane exited with non-zero or agent crashed |
-| `stuck` | Output stale, no agent process, no prompt detected |
+| `stuck` | No active process/heartbeat signal after grace period |
 | `degraded` | Infrastructure contention/error state (e.g., lock timeout); retry polling |
 | `just_started` | Idle but within first 3 polls (grace period) |
 

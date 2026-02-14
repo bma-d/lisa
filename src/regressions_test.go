@@ -102,44 +102,6 @@ func captureOutput(t *testing.T, fn func()) (string, string) {
 	return strings.TrimSpace(string(stdoutBytes)), strings.TrimSpace(string(stderrBytes))
 }
 
-func TestLooksLikePromptWaitingIgnoresHistoricalMarkers(t *testing.T) {
-	codexCapture := strings.Join([]string{
-		"previous output",
-		"tokens used: 1234",
-		"running tests now",
-	}, "\n")
-	if looksLikePromptWaiting("codex", codexCapture) {
-		t.Fatalf("expected codex historical marker to not force waiting state")
-	}
-
-	claudeCapture := strings.Join([]string{
-		"previous output",
-		"press enter to send",
-		"writing fix for parser",
-	}, "\n")
-	if looksLikePromptWaiting("claude", claudeCapture) {
-		t.Fatalf("expected claude historical marker to not force waiting state")
-	}
-}
-
-func TestLooksLikePromptWaitingDetectsRecentPromptContext(t *testing.T) {
-	codexCapture := strings.Join([]string{
-		"tokens used: 4321",
-		"❯ 12:34:56",
-	}, "\n")
-	if !looksLikePromptWaiting("codex", codexCapture) {
-		t.Fatalf("expected codex prompt context to be detected as waiting")
-	}
-
-	claudeCapture := strings.Join([]string{
-		"press enter to send",
-		">",
-	}, "\n")
-	if !looksLikePromptWaiting("claude", claudeCapture) {
-		t.Fatalf("expected claude prompt context to be detected as waiting")
-	}
-}
-
 func TestComputeSessionStatusDoesNotTreatTagLikeClaudeTailAsWaiting(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn
@@ -366,7 +328,7 @@ func TestComputeSessionStatusDoesNotOverwriteNewerOutputTimestamp(t *testing.T) 
 	}
 }
 
-func TestComputeSessionStatusInteractiveUsesSessionDoneMarker(t *testing.T) {
+func TestComputeSessionStatusInteractiveUsesDoneFile(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn
 	origPaneStatus := tmuxPaneStatusFn
@@ -383,9 +345,7 @@ func TestComputeSessionStatusInteractiveUsesSessionDoneMarker(t *testing.T) {
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return true }
-	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
-		return "__LISA_SESSION_DONE__:0\nuser@host:~/repo$ ", nil
-	}
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "", nil }
 	tmuxPaneStatusFn = func(session string) (string, error) {
 		return "alive", nil
 	}
@@ -409,12 +369,20 @@ func TestComputeSessionStatusInteractiveUsesSessionDoneMarker(t *testing.T) {
 		return 0, 0, nil
 	}
 
-	status, err := computeSessionStatus("lisa-interactive-done", t.TempDir(), "auto", "auto", false, 4)
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(sessionDoneFile(projectRoot, "lisa-interactive-done"), []byte("run-1:0\n"), 0o600); err != nil {
+		t.Fatalf("failed to write done file: %v", err)
+	}
+
+	status, err := computeSessionStatus("lisa-interactive-done", projectRoot, "auto", "auto", false, 4)
 	if err != nil {
 		t.Fatalf("expected status computation to succeed, got %v", err)
 	}
 	if status.SessionState != "completed" || status.Status != "idle" {
-		t.Fatalf("expected session done marker to mark completion, got state=%s status=%s", status.SessionState, status.Status)
+		t.Fatalf("expected done file to mark completion, got state=%s status=%s", status.SessionState, status.Status)
+	}
+	if status.ClassificationReason != "done_file" {
+		t.Fatalf("expected done_file reason, got %s", status.ClassificationReason)
 	}
 }
 
@@ -1660,8 +1628,8 @@ func TestCmdSessionStatusEscapesCSVFields(t *testing.T) {
 	if len(record) != 6 {
 		t.Fatalf("expected 6 csv fields, got %d (%q)", len(record), stdout)
 	}
-	if record[3] != "working on api,tests" {
-		t.Fatalf("expected active task to preserve comma, got %q", record[3])
+	if record[3] != "Claude running" {
+		t.Fatalf("expected process-based active task label, got %q", record[3])
 	}
 }
 
@@ -2024,13 +1992,10 @@ func TestComputeSessionStatusDegradesOnTmuxReadFailures(t *testing.T) {
 	}
 	status, err := computeSessionStatus("lisa-test", t.TempDir(), "auto", "auto", false, 1)
 	if err != nil {
-		t.Fatalf("expected degraded payload when pane capture fails, got error: %v", err)
+		t.Fatalf("expected process-first payload when pane capture fails, got error: %v", err)
 	}
-	if status.SessionState != "degraded" || status.ClassificationReason != "tmux_capture_error" {
-		t.Fatalf("expected tmux capture failure to degrade, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
-	}
-	if !strings.Contains(status.Signals.TMUXReadError, "capture failed") {
-		t.Fatalf("expected tmux capture error signal, got %q", status.Signals.TMUXReadError)
+	if status.SessionState != "just_started" || status.ClassificationReason != "grace_period_just_started" {
+		t.Fatalf("expected pane capture failure to not affect process-based classification, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
 	}
 
 	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
@@ -2196,15 +2161,17 @@ func TestComputeSessionStatusDetectsPreCompletedExecOnFirstPoll(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	session := "lisa-pre-completed-exec"
+	if err := os.WriteFile(sessionDoneFile(projectRoot, session), []byte("run-pre:0\n"), 0o600); err != nil {
+		t.Fatalf("failed to write done file: %v", err)
+	}
 
-	// First poll with no prior state — simulates monitoring a session that
-	// already finished before polling started.
+	// First poll with no prior state — process-first completion relies on done sidecar.
 	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status.SessionState != "completed" {
-		t.Fatalf("expected pre-completed exec session to be detected as completed on first poll, got state=%s status=%s", status.SessionState, status.Status)
+		t.Fatalf("expected pre-completed exec session to be detected from done file, got state=%s status=%s", status.SessionState, status.Status)
 	}
 }
 
@@ -2225,9 +2192,7 @@ func TestComputeSessionStatusDetectsExecCompletionWithoutModeHint(t *testing.T) 
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return true }
-	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
-		return "output\n__LISA_EXEC_DONE__:0\nuser@host:~/repo$", nil
-	}
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "", nil }
 	tmuxPaneStatusFn = func(session string) (string, error) {
 		return "alive", nil
 	}
@@ -2252,13 +2217,16 @@ func TestComputeSessionStatusDetectsExecCompletionWithoutModeHint(t *testing.T) 
 
 	projectRoot := t.TempDir()
 	session := "lisa-exec-no-mode-hint"
+	if err := os.WriteFile(sessionDoneFile(projectRoot, session), []byte("run-nohint:0\n"), 0o600); err != nil {
+		t.Fatalf("failed to write done file: %v", err)
+	}
 
 	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status.SessionState != "completed" {
-		t.Fatalf("expected exec completion marker to be detected even when mode resolves to interactive, got state=%s", status.SessionState)
+		t.Fatalf("expected completion to be detected from done file even when mode resolves to interactive, got state=%s", status.SessionState)
 	}
 }
 
@@ -2285,30 +2253,6 @@ func TestFilterInputBoxStripsClaudeCLIChrome(t *testing.T) {
 	}
 	if nonEmpty[2] != "❯" {
 		t.Fatalf("expected ❯ as last non-empty line, got %q", nonEmpty[2])
-	}
-}
-
-func TestLooksLikePromptWaitingDetectsClaudeCLIChromeWithPrompt(t *testing.T) {
-	// Simulates Claude CLI capture after filterInputBox strips chrome.
-	// The ❯ prompt should be detected as waiting_input.
-	capture := strings.Join([]string{
-		"some output",
-		"10",
-		"❯",
-	}, "\n")
-	if !looksLikePromptWaiting("claude", capture) {
-		t.Fatalf("expected ❯ prompt to be detected as waiting for claude")
-	}
-}
-
-func TestLooksLikePromptWaitingRejectsClaudeBusyWithChrome(t *testing.T) {
-	// Even with ❯ present, if the last non-empty line is busy output, reject.
-	capture := strings.Join([]string{
-		"❯",
-		"Working on task...",
-	}, "\n")
-	if looksLikePromptWaiting("claude", capture) {
-		t.Fatalf("expected busy output after ❯ to not be detected as waiting")
 	}
 }
 
@@ -2543,25 +2487,25 @@ func TestComputeSessionStatusTranscriptTurnComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status.SessionState != "waiting_input" {
-		t.Fatalf("expected waiting_input, got %q", status.SessionState)
+	if status.SessionState != "in_progress" {
+		t.Fatalf("expected process-first in_progress, got %q", status.SessionState)
 	}
-	if status.ClassificationReason != "transcript_turn_complete" {
-		t.Fatalf("expected transcript_turn_complete reason, got %q", status.ClassificationReason)
+	if status.ClassificationReason != "agent_pid_alive" {
+		t.Fatalf("expected agent_pid_alive reason, got %q", status.ClassificationReason)
 	}
-	if !status.Signals.TranscriptTurnComplete {
-		t.Fatal("expected TranscriptTurnComplete signal to be true")
+	if status.Signals.TranscriptTurnComplete {
+		t.Fatal("expected TranscriptTurnComplete signal to remain false without transcript-based classification")
 	}
-	if status.Signals.TranscriptFileAge != 15 {
-		t.Fatalf("expected TranscriptFileAge=15, got %d", status.Signals.TranscriptFileAge)
+	if status.Signals.TranscriptFileAge != 0 {
+		t.Fatalf("expected TranscriptFileAge=0, got %d", status.Signals.TranscriptFileAge)
 	}
 
 	state, err := loadSessionStateWithError(sessionStateFile(projectRoot, session))
 	if err != nil {
 		t.Fatalf("expected session state to persist, got error: %v", err)
 	}
-	if state.ClaudeSessionID != "mock-session-id" {
-		t.Fatalf("expected cached ClaudeSessionID=mock-session-id, got %q", state.ClaudeSessionID)
+	if state.ClaudeSessionID != "" {
+		t.Fatalf("expected no cached ClaudeSessionID without transcript path, got %q", state.ClaudeSessionID)
 	}
 }
 
@@ -2618,14 +2562,11 @@ func TestComputeSessionStatusTranscriptPlusHighCPU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// transcriptTurnComplete is between interactiveWaiting and promptWaiting,
-	// but agentPID > 0 with high CPU still allows it because interactiveWaiting
-	// requires low CPU. The transcript case fires before agentPID alive.
-	if status.SessionState != "waiting_input" {
-		t.Fatalf("expected waiting_input despite high CPU, got %q", status.SessionState)
+	if status.SessionState != "in_progress" {
+		t.Fatalf("expected in_progress despite transcript completion signals, got %q", status.SessionState)
 	}
-	if status.ClassificationReason != "transcript_turn_complete" {
-		t.Fatalf("expected transcript_turn_complete, got %q", status.ClassificationReason)
+	if status.ClassificationReason != "agent_pid_alive" {
+		t.Fatalf("expected agent_pid_alive, got %q", status.ClassificationReason)
 	}
 }
 
@@ -2682,24 +2623,24 @@ func TestComputeSessionStatusCodexTranscriptTurnComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status.SessionState != "waiting_input" {
-		t.Fatalf("expected waiting_input, got %q", status.SessionState)
+	if status.SessionState != "in_progress" {
+		t.Fatalf("expected process-first in_progress, got %q", status.SessionState)
 	}
-	if status.ClassificationReason != "transcript_turn_complete" {
-		t.Fatalf("expected transcript_turn_complete reason, got %q", status.ClassificationReason)
+	if status.ClassificationReason != "agent_pid_alive" {
+		t.Fatalf("expected agent_pid_alive reason, got %q", status.ClassificationReason)
 	}
-	if !status.Signals.TranscriptTurnComplete {
-		t.Fatal("expected TranscriptTurnComplete signal to be true")
+	if status.Signals.TranscriptTurnComplete {
+		t.Fatal("expected TranscriptTurnComplete signal to remain false without transcript-based classification")
 	}
-	if status.Signals.TranscriptFileAge != 12 {
-		t.Fatalf("expected TranscriptFileAge=12, got %d", status.Signals.TranscriptFileAge)
+	if status.Signals.TranscriptFileAge != 0 {
+		t.Fatalf("expected TranscriptFileAge=0, got %d", status.Signals.TranscriptFileAge)
 	}
 
 	state, err := loadSessionStateWithError(sessionStateFile(projectRoot, session))
 	if err != nil {
 		t.Fatalf("expected session state to persist, got error: %v", err)
 	}
-	if state.CodexSessionID != "mock-codex-session-id" {
-		t.Fatalf("expected cached CodexSessionID=mock-codex-session-id, got %q", state.CodexSessionID)
+	if state.CodexSessionID != "" {
+		t.Fatalf("expected no cached CodexSessionID without transcript path, got %q", state.CodexSessionID)
 	}
 }

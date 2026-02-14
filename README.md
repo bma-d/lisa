@@ -79,6 +79,9 @@ lisa session monitor --session <SESSION> --json --poll-interval 20 --max-polls 1
 
 Session states: `just_started` | `in_progress` | `waiting_input` | `completed` | `stuck` | `crashed` | `degraded`
 
+Status classification is process-first: pane status, done sidecar, process tree, heartbeat freshness, and pane command. Output parsing is not used to infer state.
+`waiting_input` is reserved for future explicit signaling and is currently non-emitting in default classification.
+
 ### Send follow-up input
 
 ```bash
@@ -108,7 +111,7 @@ lisa session kill-all                      # kill all lisa sessions
 
 1. Spawn one session per task (`session spawn --json`), store the returned session name.
 2. Poll with `session monitor` or `session status`.
-3. On `waiting_input` or `stuck`, send next instruction with `session send --enter`; on `degraded`, keep polling and inspect `signals.*Error`.
+3. On `stuck`, send next instruction with `session send --enter`; on `degraded`, keep polling and inspect `signals.*Error`.
 4. Fetch output with `session capture`.
 5. Clean up with `session kill` when done.
 

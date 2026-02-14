@@ -65,7 +65,7 @@ func TestApplyTerminalPaneStatusBranches(t *testing.T) {
 	}
 }
 
-func TestResolveAgentModeAndEstimateWaitBranches(t *testing.T) {
+func TestResolveAgentModeBranches(t *testing.T) {
 	origShowEnv := tmuxShowEnvironmentFn
 	t.Cleanup(func() {
 		tmuxShowEnvironmentFn = origShowEnv
@@ -88,22 +88,6 @@ func TestResolveAgentModeAndEstimateWaitBranches(t *testing.T) {
 	}
 	if got := resolveAgent("auto", sessionMeta{}, "", ""); got == "" {
 		t.Fatalf("expected non-empty default agent")
-	}
-
-	if got := estimateWait("reading docs", 0, 0); got != 30 {
-		t.Fatalf("expected read wait 30, got %d", got)
-	}
-	if got := estimateWait("running tests", 0, 0); got != 120 {
-		t.Fatalf("expected build wait 120, got %d", got)
-	}
-	if got := estimateWait("writing patch", 0, 0); got != 60 {
-		t.Fatalf("expected write wait 60, got %d", got)
-	}
-	if got := estimateWait("", 1, 10); got != 90 {
-		t.Fatalf("expected low progress wait 90, got %d", got)
-	}
-	if got := estimateWait("", 8, 10); got != 30 {
-		t.Fatalf("expected high progress wait 30, got %d", got)
 	}
 }
 

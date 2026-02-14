@@ -371,9 +371,7 @@ func TestComputeSessionStatusSessionDoneNonZeroIsCrashedWithRunID(t *testing.T) 
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return true }
-	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
-		return "__LISA_SESSION_DONE__:run-9:9\nuser@host:~/repo$ ", nil
-	}
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "", nil }
 	tmuxPaneStatusFn = func(session string) (string, error) {
 		return "alive", nil
 	}
@@ -402,16 +400,19 @@ func TestComputeSessionStatusSessionDoneNonZeroIsCrashedWithRunID(t *testing.T) 
 	if err := saveSessionMeta(projectRoot, session, sessionMeta{Session: session, Agent: "claude", Mode: "interactive", RunID: "run-9"}); err != nil {
 		t.Fatalf("failed to save session meta: %v", err)
 	}
+	if err := os.WriteFile(sessionDoneFile(projectRoot, session), []byte("run-9:9\n"), 0o600); err != nil {
+		t.Fatalf("failed to write done file: %v", err)
+	}
 
 	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 4)
 	if err != nil {
 		t.Fatalf("expected status computation to succeed, got %v", err)
 	}
 	if status.SessionState != "crashed" || status.Status != "idle" {
-		t.Fatalf("expected session done marker with non-zero exit to crash, got state=%s status=%s", status.SessionState, status.Status)
+		t.Fatalf("expected done file with non-zero exit to crash, got state=%s status=%s", status.SessionState, status.Status)
 	}
-	if status.ClassificationReason != "session_done_marker" {
-		t.Fatalf("expected session_done_marker reason, got %s", status.ClassificationReason)
+	if status.ClassificationReason != "done_file" {
+		t.Fatalf("expected done_file reason, got %s", status.ClassificationReason)
 	}
 }
 
@@ -432,10 +433,7 @@ func TestComputeSessionStatusMarkerRunMismatchDoesNotComplete(t *testing.T) {
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return true }
-	capture := "__LISA_SESSION_DONE__:run-other:0\nuser@host:~/repo$"
-	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
-		return capture, nil
-	}
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "", nil }
 	tmuxPaneStatusFn = func(session string) (string, error) {
 		return "alive", nil
 	}
@@ -464,11 +462,8 @@ func TestComputeSessionStatusMarkerRunMismatchDoesNotComplete(t *testing.T) {
 	if err := saveSessionMeta(projectRoot, session, sessionMeta{Session: session, Agent: "claude", Mode: "interactive", RunID: "run-current"}); err != nil {
 		t.Fatalf("failed to save session meta: %v", err)
 	}
-	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
-		LastOutputHash: md5Hex8(capture),
-		LastOutputAt:   time.Now().Add(-20 * time.Minute).Unix(),
-	}); err != nil {
-		t.Fatalf("failed to seed stale state: %v", err)
+	if err := os.WriteFile(sessionDoneFile(projectRoot, session), []byte("run-other:0\n"), 0o600); err != nil {
+		t.Fatalf("failed to write mismatched done file: %v", err)
 	}
 
 	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 4)
@@ -478,8 +473,8 @@ func TestComputeSessionStatusMarkerRunMismatchDoesNotComplete(t *testing.T) {
 	if status.SessionState != "stuck" {
 		t.Fatalf("expected marker mismatch to avoid completion, got %s", status.SessionState)
 	}
-	if !status.Signals.SessionMarkerRunMismatch {
-		t.Fatalf("expected marker mismatch signal")
+	if !status.Signals.DoneFileRunMismatch {
+		t.Fatalf("expected done-file mismatch signal")
 	}
 	if status.ClassificationReason != "stuck_marker_run_mismatch" {
 		t.Fatalf("expected mismatch reason, got %s", status.ClassificationReason)
@@ -678,9 +673,7 @@ func TestComputeSessionStatusMetaReadErrorDoesNotTrustSessionDoneMarker(t *testi
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return true }
-	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
-		return "__LISA_SESSION_DONE__:run-4:0\nuser@host:~/repo$ ", nil
-	}
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "", nil }
 	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
 	tmuxDisplayFn = func(session, format string) (string, error) {
 		switch format {
@@ -702,12 +695,7 @@ func TestComputeSessionStatusMetaReadErrorDoesNotTrustSessionDoneMarker(t *testi
 		t.Fatalf("failed to seed malformed metadata: %v", err)
 	}
 	staleCapture := "__LISA_SESSION_DONE__:run-4:0\nuser@host:~/repo$ "
-	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
-		LastOutputHash: md5Hex8(staleCapture),
-		LastOutputAt:   time.Now().Add(-15 * time.Minute).Unix(),
-	}); err != nil {
-		t.Fatalf("failed to seed stale state: %v", err)
-	}
+	_ = staleCapture
 
 	status, err := computeSessionStatus(session, projectRoot, "auto", "auto", false, 4)
 	if err != nil {
@@ -718,9 +706,6 @@ func TestComputeSessionStatusMetaReadErrorDoesNotTrustSessionDoneMarker(t *testi
 	}
 	if status.Signals.MetaReadError == "" {
 		t.Fatalf("expected meta read error signal to be set")
-	}
-	if !status.Signals.SessionMarkerSeen {
-		t.Fatalf("expected marker visibility signal to remain true")
 	}
 }
 
@@ -1080,8 +1065,8 @@ func TestComputeSessionStatusConcurrentStateWritesNoCorruption(t *testing.T) {
 	if state.PollCount <= 0 {
 		t.Fatalf("expected poll count to be persisted, got %d", state.PollCount)
 	}
-	if state.LastOutputHash == "" {
-		t.Fatalf("expected state hash to be persisted")
+	if state.LastAgentPID != 77 {
+		t.Fatalf("expected last agent PID to be persisted, got %d", state.LastAgentPID)
 	}
 }
 

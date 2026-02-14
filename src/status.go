@@ -12,21 +12,10 @@ import (
 )
 
 var (
-	ansiEscapeRe             = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
-	todoCheckboxRe           = regexp.MustCompile(`(?i)\[( |x)\]`)
-	activeTaskKeywordRe      = regexp.MustCompile(`(?i)(working|running|checking|planning|writing|editing|creating|fixing|executing|reviewing)\b`)
-	activeTaskCurrentRe      = regexp.MustCompile(`(?i)^current task[:\s]+(.+)$`)
-	activeTaskActiveRe       = regexp.MustCompile(`(?i)^active task[:\s]+(.+)$`)
-	promptBusyKeywordRe      = regexp.MustCompile(`(?i)\b(working|running|checking|planning|writing|editing|creating|fixing|executing|reviewing|loading|reading|searching|parsing|building|compiling|installing)\b`)
-	codexPromptRe            = regexp.MustCompile(`❯\s*([0-9]+[smh]\s*)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}\s*$`)
-	shellPromptTrailerRe     = regexp.MustCompile(`[❯›]\s*(?:[0-9]+[smh]\s*)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}\s*$`)
-	waitReadLikeRe           = regexp.MustCompile(`loading|reading|searching|parsing`)
-	waitBuildLikeRe          = regexp.MustCompile(`running tests|testing|building|compiling|installing`)
-	waitWriteLikeRe          = regexp.MustCompile(`writing|editing|updating|creating|fixing`)
-	sessionCompletionLineRe  = regexp.MustCompile(`^` + regexp.QuoteMeta(sessionDonePrefix) + `(?:([A-Za-z0-9._-]+):)?(-?\d+)\s*$`)
-	execCompletionLineRe     = regexp.MustCompile(`^` + regexp.QuoteMeta(execDonePrefix) + `(-?\d+)\s*$`)
-	activeTaskIgnorePrefixes = []string{"$", ">", "To get started", "Usage:", "Error:", "warning:", "note:"}
-	activeTaskPatterns       = []*regexp.Regexp{activeTaskKeywordRe, activeTaskCurrentRe, activeTaskActiveRe}
+	ansiEscapeRe            = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+	shellPromptTrailerRe    = regexp.MustCompile(`[❯›]\s*(?:[0-9]+[smh]\s*)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}\s*$`)
+	sessionCompletionLineRe = regexp.MustCompile(`^` + regexp.QuoteMeta(sessionDonePrefix) + `(?:([A-Za-z0-9._-]+):)?(-?\d+)\s*$`)
+	execCompletionLineRe    = regexp.MustCompile(`^` + regexp.QuoteMeta(execDonePrefix) + `(-?\d+)\s*$`)
 )
 var nowFn = time.Now
 
@@ -143,10 +132,11 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		Session:              session,
 		Status:               "error",
 		SessionState:         "error",
-		WaitEstimate:         30,
+		WaitEstimate:         0,
 		HeartbeatAge:         -1,
 		HeartbeatFreshSecs:   getIntEnv("LISA_HEARTBEAT_STALE_SECONDS", defaultHeartbeatStaleSecs),
 		ClassificationReason: "initializing",
+		OutputFreshSeconds:   getIntEnv("LISA_OUTPUT_STALE_SECONDS", defaultOutputStaleSeconds),
 	}
 
 	if session == "" {
@@ -205,58 +195,6 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	}
 	status.PaneStatus = paneStatus
 	status.PaneCommand = paneCommand
-
-	capture, err := tmuxCapturePaneFn(session, 220)
-	if err != nil {
-		status.Signals.TMUXReadError = err.Error()
-		if doneFileDone {
-			status.Status = "idle"
-			status.WaitEstimate = 0
-			status.ClassificationReason = "done_file"
-			if doneFileExitCode == 0 {
-				status.SessionState = "completed"
-			} else {
-				status.SessionState = "crashed"
-			}
-		} else if terminalStatus, terminal := applyTerminalPaneStatus(status, paneStatus); terminal {
-			status = terminalStatus
-		} else {
-			status = degradedSessionStatus(status, "tmux_capture_error", err)
-		}
-		if shouldAppendImmediateReadErrorEvent(pollCount) {
-			if eventErr := appendStatusEvent(projectRoot, session, "transition", pollCount, status); eventErr != nil {
-				status.Signals.EventsWriteError = eventErr.Error()
-			}
-		}
-		return status, nil
-	}
-	capture = filterInputBox(capture)
-	capture = strings.Join(trimLines(capture), "\n")
-	captureObservedAtNanos := nowFn().UnixNano()
-
-	todoDone, todoTotal := parseTodos(capture)
-	status.TodosDone = todoDone
-	status.TodosTotal = todoTotal
-	status.ActiveTask = extractActiveTask(capture)
-	status.WaitEstimate = estimateWait(status.ActiveTask, todoDone, todoTotal)
-
-	execDone, execExitCode := parseExecCompletion(capture)
-	sessionDoneMarker, sessionExitCode, markerRunID, markerRunMismatch := parseSessionCompletionForRun(capture, status.Signals.RunID)
-	sessionDone := sessionDoneMarker || doneFileDone
-	if doneFileDone {
-		sessionExitCode = doneFileExitCode
-	}
-	sessionMarkerSeen := markerRunID != "" || sessionDoneMarker || markerRunMismatch
-	if !metaReadable {
-		sessionDone = false
-		sessionDoneMarker = false
-	}
-	status.Signals.ExecMarkerSeen = execDone
-	status.Signals.ExecExitCode = execExitCode
-	status.Signals.SessionMarkerSeen = sessionMarkerSeen
-	status.Signals.SessionMarkerRunID = markerRunID
-	status.Signals.SessionMarkerRunMismatch = markerRunMismatch
-	status.Signals.SessionExitCode = sessionExitCode
 
 	panePID := 0
 	if panePIDText != "" {
@@ -327,72 +265,6 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			state.LastAgentProbeAt = now
 		}
 
-		stateOutputAtNanos := state.LastOutputAtNanos
-		if stateOutputAtNanos == 0 && state.LastOutputAt > 0 {
-			stateOutputAtNanos = state.LastOutputAt * int64(time.Second)
-		}
-
-		hash := md5Hex8(capture)
-		if hash != "" && hash != state.LastOutputHash {
-			if captureObservedAtNanos > stateOutputAtNanos {
-				state.LastOutputHash = hash
-				state.LastOutputAtNanos = captureObservedAtNanos
-				state.LastOutputAt = captureObservedAtNanos / int64(time.Second)
-				stateOutputAtNanos = captureObservedAtNanos
-			}
-		}
-		if stateOutputAtNanos == 0 {
-			stateOutputAtNanos = captureObservedAtNanos
-			state.LastOutputAtNanos = stateOutputAtNanos
-			state.LastOutputAt = stateOutputAtNanos / int64(time.Second)
-		}
-		outputAge := int((nowFn().UnixNano() - stateOutputAtNanos) / int64(time.Second))
-		if outputAge < 0 {
-			outputAge = 0
-		}
-		staleAfter := getIntEnv("LISA_OUTPUT_STALE_SECONDS", defaultOutputStaleSeconds)
-		outputFresh := isAgeFresh(outputAge, staleAfter)
-		status.OutputAgeSeconds = outputAge
-		status.OutputFreshSeconds = staleAfter
-		status.Signals.OutputFresh = outputFresh
-
-		interactiveWaiting := mode == "interactive" && agentPID > 0 && agentCPU < 0.2 && !outputFresh
-		promptWaiting := mode == "interactive" && looksLikePromptWaiting(agent, capture)
-		activeProcessBusy := agentPID > 0 && agentCPU >= 0.2
-		status.Signals.InteractiveWaiting = interactiveWaiting
-		status.Signals.PromptWaiting = promptWaiting
-		status.Signals.ActiveProcessBusy = activeProcessBusy
-
-		var transcriptTurnComplete bool
-		if mode == "interactive" && metaErr == nil {
-			switch agent {
-			case "claude":
-				cached := stateHint.ClaudeSessionID
-				tc, tAge, sid, tErr := checkTranscriptTurnCompleteFn(meta.ProjectRoot, meta.Prompt, meta.CreatedAt, cached)
-				transcriptTurnComplete = tc
-				status.Signals.TranscriptTurnComplete = tc
-				status.Signals.TranscriptFileAge = tAge
-				if tErr != nil {
-					status.Signals.TranscriptError = tErr.Error()
-				}
-				if sid != "" && sid != stateHint.ClaudeSessionID {
-					state.ClaudeSessionID = sid
-				}
-			case "codex":
-				cached := stateHint.CodexSessionID
-				tc, tAge, sid, tErr := checkCodexTranscriptTurnCompleteFn(meta.Prompt, meta.CreatedAt, cached)
-				transcriptTurnComplete = tc
-				status.Signals.TranscriptTurnComplete = tc
-				status.Signals.TranscriptFileAge = tAge
-				if tErr != nil {
-					status.Signals.TranscriptError = tErr.Error()
-				}
-				if sid != "" && sid != stateHint.CodexSessionID {
-					state.CodexSessionID = sid
-				}
-			}
-		}
-
 		switch {
 		case strings.HasPrefix(paneStatus, "crashed:"):
 			status.Status = "idle"
@@ -415,51 +287,19 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			status.SessionState = "in_progress"
 
 			switch {
-			case sessionDone:
+			case doneFileDone:
 				status.Status = "idle"
 				status.WaitEstimate = 0
-				if doneFileDone {
-					status.ClassificationReason = "done_file"
-				} else {
-					status.ClassificationReason = "session_done_marker"
-				}
-				if sessionExitCode == 0 {
+				status.ClassificationReason = "done_file"
+				if doneFileExitCode == 0 {
 					status.SessionState = "completed"
 				} else {
 					status.SessionState = "crashed"
 				}
-			case execDone:
-				status.Status = "idle"
-				status.WaitEstimate = 0
-				status.ClassificationReason = "exec_done_marker"
-				if execExitCode == 0 {
-					status.SessionState = "completed"
-				} else {
-					status.SessionState = "crashed"
-				}
-			case interactiveWaiting:
-				status.Status = "idle"
-				status.SessionState = "waiting_input"
-				status.WaitEstimate = 0
-				status.ClassificationReason = "interactive_waiting_idle"
-			case transcriptTurnComplete:
-				status.Status = "idle"
-				status.SessionState = "waiting_input"
-				status.WaitEstimate = 0
-				status.ClassificationReason = "transcript_turn_complete"
-			case promptWaiting && !activeProcessBusy:
-				status.Status = "idle"
-				status.SessionState = "waiting_input"
-				status.WaitEstimate = 0
-				status.ClassificationReason = "prompt_waiting"
 			case agentPID > 0:
 				status.Status = "active"
 				status.SessionState = "in_progress"
 				status.ClassificationReason = "agent_pid_alive"
-			case outputFresh:
-				status.Status = "active"
-				status.SessionState = "in_progress"
-				status.ClassificationReason = "output_fresh"
 			case heartbeatFresh:
 				status.Status = "active"
 				status.SessionState = "in_progress"
@@ -486,7 +326,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 					status.ClassificationReason = "grace_period_just_started"
 				} else {
 					status.SessionState = "stuck"
-					if markerRunMismatch {
+					if doneFileRunMismatch {
 						status.ClassificationReason = "stuck_marker_run_mismatch"
 					} else {
 						status.ClassificationReason = "stuck_no_signals"
@@ -559,6 +399,15 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 	}
 
 	if full && (status.SessionState == "completed" || status.SessionState == "crashed" || status.SessionState == "stuck" || status.SessionState == "degraded") {
+		capture, captureErr := tmuxCapturePaneFn(session, 220)
+		if captureErr != nil {
+			if status.Signals.TMUXReadError == "" {
+				status.Signals.TMUXReadError = captureErr.Error()
+			}
+			return status, nil
+		}
+		capture = filterInputBox(capture)
+		capture = strings.Join(trimLines(capture), "\n")
 		outputFile, err := writeSessionOutputFileFromCapture(projectRoot, session, capture)
 		if err == nil {
 			status.OutputFile = outputFile
