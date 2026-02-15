@@ -84,6 +84,7 @@ func TestE2ECodexRunsEntireSuiteWithAgentsContext(t *testing.T) {
 	captureRaw := runAndRequireSuccess(t, repoRoot, nil,
 		binPath, "session", "capture",
 		"--session", session,
+		"--raw",
 		"--lines", "600",
 		"--json",
 	)

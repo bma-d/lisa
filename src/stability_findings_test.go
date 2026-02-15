@@ -179,7 +179,7 @@ func TestCmdSessionSpawnFailureEmitsLifecycleReason(t *testing.T) {
 			args: []string{"--session", "lisa-spawn-tmux-fail", "--command", "echo ok"},
 			setup: func(projectRoot string) {
 				ensureHeartbeatWritableFn = func(path string) error { return os.WriteFile(path, []byte(""), 0o600) }
-				tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error {
+				tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
 					return errors.New("tmux create failed")
 				}
 			},
@@ -191,21 +191,21 @@ func TestCmdSessionSpawnFailureEmitsLifecycleReason(t *testing.T) {
 			args: []string{"--session", "lisa-spawn-send-fail", "--command", "echo ok"},
 			setup: func(projectRoot string) {
 				ensureHeartbeatWritableFn = func(path string) error { return os.WriteFile(path, []byte(""), 0o600) }
-				tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
-				tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error {
+				tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
 					return errors.New("send failed")
 				}
 			},
-			wantReason:   "spawn_send_error",
-			wantErrMatch: "failed to send startup command",
+			wantReason:   "spawn_tmux_new_error",
+			wantErrMatch: "failed to create tmux session",
 		},
 		{
 			name: "metadata persist failure",
 			args: []string{"--session", "lisa-spawn-meta-fail", "--command", "echo ok"},
 			setup: func(projectRoot string) {
 				ensureHeartbeatWritableFn = func(path string) error { return os.WriteFile(path, []byte(""), 0o600) }
-				tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
-				tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error { return nil }
+				tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+					return nil
+				}
 				saveSessionMetaFn = func(projectRoot, session string, meta sessionMeta) error {
 					return errors.New("disk full")
 				}
@@ -216,16 +216,14 @@ func TestCmdSessionSpawnFailureEmitsLifecycleReason(t *testing.T) {
 	}
 
 	origHas := tmuxHasSessionFn
-	origNew := tmuxNewSessionFn
-	origSend := tmuxSendCommandWithFallbackFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
 	origKill := tmuxKillSessionFn
 	origEnsure := ensureHeartbeatWritableFn
 	origSaveMeta := saveSessionMetaFn
 	origAppend := appendSessionEventFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
-		tmuxNewSessionFn = origNew
-		tmuxSendCommandWithFallbackFn = origSend
+		tmuxNewSessionWithStartupFn = origNewWithStartup
 		tmuxKillSessionFn = origKill
 		ensureHeartbeatWritableFn = origEnsure
 		saveSessionMetaFn = origSaveMeta
@@ -239,8 +237,9 @@ func TestCmdSessionSpawnFailureEmitsLifecycleReason(t *testing.T) {
 			args = append(args, "--project-root", projectRoot)
 
 			tmuxHasSessionFn = func(session string) bool { return false }
-			tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
-			tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error { return nil }
+			tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+				return nil
+			}
 			tmuxKillSessionFn = func(session string) error { return nil }
 			ensureHeartbeatWritableFn = func(path string) error { return os.WriteFile(path, []byte(""), 0o600) }
 			saveSessionMetaFn = saveSessionMeta

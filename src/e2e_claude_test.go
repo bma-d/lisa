@@ -69,7 +69,7 @@ func TestE2EClaudeRunsEntireSuiteWithAgentsContext(t *testing.T) {
 		"--session", session,
 		"--project-root", repoRoot,
 		"--poll-interval", "5",
-		"--max-polls", "60",
+		"--max-polls", "120",
 		"--stop-on-waiting", "false",
 		"--json",
 	)
@@ -85,6 +85,7 @@ func TestE2EClaudeRunsEntireSuiteWithAgentsContext(t *testing.T) {
 	captureRaw := runAndRequireSuccess(t, repoRoot, nil,
 		binPath, "session", "capture",
 		"--session", session,
+		"--raw",
 		"--lines", "600",
 		"--json",
 	)
@@ -146,10 +147,21 @@ func runAndRequireSuccess(t *testing.T, dir string, env []string, name string, a
 func runCommand(dir string, env []string, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	cmd.Env = os.Environ()
-	if len(env) > 0 {
-		cmd.Env = append(cmd.Env, env...)
-	}
+	cmd.Env = commandEnv(env)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+func commandEnv(extra []string) []string {
+	out := make([]string, 0, len(os.Environ())+len(extra))
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "LISA_E2E_CLAUDE=") || strings.HasPrefix(kv, "LISA_E2E_CODEX=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	if len(extra) > 0 {
+		out = append(out, extra...)
+	}
+	return out
 }

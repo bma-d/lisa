@@ -1,7 +1,7 @@
 # SDK Usage Guide
 
-Last Updated: 2026-02-14
-Related Files: `agent.md`, `src/commands_session.go`, `src/commands_agent.go`
+Last Updated: 2026-02-15
+Related Files: `USAGE.md`, `agent.md`, `src/commands_session.go`, `src/commands_agent.go`
 
 ## Overview
 
@@ -15,45 +15,15 @@ How to use Lisa as infrastructure from an LLM orchestrator or script.
 4. Fetch artifacts with `session capture --lines N`
 5. Kill and clean up with `session kill --session NAME`
 
-## Key Commands
+## Command Contract Source
 
-```bash
-# Spawn interactive Claude
-lisa session spawn --agent claude --mode interactive --prompt "Review code" --json
+All CLI usage details live in `USAGE.md`:
 
-# Spawn exec-mode Codex
-lisa session spawn --agent codex --mode exec --prompt "Run tests" --json
-
-# Monitor until terminal state
-lisa session monitor --session NAME --json --poll-interval 20
-
-# Send follow-up
-lisa session send --session NAME --text "Continue" --enter
-
-# Capture output
-lisa session capture --session NAME --lines 300
-
-# Build command string without spawning
-lisa agent build-cmd --agent claude --mode exec --prompt "Fix lint"
-```
-
-## Exit Codes
-
-- `session monitor`: 0 on completed/waiting_input, 2 on crashed/stuck/not_found/timeout (`waiting_input` remains reserved/non-emitting by default)
-- `session status`: 0 always (unless arg parse error)
-- `session exists`: 0 if exists, 1 if not
-
-## Session States
-
-| State | Meaning |
-|-------|---------|
-| `in_progress` | Agent appears active (process running or output fresh) |
-| `waiting_input` | Reserved compatibility state; currently non-emitting in default classification |
-| `completed` | Exec done or pane exited cleanly |
-| `crashed` | Pane exited with non-zero or agent crashed |
-| `stuck` | No active process/heartbeat signal after grace period |
-| `degraded` | Infrastructure contention/error state (e.g., lock timeout); retry polling |
-| `just_started` | Idle but within first 3 polls (grace period) |
+- command syntax and flags
+- state definitions
+- exit-code contract
+- JSON vs text output modes
+- environment variable controls
 
 ## Related Context
 

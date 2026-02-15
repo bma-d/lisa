@@ -20,6 +20,7 @@ var tmuxCapturePaneFn = tmuxCapturePane
 var tmuxSendTextFn = tmuxSendText
 var tmuxSendKeysFn = tmuxSendKeys
 var tmuxNewSessionFn = tmuxNewSession
+var tmuxNewSessionWithStartupFn = tmuxNewSessionWithStartup
 var tmuxSendCommandWithFallbackFn = tmuxSendCommandWithFallback
 var tmuxDisplayFn = tmuxDisplay
 var tmuxPaneStatusFn = tmuxPaneStatus
@@ -35,32 +36,67 @@ var processCache = struct {
 }{}
 
 func tmuxNewSession(session, projectRoot, agent, mode string, width, height int) error {
-	_, err := runCmd("tmux", "new-session", "-d", "-s", session,
+	return tmuxNewSessionWithStartup(session, projectRoot, agent, mode, width, height, "")
+}
+
+func tmuxNewSessionWithStartup(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+	args := []string{"new-session", "-d", "-s", session,
 		"-x", strconv.Itoa(width),
 		"-y", strconv.Itoa(height),
 		"-c", projectRoot,
 		"-e", "LISA_SESSION=true",
-		"-e", "LISA_SESSION_NAME="+session,
-		"-e", "LISA_AGENT="+agent,
-		"-e", "LISA_MODE="+mode,
-		"-e", "LISA_PROJECT_HASH="+projectHash(projectRoot),
-		"-e", "LISA_HEARTBEAT_FILE="+sessionHeartbeatFile(projectRoot, session),
-		"-e", "LISA_DONE_FILE="+sessionDoneFile(projectRoot, session),
-	)
+		"-e", "LISA_SESSION_NAME=" + session,
+		"-e", "LISA_AGENT=" + agent,
+		"-e", "LISA_MODE=" + mode,
+		"-e", "LISA_PROJECT_HASH=" + projectHash(projectRoot),
+		"-e", "LISA_HEARTBEAT_FILE=" + sessionHeartbeatFile(projectRoot, session),
+		"-e", "LISA_DONE_FILE=" + sessionDoneFile(projectRoot, session),
+	}
+
+	startupCommand = strings.TrimSpace(startupCommand)
+	if startupCommand != "" {
+		scriptPath := sessionCommandScriptPath(projectRoot, session, time.Now().UnixNano())
+		var body strings.Builder
+		body.WriteString("#!/usr/bin/env bash\n")
+		if strings.Contains(startupCommand, execDonePrefix) {
+			body.WriteString("set +e\n")
+		}
+		body.WriteString("(\n")
+		body.WriteString(startupCommand)
+		if !strings.HasSuffix(startupCommand, "\n") {
+			body.WriteString("\n")
+		}
+		body.WriteString(")\n")
+		// Keep the tmux pane alive after startup command exits so status/capture
+		// continue to work the same way as key-driven startup.
+		body.WriteString("__lisa_spawn_ec=$?\n")
+		body.WriteString("exec \"${SHELL:-/bin/sh}\" -l\n")
+		if err := os.WriteFile(scriptPath, []byte(body.String()), 0o700); err != nil {
+			return fmt.Errorf("failed to write startup command script: %w", err)
+		}
+		args = append(args, "bash "+shellQuote(scriptPath))
+	}
+
+	_, err := runCmd("tmux", args...)
 	return err
 }
 
 func tmuxSendCommandWithFallback(projectRoot, session, command string, enter bool) error {
-	if len(command) <= maxInlineSendLength {
-		return tmuxSendKeys(session, []string{command}, enter)
-	}
-
+	_ = enter
 	scriptPath := sessionCommandScriptPath(projectRoot, session, time.Now().UnixNano())
 	body := buildFallbackScriptBody(command)
-	if err := os.WriteFile(scriptPath, []byte(body), 0o700); err != nil {
-		return fmt.Errorf("failed to write long command script: %w", err)
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
 	}
-	return tmuxSendKeys(session, []string{"bash " + shellQuote(scriptPath)}, enter)
+	// Keep the tmux pane alive after startup command exits so status/capture
+	// continue to work the same way as key-driven startup.
+	body += "__lisa_spawn_ec=$?\nexec \"${SHELL:-/bin/sh}\" -l\n"
+	if err := os.WriteFile(scriptPath, []byte(body), 0o700); err != nil {
+		return fmt.Errorf("failed to write startup command script: %w", err)
+	}
+
+	_, err := runCmd("tmux", "respawn-pane", "-k", "-t", session, "bash", scriptPath)
+	return err
 }
 
 func buildFallbackScriptBody(command string) string {

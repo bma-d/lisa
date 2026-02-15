@@ -9,6 +9,7 @@ func wrapSessionCommand(command, runID string) string {
 	parts := []string{
 		"{",
 		"__lisa_run_id=%s;",
+		"export LISA_RUN_ID=\"$__lisa_run_id\";",
 		"__lisa_hb_pid='';",
 		"__lisa_ec=0;",
 		"__lisa_marker_done=0;",

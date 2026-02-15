@@ -53,6 +53,7 @@ func TestWrapSessionCommandInjectsLifecycleMarkersAndHeartbeat(t *testing.T) {
 		sessionDonePrefix,
 		"run-test-1",
 		"LISA_HEARTBEAT_FILE",
+		"LISA_RUN_ID",
 		"trap '__lisa_ec=130; exit \"$__lisa_ec\"' INT TERM HUP",
 		"echo hello",
 	} {
@@ -1092,15 +1093,15 @@ func TestCmdSessionSpawnRejectsInvalidHeight(t *testing.T) {
 
 func TestCmdSessionSpawnRejectsCustomSessionWithoutLisaPrefix(t *testing.T) {
 	origHas := tmuxHasSessionFn
-	origNew := tmuxNewSessionFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
-		tmuxNewSessionFn = origNew
+		tmuxNewSessionWithStartupFn = origNewWithStartup
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return false }
 	newCalled := false
-	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error {
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
 		newCalled = true
 		return nil
 	}
@@ -1124,15 +1125,15 @@ func TestCmdSessionSpawnRejectsCustomSessionWithoutLisaPrefix(t *testing.T) {
 
 func TestCmdSessionSpawnExecRequiresPromptOrCommand(t *testing.T) {
 	origHas := tmuxHasSessionFn
-	origNew := tmuxNewSessionFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
-		tmuxNewSessionFn = origNew
+		tmuxNewSessionWithStartupFn = origNewWithStartup
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return false }
 	newCalled := false
-	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error {
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
 		newCalled = true
 		return nil
 	}
@@ -1147,27 +1148,21 @@ func TestCmdSessionSpawnExecRequiresPromptOrCommand(t *testing.T) {
 
 func TestCmdSessionSpawnJSONOutputAndExecWrapping(t *testing.T) {
 	origHas := tmuxHasSessionFn
-	origNew := tmuxNewSessionFn
-	origSend := tmuxSendCommandWithFallbackFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
-		tmuxNewSessionFn = origNew
-		tmuxSendCommandWithFallbackFn = origSend
+		tmuxNewSessionWithStartupFn = origNewWithStartup
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return false }
-	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
 
 	projectRoot := t.TempDir()
 	sentCommand := ""
-	tmuxSendCommandWithFallbackFn = func(root, session, command string, enter bool) error {
-		if !enter {
-			t.Fatalf("expected startup command send to include enter")
-		}
+	tmuxNewSessionWithStartupFn = func(session, root, agent, mode string, width, height int, startupCommand string) error {
 		if root != canonicalProjectRoot(projectRoot) {
-			t.Fatalf("expected canonical project root to propagate to command fallback sender; got %q want %q", root, canonicalProjectRoot(projectRoot))
+			t.Fatalf("expected canonical project root to propagate to startup launcher; got %q want %q", root, canonicalProjectRoot(projectRoot))
 		}
-		sentCommand = command
+		sentCommand = startupCommand
 		return nil
 	}
 
@@ -1210,19 +1205,16 @@ func TestCmdSessionSpawnJSONOutputAndExecWrapping(t *testing.T) {
 
 func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
 	origHas := tmuxHasSessionFn
-	origNew := tmuxNewSessionFn
-	origSend := tmuxSendCommandWithFallbackFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
 	origKill := tmuxKillSessionFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
-		tmuxNewSessionFn = origNew
-		tmuxSendCommandWithFallbackFn = origSend
+		tmuxNewSessionWithStartupFn = origNewWithStartup
 		tmuxKillSessionFn = origKill
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return false }
-	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
-	tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error {
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
 		return errors.New("send failed")
 	}
 	killCalled := false
@@ -1233,15 +1225,8 @@ func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
 
 	projectRoot := t.TempDir()
 	session := "lisa-send-failure-cleanup"
-	scriptPath := sessionCommandScriptPath(projectRoot, session, time.Now().UnixNano())
-	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\n"), 0o700); err != nil {
-		t.Fatalf("failed to create script artifact: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Remove(scriptPath)
-	})
 
-	_, _ = captureOutput(t, func() {
+	_, stderr := captureOutput(t, func() {
 		if code := cmdSessionSpawn([]string{
 			"--session", session,
 			"--project-root", projectRoot,
@@ -1251,24 +1236,24 @@ func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
 		}
 	})
 
-	if !killCalled {
-		t.Fatalf("expected failed spawn to kill tmux session")
+	if killCalled {
+		t.Fatalf("did not expect startup creation failure to kill tmux session")
 	}
-	if fileExists(scriptPath) {
-		t.Fatalf("expected cleanup to remove command script after failed spawn")
+	if !strings.Contains(stderr, "failed to create tmux session") {
+		t.Fatalf("unexpected stderr: %q", stderr)
 	}
 }
 
 func TestCmdSessionSpawnNewSessionFailureCleansHeartbeatArtifact(t *testing.T) {
 	origHas := tmuxHasSessionFn
-	origNew := tmuxNewSessionFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
-		tmuxNewSessionFn = origNew
+		tmuxNewSessionWithStartupFn = origNewWithStartup
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return false }
-	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error {
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
 		return errors.New("tmux create failed")
 	}
 
@@ -1299,21 +1284,20 @@ func TestCmdSessionSpawnNewSessionFailureCleansHeartbeatArtifact(t *testing.T) {
 
 func TestCmdSessionSpawnMetaFailureKillsSession(t *testing.T) {
 	origHas := tmuxHasSessionFn
-	origNew := tmuxNewSessionFn
-	origSend := tmuxSendCommandWithFallbackFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
 	origKill := tmuxKillSessionFn
 	origSaveMeta := saveSessionMetaFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
-		tmuxNewSessionFn = origNew
-		tmuxSendCommandWithFallbackFn = origSend
+		tmuxNewSessionWithStartupFn = origNewWithStartup
 		tmuxKillSessionFn = origKill
 		saveSessionMetaFn = origSaveMeta
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return false }
-	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
-	tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error { return nil }
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+		return nil
+	}
 	killCalled := false
 	tmuxKillSessionFn = func(session string) error {
 		killCalled = true
@@ -2083,16 +2067,21 @@ func TestComputeSessionStatusUsesPaneTerminalStateWhenCaptureFails(t *testing.T)
 func TestComputeSessionStatusReadErrorEventLoggingSkipsZeroPoll(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn
+	origDisplay := tmuxDisplayFn
 	origAppend := appendSessionEventFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
 		tmuxCapturePaneFn = origCapture
+		tmuxDisplayFn = origDisplay
 		appendSessionEventFn = origAppend
 	})
 
 	tmuxHasSessionFn = func(session string) bool { return true }
 	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
 		return "", errors.New("capture failed")
+	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		return "", errors.New("display failed")
 	}
 
 	appendCalls := 0

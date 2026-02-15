@@ -2,68 +2,71 @@
 
 ## Purpose
 
-Lisa is a standalone Go CLI for orchestrating Claude and Codex AI agent sessions inside tmux. It enables spawning parallel AI workers, tracking their progress, sending follow-up input, and managing session lifecycles — all without attaching to tmux directly.
+Lisa is a standalone Go CLI that orchestrates Claude/Codex agent sessions in tmux. It is infrastructure for higher-level orchestrators that need to spawn, monitor, steer, and collect output from concurrent AI worker sessions.
 
-## Executive Summary
+## What Lisa Does
 
-Lisa provides a unified interface to launch, monitor, and interact with AI coding agents (Claude Code and OpenAI Codex) running in tmux sessions. It is designed as infrastructure for LLM orchestrators that need to manage multiple concurrent agent workers across projects.
-
-Key capabilities:
-- Spawn interactive or execution-mode agent sessions in tmux
-- Poll session status with intelligent state classification (in_progress, waiting_input, completed, crashed, stuck)
-- Send text or key sequences to running sessions
-- Capture session output for downstream consumption
-- Project-scoped session management with hash-based isolation
-- Health checks via `doctor` command
+- Creates isolated tmux sessions per task.
+- Builds agent startup commands for Claude and Codex (interactive or exec mode).
+- Classifies session runtime state from process/pane/heartbeat/done-file signals.
+- Sends follow-up input (`text` or raw tmux keys) to running sessions.
+- Captures transcript or raw pane output.
+- Emits lifecycle/status observability events for diagnostics.
+- Cleans up session artifacts safely (hash-scoped by default).
 
 ## Technology Stack
 
-| Category | Technology | Version | Notes |
-|---|---|---|---|
-| Language | Go | 1.21 | Minimum version |
-| Dependencies | stdlib only | — | Zero external dependencies |
-| Runtime | tmux | — | Required for session management |
-| Agents | Claude Code, Codex | — | At least one must be on PATH |
-| Build | `go build` | — | Single binary output |
+| Category | Value |
+|---|---|
+| Language | Go 1.21 |
+| Dependencies | stdlib only |
+| Runtime dependency | tmux |
+| Agent targets | Claude Code, OpenAI Codex |
+| Packaging | GoReleaser (tar.gz + Homebrew + deb/rpm/apk) |
 
-## Architecture Classification
+## Repository Layout (Current)
 
-- **Repository type:** Monolith
-- **Architecture pattern:** CLI with domain-split subcommand routing
-- **Project type:** CLI tool
-- **Parts:** 1 (single)
-
-## Key Design Decisions
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| No external deps | stdlib only | Minimal binary, fast builds, no supply chain risk |
-| tmux as runtime | Process isolation | Persistent sessions, detached execution, cross-platform terminal multiplexing |
-| JSON output mode | `--json` flag | Machine-readable output for orchestrator integration |
-| Exec completion marker | `__LISA_EXEC_DONE__:` | Reliable detection of non-interactive command completion |
-| Project hash scoping | MD5-based | Isolate sessions per project without path collisions |
-| Atomic file writes | tmp+rename | Prevent corrupted state/meta files on crash |
-
-## Repository Structure
-
-```
+```text
 lisa/
-├── main.go              # Process entrypoint
-├── go.mod               # Go module definition (Go 1.21, zero deps)
-├── AGENTS.md            # Repo contributor guidelines
-├── agent.md             # Lisa SDK/usage guide
-├── src/                 # All application source code
-│   ├── run.go           # Command routing and usage text
-│   ├── types.go         # Shared types and constants
-│   ├── agent_command.go # Agent startup command generation
-│   ├── commands_agent.go    # doctor + agent subcommands
-│   ├── commands_session.go  # session subcommands (spawn/send/status/monitor/...)
-│   ├── status.go        # Session state inference and classification
-│   ├── tmux.go          # tmux interaction layer
-│   ├── session_files.go # Session naming, metadata, state persistence
-│   ├── utils.go         # Shared helpers (shell, json, env, file)
-│   ├── e2e_claude_test.go   # E2E test with real Claude
-│   └── regressions_test.go  # Unit and regression tests
-└── docs/                # Generated documentation
-    └── changelog/       # Changelog entries
+├── main.go
+├── go.mod
+├── README.md
+├── agent.md
+├── AGENTS.md
+├── .goreleaser.yaml
+├── .github/workflows/{ci.yml,release.yml}
+├── docs/
+│   ├── architecture.md
+│   ├── development-guide.md
+│   ├── index.md
+│   ├── project-overview.md
+│   ├── project-scan-report.json
+│   └── source-tree-analysis.md
+├── src/
+│   ├── run.go
+│   ├── help.go
+│   ├── commands_*.go
+│   ├── status*.go
+│   ├── tmux.go
+│   ├── session_*.go
+│   ├── claude_session.go
+│   ├── codex_session.go
+│   ├── utils.go
+│   ├── types.go
+│   └── *_test.go
+└── _bmad/
 ```
+
+## Current Build/Test Health
+
+- `go test ./...` passes.
+- `go test -race ./...` passes.
+- `go test -cover ./src` reports 79.9% statement coverage.
+
+## Key Runtime Decisions
+
+- Process-first status classification (not output-text-first).
+- Session completion signal uses wrapper done-file sidecar and pane exit state.
+- Session artifacts are project-hash-scoped under `/tmp`.
+- Event logs are bounded, lock-protected JSONL with retention cleanup.
+- Default transcript capture path is Claude transcript when metadata indicates Claude; raw pane remains available via `--raw`.

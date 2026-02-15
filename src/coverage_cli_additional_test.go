@@ -315,15 +315,13 @@ func TestCmdSessionMonitorEmitsLifecycleEvent(t *testing.T) {
 
 func TestCmdSessionSpawnAndKillEmitLifecycleEvents(t *testing.T) {
 	origHas := tmuxHasSessionFn
-	origNew := tmuxNewSessionFn
-	origSendCmd := tmuxSendCommandWithFallbackFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
 	origKill := tmuxKillSessionFn
 	origEnsure := ensureHeartbeatWritableFn
 	origAppend := appendSessionEventFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
-		tmuxNewSessionFn = origNew
-		tmuxSendCommandWithFallbackFn = origSendCmd
+		tmuxNewSessionWithStartupFn = origNewWithStartup
 		tmuxKillSessionFn = origKill
 		ensureHeartbeatWritableFn = origEnsure
 		appendSessionEventFn = origAppend
@@ -335,8 +333,9 @@ func TestCmdSessionSpawnAndKillEmitLifecycleEvents(t *testing.T) {
 		return nil
 	}
 	tmuxHasSessionFn = func(session string) bool { return false }
-	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error { return nil }
-	tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error { return nil }
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+		return nil
+	}
 	tmuxKillSessionFn = func(session string) error { return nil }
 	ensureHeartbeatWritableFn = func(path string) error {
 		return os.WriteFile(path, []byte(""), 0o600)
@@ -389,8 +388,7 @@ func TestCmdSessionSpawnAndKillEmitLifecycleEvents(t *testing.T) {
 
 func TestCmdSessionRoutesCoreSubcommands(t *testing.T) {
 	origHas := tmuxHasSessionFn
-	origNew := tmuxNewSessionFn
-	origSendCmd := tmuxSendCommandWithFallbackFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
 	origKill := tmuxKillSessionFn
 	origEnsure := ensureHeartbeatWritableFn
 	origSendText := tmuxSendTextFn
@@ -401,8 +399,7 @@ func TestCmdSessionRoutesCoreSubcommands(t *testing.T) {
 	origAppend := appendSessionEventFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
-		tmuxNewSessionFn = origNew
-		tmuxSendCommandWithFallbackFn = origSendCmd
+		tmuxNewSessionWithStartupFn = origNewWithStartup
 		tmuxKillSessionFn = origKill
 		ensureHeartbeatWritableFn = origEnsure
 		tmuxSendTextFn = origSendText
@@ -422,13 +419,12 @@ func TestCmdSessionRoutesCoreSubcommands(t *testing.T) {
 		}
 		return true
 	}
-	tmuxNewSessionFn = func(session, projectRoot, agent, mode string, width, height int) error {
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
 		if session == "lisa-route-spawn" {
 			routeSessionAlive = true
 		}
 		return nil
 	}
-	tmuxSendCommandWithFallbackFn = func(projectRoot, session, command string, enter bool) error { return nil }
 	tmuxKillSessionFn = func(session string) error {
 		if session == "lisa-route-spawn" {
 			routeSessionAlive = false

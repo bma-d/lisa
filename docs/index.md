@@ -1,48 +1,44 @@
 # Lisa - Documentation Index
 
-## Project Overview
+## Project Snapshot (2026-02-15)
 
 - **Type:** Monolith (single CLI binary)
 - **Language:** Go 1.21
 - **Dependencies:** stdlib only (zero external)
-- **Architecture:** CLI with subcommand routing + session state machine
-- **Purpose:** Orchestrate Claude/Codex AI agent sessions in tmux
+- **Runtime:** tmux + Claude and/or Codex on PATH
+- **Architecture:** CLI subcommand router + process-first session state machine
+- **Source footprint (`src/`):** 33 Go files (19 non-test + 14 test), 12,450 LOC
+- **Coverage:** 79.9% statements (`go test -cover ./src`)
 
 ## Quick Reference
 
-- **Entry Point:** `main.go` → `src/run.go:Run()`
+- **Entrypoint:** `main.go` -> `src/run.go:Run()`
 - **Build:** `go build -o lisa .`
 - **Test:** `go test ./...`
-- **Health Check:** `./lisa doctor`
-- **Source Lines:** ~2,700 (11 source files + 2 test files in `src/`)
+- **Race test:** `go test -race ./...`
+- **Health check:** `./lisa doctor`
 
-## Generated Documentation
+## Documentation Set
 
-- [Project Overview](./project-overview.md) — Purpose, tech stack, design decisions
-- [Architecture](./architecture.md) — State machine, session lifecycle, file layout, security
-- [Source Tree Analysis](./source-tree-analysis.md) — Annotated directory tree, file dependencies, code metrics
-- [Development Guide](./development-guide.md) — Build, test, run, conventions
+- [Usage Guide](../USAGE.md) - canonical CLI usage and command reference
+- [Project Overview](./project-overview.md) - purpose, components, decisions
+- [Architecture](./architecture.md) - runtime flow, state classification, artifacts
+- [Source Tree Analysis](./source-tree-analysis.md) - annotated tree and code metrics
+- [Development Guide](./development-guide.md) - build/test/run workflow
+- [Project Scan Report](./project-scan-report.json) - machine-readable repo snapshot metadata
 
-## Existing Documentation
+## Canonical Runtime Docs
 
-- [AGENTS.md](../AGENTS.md) — Contributor and agent guidelines
-- [agent.md](../agent.md) — Lisa SDK usage guide (command reference, integration patterns)
-- [Changelog (latest)](./changelog/260210.md) — Recent changes
+- [README](../README.md) - install and quick start
+- [Usage Guide](../USAGE.md) - single source of truth for CLI usage
+- [Agent SDK Guide](../agent.md) - orchestrator integration contract
+- [Root Context Index](../AGENTS.md) - JIT context index and project conventions
 
-## Getting Started
+## Changelog
 
-1. Build: `go build -o lisa .`
-2. Verify: `./lisa doctor`
-3. Spawn a session: `./lisa session spawn --agent claude --mode interactive --prompt "Hello" --json`
-4. Monitor: `./lisa session monitor --session <NAME> --json`
-5. Capture output: `./lisa session capture --session <NAME> --json`
-6. Cleanup: `./lisa session kill --session <NAME>`
-
-## AI-Assisted Development
-
-When working on this codebase with AI agents:
-
-- **Architecture reference:** Start with [architecture.md](./architecture.md) for the state machine and session lifecycle
-- **Adding commands:** Follow the pattern in `src/commands_session.go` — flag parsing loop, validation, tmux interaction, JSON output
-- **Testing:** Mock tmux via function variables (see `src/tmux.go` var declarations, `src/regressions_test.go` for examples)
-- **File paths:** All session artifacts go to `/tmp/` with project-hash scoping (see `src/session_files.go`)
+- [260215](./changelog/260215.md)
+- [260214](./changelog/260214.md)
+- [260213](./changelog/260213.md)
+- [260212](./changelog/260212.md)
+- [260210](./changelog/260210.md)
+- [260209](./changelog/260209.md)

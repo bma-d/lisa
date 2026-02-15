@@ -257,16 +257,6 @@ func cmdSessionSpawn(args []string) int {
 			return 1
 		}
 	}
-
-	if err := tmuxNewSessionFn(session, projectRoot, agent, mode, width, height); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create tmux session: %v\n", err)
-		if cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); cleanupErr != nil {
-			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
-		}
-		emitSpawnFailureEvent("spawn_tmux_new_error")
-		return 1
-	}
-
 	commandToSend := command
 	if mode == "exec" && command != "" {
 		commandToSend = wrapExecCommand(command)
@@ -275,20 +265,13 @@ func cmdSessionSpawn(args []string) int {
 		commandToSend = wrapSessionCommand(commandToSend, runID)
 	}
 
-	if commandToSend != "" {
-		if err := tmuxSendCommandWithFallbackFn(projectRoot, session, commandToSend, true); err != nil {
-			killErr := tmuxKillSessionFn(session)
-			cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts)
-			fmt.Fprintf(os.Stderr, "failed to send startup command: %v\n", err)
-			if killErr != nil {
-				fmt.Fprintf(os.Stderr, "failed to kill session after send error: %v\n", killErr)
-			}
-			if cleanupErr != nil {
-				fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
-			}
-			emitSpawnFailureEvent("spawn_send_error")
-			return 1
+	if err := tmuxNewSessionWithStartupFn(session, projectRoot, agent, mode, width, height, commandToSend); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create tmux session: %v\n", err)
+		if cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); cleanupErr != nil {
+			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
 		}
+		emitSpawnFailureEvent("spawn_tmux_new_error")
+		return 1
 	}
 
 	meta := sessionMeta{

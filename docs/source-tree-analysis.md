@@ -1,90 +1,103 @@
 # Lisa - Source Tree Analysis
 
-## Directory Structure
+## Current Tree (Condensed)
 
+```text
+lisa/
+├── main.go
+├── go.mod
+├── README.md
+├── agent.md
+├── AGENTS.md
+├── .goreleaser.yaml
+├── .github/workflows/
+│   ├── ci.yml
+│   └── release.yml
+├── docs/
+│   ├── architecture.md
+│   ├── development-guide.md
+│   ├── index.md
+│   ├── project-overview.md
+│   ├── project-scan-report.json
+│   └── source-tree-analysis.md
+├── src/
+│   ├── run.go
+│   ├── help.go
+│   ├── commands_agent.go
+│   ├── commands_session.go
+│   ├── commands_session_state.go
+│   ├── commands_session_explain.go
+│   ├── commands_session_manage.go
+│   ├── agent_command.go
+│   ├── tmux.go
+│   ├── status.go
+│   ├── status_helpers.go
+│   ├── session_files.go
+│   ├── session_observability.go
+│   ├── session_wrapper.go
+│   ├── claude_session.go
+│   ├── codex_session.go
+│   ├── utils.go
+│   ├── types.go
+│   ├── build_info.go
+│   └── *_test.go
+└── _bmad/
 ```
-lisa/                           # Project root
-├── main.go                     # ENTRY POINT — delegates to src.Run()
-├── go.mod                      # Go 1.21, zero external dependencies
-├── AGENTS.md                   # Contributor/agent guidelines
-├── agent.md                    # Lisa SDK usage guide for AI agents
-├── src/                        # All application logic (package: app)
-│   ├── run.go                  # Top-level command router (doctor|session|agent|help)
-│   ├── types.go                # Constants + shared structs (sessionMeta, sessionState, sessionStatus, monitorResult, processInfo)
-│   ├── agent_command.go        # buildAgentCommand() — generates claude/codex startup commands
-│   ├── commands_agent.go       # cmdDoctor() + cmdAgent() + cmdAgentBuildCmd()
-│   ├── commands_session.go     # All session subcommands: name, spawn, send, status, monitor, capture, list, exists, kill, kill-all
-│   ├── status.go               # computeSessionStatus() — state machine for session classification
-│   ├── tmux.go                 # tmux wrapper layer (new-session, send-keys, capture-pane, etc.)
-│   ├── session_files.go        # Session naming, file path generation, metadata/state persistence
-│   ├── utils.go                # Shared utilities (runCmd, shellQuote, writeJSON, filterInputBox, etc.)
-│   ├── e2e_claude_test.go      # E2E integration test (requires LISA_E2E_CLAUDE=1)
-│   └── regressions_test.go     # Unit tests for safety, regression, and edge cases
-└── docs/                       # Documentation output
-    └── changelog/
-        ├── 260209.md
-        └── 260210.md
-```
 
-## Critical Files
+## `src/` Metrics (Live)
 
-### Entry Point
+- Go files: 33
+- Non-test files: 19
+- Test files: 14
+- Total LOC in `src/*.go`: 12,450
+- Non-test function count: 369
+- Test count (`func Test...`): 184
 
-- **`main.go`** — Minimal; calls `app.Run(os.Args[1:])` and exits with the returned code.
+## Largest Code Files
 
-### Command Routing
+- `src/regressions_test.go` - 2,646 lines
+- `src/session_wrapper_test.go` - 1,217 lines
+- `src/claude_session_test.go` - 579 lines
+- `src/hardening_test.go` - 567 lines
+- `src/tmux.go` - 534 lines
+- `src/session_observability.go` - 474 lines
+- `src/commands_session_state.go` - 449 lines
+- `src/commands_session.go` - 433 lines
+- `src/claude_session.go` - 430 lines
+- `src/status.go` - 421 lines
 
-- **`src/run.go`** — Top-level switch: `doctor`, `session`, `agent`, `help`. Prints usage on unknown commands.
+## Functional Dependency Map
 
-### Core Domain Logic
-
-- **`src/commands_session.go`** (801 lines) — The largest file. Implements all 10 session subcommands with flag parsing. Central to Lisa's functionality.
-- **`src/status.go`** (333 lines) — Session state machine. Classifies sessions as `in_progress`, `waiting_input`, `completed`, `crashed`, `stuck`, or `just_started`. Includes prompt-waiting heuristics for both Claude and Codex.
-- **`src/tmux.go`** (284 lines) — All tmux interactions. Includes testability hooks via function variables (`tmuxHasSessionFn`, etc.). Handles session creation, key sending, pane capture, process tree walking.
-
-### Supporting Infrastructure
-
-- **`src/session_files.go`** (225 lines) — Session naming convention (`lisa-{slug}-{timestamp}-{agent}-{mode}`), file path generation for meta/state/output files in `/tmp/`, atomic writes, cleanup.
-- **`src/agent_command.go`** (100 lines) — Generates Claude (`claude -p` / `claude`) or Codex (`codex exec --full-auto` / `codex`) commands. Wraps exec commands with completion markers.
-- **`src/types.go`** (66 lines) — All shared structs and constants. Defaults: poll interval 30s, max polls 120, stale threshold 240s, tmux 220x60.
-- **`src/utils.go`** (159 lines) — Shell execution, JSON output, MD5 hashing, file operations, input box filtering (strips Claude's TUI input boxes from captured output).
-
-### Testing
-
-- **`src/e2e_claude_test.go`** — Full integration: builds Lisa, spawns a Claude exec session, monitors to completion, validates output markers. Gated behind `LISA_E2E_CLAUDE=1`.
-- **`src/regressions_test.go`** — 10 unit tests covering: fallback script generation, tail truncation, project hash canonicalization, session artifact safety (no wildcard expansion, file permissions), kill error propagation, status computation error paths.
-
-## File Dependency Graph
-
-```
+```text
 main.go
-  └── src/run.go (Run)
-        ├── src/commands_agent.go (cmdDoctor, cmdAgent)
-        │     └── src/agent_command.go (buildAgentCommand)
-        └── src/commands_session.go (cmdSession)
-              ├── src/agent_command.go (buildAgentCommand, wrapExecCommand)
-              ├── src/session_files.go (generateSessionName, saveSessionMeta, loadSessionMeta, cleanupSessionArtifacts, ...)
-              ├── src/status.go (computeSessionStatus)
-              │     ├── src/tmux.go (capture, display, paneStatus, detectAgentProcess)
-              │     └── src/session_files.go (loadSessionState, saveSessionState)
-              ├── src/tmux.go (tmuxNewSession, tmuxSendCommandWithFallback, tmuxSendText, ...)
-              └── src/utils.go (shellQuote, writeJSON, trimLines, ...)
+  -> src.Run
+     -> cmdDoctor / cmdAgent
+        -> buildAgentCommand
+     -> cmdSession (router)
+        -> spawn/send/name handlers
+           -> tmux layer + wrapper + session file persistence
+        -> status/monitor/explain handlers
+           -> computeSessionStatus
+              -> tmux snapshot + process scan + done file + heartbeat + state locks
+              -> optional terminal capture artifact write
+           -> event tail read/write
+        -> capture handler
+           -> Claude transcript path (metadata-driven) or raw tmux capture
+        -> list/exists/kill/kill-all
+           -> tmux listing/kill + scoped artifact cleanup + lifecycle events
 ```
 
-## Code Metrics
+## Testing Topology
 
-| File | Lines | Functions | Test Coverage |
-|---|---|---|---|
-| commands_session.go | 801 | 13 | Via regressions_test.go |
-| status.go | 333 | 10 | Via regressions_test.go |
-| tmux.go | 284 | 16 | Via regressions_test.go (mocked) |
-| session_files.go | 225 | 16 | Via regressions_test.go |
-| utils.go | 159 | 14 | Indirect |
-| e2e_claude_test.go | 156 | 4 | E2E test file |
-| regressions_test.go | 384 | 10 | Unit test file |
-| commands_agent.go | 151 | 4 | Via regressions_test.go |
-| agent_command.go | 100 | 5 | Via regressions_test.go |
-| types.go | 66 | 0 | Type definitions |
-| run.go | 53 | 2 | — |
-| main.go | 12 | 1 | — |
-| **Total** | **~2,724** | **~95** | — |
+- Core regression: `src/regressions_test.go`
+- Wrapper/lock/event hardening: `src/session_wrapper_test.go`, `src/stability_findings_test.go`, `src/hardening_test.go`
+- Command branch coverage: `src/command_coverage_test.go`, `src/coverage_cli_additional_test.go`, `src/coverage_status_observability_test.go`
+- Transcript readers: `src/claude_session_test.go`, `src/codex_session_test.go`
+- Help routing: `src/help_test.go`
+- Hermetic lifecycle e2e: `src/e2e_interactive_fake_test.go`, `src/e2e_exec_fake_test.go`
+- Real-agent e2e (env-gated): `src/e2e_claude_test.go`, `src/e2e_codex_test.go`
+
+## Operational Notes
+
+- Runtime source of truth is code + `.agents` context files.
+- `docs/` is manually maintained; refresh this file when `src/` file set or runtime classifier behavior changes.

@@ -338,7 +338,8 @@ func cmdSessionCapture(args []string) int {
 	lines := 200
 	jsonOut := false
 	raw := false
-	projectRoot := ""
+	projectRoot := getPWD()
+	projectRootExplicit := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
@@ -367,6 +368,7 @@ func cmdSessionCapture(args []string) int {
 				return flagValueError("--project-root")
 			}
 			projectRoot = args[i+1]
+			projectRootExplicit = true
 			i++
 		case "--json":
 			jsonOut = true
@@ -379,8 +381,18 @@ func cmdSessionCapture(args []string) int {
 		return 1
 	}
 
-	if !raw && shouldUseTranscriptCapture(session, projectRoot) {
-		sessionID, messages, err := captureSessionTranscript(session, projectRoot)
+	projectRoot = canonicalProjectRoot(projectRoot)
+	transcriptProjectRoot := projectRoot
+	if !projectRootExplicit {
+		// Prefer the current project by default (USAGE contract). If no local
+		// metadata exists, fall back to global metadata lookup for compatibility.
+		if _, err := loadSessionMeta(projectRoot, session); err != nil {
+			transcriptProjectRoot = ""
+		}
+	}
+
+	if !raw && shouldUseTranscriptCapture(session, transcriptProjectRoot) {
+		sessionID, messages, err := captureSessionTranscript(session, transcriptProjectRoot)
 		if err == nil {
 			return writeTranscriptCapture(session, sessionID, messages, jsonOut)
 		}

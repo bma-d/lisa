@@ -204,6 +204,76 @@ func TestCmdSessionCaptureDefaultTranscript(t *testing.T) {
 	}
 }
 
+func TestCmdSessionCaptureDefaultPrefersCWDMetadataWithDuplicateSessionName(t *testing.T) {
+	origFindFn := findClaudeSessionIDFn
+	origReadFn := readClaudeTranscriptFn
+	origHas := tmuxHasSessionFn
+	t.Cleanup(func() {
+		findClaudeSessionIDFn = origFindFn
+		readClaudeTranscriptFn = origReadFn
+		tmuxHasSessionFn = origHas
+	})
+
+	projectRootA := t.TempDir()
+	projectRootB := t.TempDir()
+	session := "lisa-collision-session"
+
+	metaA := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		ProjectRoot: canonicalProjectRoot(projectRootA),
+		Prompt:      "Say hello",
+		CreatedAt:   "2026-01-01T00:00:00Z",
+	}
+	metaB := sessionMeta{
+		Session:     session,
+		Agent:       "claude",
+		ProjectRoot: canonicalProjectRoot(projectRootB),
+		Prompt:      "Other prompt",
+		CreatedAt:   "2026-01-01T00:00:00Z",
+	}
+	if err := saveSessionMeta(projectRootA, session, metaA); err != nil {
+		t.Fatalf("failed to save metadata A: %v", err)
+	}
+	if err := saveSessionMeta(projectRootB, session, metaB); err != nil {
+		t.Fatalf("failed to save metadata B: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(sessionMetaFile(projectRootA, session))
+		_ = os.Remove(sessionMetaFile(projectRootB, session))
+	})
+
+	findClaudeSessionIDFn = func(projectRoot, prompt, createdAt string) (string, error) {
+		if canonicalProjectRoot(projectRoot) != canonicalProjectRoot(projectRootA) {
+			t.Fatalf("expected cwd project root, got %q", projectRoot)
+		}
+		return "cwd-session-id", nil
+	}
+	readClaudeTranscriptFn = func(jsonlPath string) ([]transcriptMessage, error) {
+		return []transcriptMessage{
+			{Role: "assistant", Text: "Hello from cwd", Timestamp: "2026-01-01T00:00:01Z"},
+		}, nil
+	}
+	tmuxHasSessionFn = func(session string) bool { return false }
+
+	t.Chdir(projectRootA)
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionCapture([]string{
+			"--session", session,
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected transcript capture success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"claudeSession":"cwd-session-id"`) {
+		t.Fatalf("expected cwd transcript capture, got %q", stdout)
+	}
+}
+
 func TestCmdSessionCaptureRawFlag(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn
