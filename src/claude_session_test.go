@@ -256,7 +256,16 @@ func TestCmdSessionCaptureDefaultPrefersCWDMetadataWithDuplicateSessionName(t *t
 	}
 	tmuxHasSessionFn = func(session string) bool { return false }
 
-	t.Chdir(projectRootA)
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to read cwd: %v", err)
+	}
+	if err := os.Chdir(projectRootA); err != nil {
+		t.Fatalf("failed to chdir to project root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origWD)
+	})
 	stdout, stderr := captureOutput(t, func() {
 		code := cmdSessionCapture([]string{
 			"--session", session,
