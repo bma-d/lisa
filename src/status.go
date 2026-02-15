@@ -17,6 +17,9 @@ var (
 	sessionCompletionLineRe = regexp.MustCompile(`^` + regexp.QuoteMeta(sessionDonePrefix) + `(?:([A-Za-z0-9._-]+):)?(-?\d+)\s*$`)
 	execCompletionLineRe    = regexp.MustCompile(`^` + regexp.QuoteMeta(execDonePrefix) + `(-?\d+)\s*$`)
 )
+
+const agentCPUBusyThreshold = 0.2
+
 var nowFn = time.Now
 
 type sessionCompletionMarker struct {
@@ -297,9 +300,19 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 					status.SessionState = "crashed"
 				}
 			case agentPID > 0:
-				status.Status = "active"
-				status.SessionState = "in_progress"
-				status.ClassificationReason = "agent_pid_alive"
+				activeProcessBusy := agentCPU >= agentCPUBusyThreshold
+				status.Signals.ActiveProcessBusy = activeProcessBusy
+				if mode == "interactive" && !activeProcessBusy && pollCount > 3 {
+					status.Status = "idle"
+					status.SessionState = "waiting_input"
+					status.WaitEstimate = 0
+					status.ClassificationReason = "interactive_idle_cpu"
+					status.Signals.InteractiveWaiting = true
+				} else {
+					status.Status = "active"
+					status.SessionState = "in_progress"
+					status.ClassificationReason = "agent_pid_alive"
+				}
 			case heartbeatFresh:
 				status.Status = "active"
 				status.SessionState = "in_progress"

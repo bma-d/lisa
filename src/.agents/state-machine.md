@@ -1,6 +1,6 @@
 # State Machine & Status Classification
 
-Last Updated: 2026-02-12
+Last Updated: 2026-02-15
 Related Files: `src/status.go`, `src/types.go`
 
 ## Overview
@@ -32,10 +32,10 @@ Related Files: `src/status.go`, `src/types.go`
 pane crashed/exited → immediate terminal state
 session done marker (matching runId) → completed/crashed based on exit code
 exec mode + exec done marker → completed/crashed based on exit code
-interactive waiting (low CPU + stale output) → waiting_input
+interactive mode + agent PID alive + CPU < 0.2 + poll > 3 → waiting_input (`interactive_idle_cpu`)
 transcript turn complete (Claude only, stale JSONL + assistant text block) → waiting_input
 prompt regex + agent not busy → waiting_input
-agent PID alive OR output fresh OR heartbeat fresh OR non-shell pane command → in_progress
+agent PID alive (busy, or exec mode, or grace-period interactive) OR output fresh OR heartbeat fresh OR non-shell pane command → in_progress
 process scan failure with no stronger activity signals → degraded
 tmux read/snapshot/pid parse failures → degraded (non-fatal payload)
 poll count ≤ 3 → just_started (grace period)
@@ -52,6 +52,7 @@ Infra observability signals:
 - `signals.eventsWriteError` when event append fails
 - `signals.agentScanError` when process scan fails
 - `signals.tmuxReadError` when tmux capture/snapshot/pid parsing fails
+- `signals.interactiveWaiting` and `signals.activeProcessBusy` for CPU-based interactive waiting_input classification
 - `signals.transcriptTurnComplete`, `signals.transcriptFileAge`, `signals.transcriptError` for Claude transcript-based detection
 
 ## Wait Estimation

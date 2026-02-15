@@ -2370,6 +2370,177 @@ func TestPromptWaitingDuringLongBashCommand(t *testing.T) {
 	}
 }
 
+func TestInteractiveSessionDetectsWaitingInput(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "idle", nil }
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "node", nil
+		case "#{pane_pid}":
+			return "456", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		switch key {
+		case "LISA_AGENT":
+			return "claude", nil
+		case "LISA_MODE":
+			return "interactive", nil
+		default:
+			return "", errors.New("missing")
+		}
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 999, 0.05, nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-interactive-waiting"
+	status, err := computeSessionStatus(session, projectRoot, "claude", "interactive", false, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "waiting_input" {
+		t.Fatalf("expected waiting_input, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
+	}
+	if status.ClassificationReason != "interactive_idle_cpu" {
+		t.Fatalf("expected interactive_idle_cpu reason, got %q", status.ClassificationReason)
+	}
+	if !status.Signals.InteractiveWaiting {
+		t.Fatal("expected InteractiveWaiting=true")
+	}
+	if status.Signals.ActiveProcessBusy {
+		t.Fatal("expected ActiveProcessBusy=false")
+	}
+}
+
+func TestInteractiveSessionGracePeriodPreventsWaitingInput(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "idle", nil }
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "node", nil
+		case "#{pane_pid}":
+			return "456", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		switch key {
+		case "LISA_AGENT":
+			return "claude", nil
+		case "LISA_MODE":
+			return "interactive", nil
+		default:
+			return "", errors.New("missing")
+		}
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 999, 0.05, nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-interactive-grace"
+	status, err := computeSessionStatus(session, projectRoot, "claude", "interactive", false, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "in_progress" {
+		t.Fatalf("expected grace-period in_progress, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
+	}
+}
+
+func TestExecModeNeverClassifiesAsWaitingInput(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "idle", nil }
+	tmuxPaneStatusFn = func(session string) (string, error) { return "alive", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "node", nil
+		case "#{pane_pid}":
+			return "456", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		switch key {
+		case "LISA_AGENT":
+			return "claude", nil
+		case "LISA_MODE":
+			return "exec", nil
+		default:
+			return "", errors.New("missing")
+		}
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 999, 0.05, nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-exec-never-waiting"
+	status, err := computeSessionStatus(session, projectRoot, "claude", "exec", false, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "in_progress" {
+		t.Fatalf("expected exec mode to stay in_progress, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
+	}
+}
+
 func TestBuildAgentCommandDefaultsToSkipPermissionsForClaude(t *testing.T) {
 	// Regression: Claude agents spawned without --dangerously-skip-permissions
 	// run in "don't ask" mode, causing Bash tool calls to be denied.
@@ -2476,11 +2647,17 @@ func TestComputeSessionStatusTranscriptTurnComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status.SessionState != "in_progress" {
-		t.Fatalf("expected process-first in_progress, got %q", status.SessionState)
+	if status.SessionState != "waiting_input" {
+		t.Fatalf("expected waiting_input for idle interactive process, got %q", status.SessionState)
 	}
-	if status.ClassificationReason != "agent_pid_alive" {
-		t.Fatalf("expected agent_pid_alive reason, got %q", status.ClassificationReason)
+	if status.ClassificationReason != "interactive_idle_cpu" {
+		t.Fatalf("expected interactive_idle_cpu reason, got %q", status.ClassificationReason)
+	}
+	if !status.Signals.InteractiveWaiting {
+		t.Fatal("expected InteractiveWaiting=true for idle interactive process")
+	}
+	if status.Signals.ActiveProcessBusy {
+		t.Fatal("expected ActiveProcessBusy=false for low CPU")
 	}
 	if status.Signals.TranscriptTurnComplete {
 		t.Fatal("expected TranscriptTurnComplete signal to remain false without transcript-based classification")
@@ -2612,11 +2789,17 @@ func TestComputeSessionStatusCodexTranscriptTurnComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status.SessionState != "in_progress" {
-		t.Fatalf("expected process-first in_progress, got %q", status.SessionState)
+	if status.SessionState != "waiting_input" {
+		t.Fatalf("expected waiting_input for idle interactive process, got %q", status.SessionState)
 	}
-	if status.ClassificationReason != "agent_pid_alive" {
-		t.Fatalf("expected agent_pid_alive reason, got %q", status.ClassificationReason)
+	if status.ClassificationReason != "interactive_idle_cpu" {
+		t.Fatalf("expected interactive_idle_cpu reason, got %q", status.ClassificationReason)
+	}
+	if !status.Signals.InteractiveWaiting {
+		t.Fatal("expected InteractiveWaiting=true for idle interactive process")
+	}
+	if status.Signals.ActiveProcessBusy {
+		t.Fatal("expected ActiveProcessBusy=false for low CPU")
 	}
 	if status.Signals.TranscriptTurnComplete {
 		t.Fatal("expected TranscriptTurnComplete signal to remain false without transcript-based classification")
