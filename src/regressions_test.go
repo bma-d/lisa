@@ -30,6 +30,9 @@ func TestBuildFallbackScriptBodyLeavesNonExecCommandsUntouched(t *testing.T) {
 	if strings.Contains(body, "set +e\n") {
 		t.Fatalf("did not expect errexit override for non-exec command")
 	}
+	if !strings.Contains(body, "unset CLAUDECODE\n") {
+		t.Fatalf("expected fallback script to clear CLAUDECODE, got %q", body)
+	}
 }
 
 func TestWrapExecCommandTemporarilyDisablesErrexit(t *testing.T) {
@@ -54,6 +57,7 @@ func TestWrapSessionCommandInjectsLifecycleMarkersAndHeartbeat(t *testing.T) {
 		"run-test-1",
 		"LISA_HEARTBEAT_FILE",
 		"LISA_RUN_ID",
+		"unset CLAUDECODE;",
 		"trap '__lisa_ec=130; exit \"$__lisa_ec\"' INT TERM HUP",
 		"echo hello",
 	} {

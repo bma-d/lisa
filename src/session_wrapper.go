@@ -10,6 +10,8 @@ func wrapSessionCommand(command, runID string) string {
 		"{",
 		"__lisa_run_id=%s;",
 		"export LISA_RUN_ID=\"$__lisa_run_id\";",
+		// Avoid nested-Claude guard when lisa is launched from within Claude Code.
+		"unset CLAUDECODE;",
 		"__lisa_hb_pid='';",
 		"__lisa_ec=0;",
 		"__lisa_marker_done=0;",

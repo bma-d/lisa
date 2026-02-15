@@ -102,6 +102,8 @@ func tmuxSendCommandWithFallback(projectRoot, session, command string, enter boo
 func buildFallbackScriptBody(command string) string {
 	var b strings.Builder
 	b.WriteString("#!/usr/bin/env bash\n")
+	// Prevent nested Claude session failures when parent shell exports CLAUDECODE.
+	b.WriteString("unset CLAUDECODE\n")
 	// Preserve exec completion markers even when wrapped commands fail.
 	if strings.Contains(command, execDonePrefix) {
 		b.WriteString("set +e\n")
