@@ -158,6 +158,7 @@ Notes:
 - For Claude, Lisa injects `--dangerously-skip-permissions` by default unless disabled.
 - `exec` mode requires a prompt unless `--command` is provided.
 - If no `--session`, Lisa auto-generates one.
+- Nested Codex runs: `codex exec --full-auto` uses a sandbox that can block tmux socket creation (`Operation not permitted`). For 2-3 level nested Lisa flows, prefer `--mode interactive` plus `session send`, or pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'` if you explicitly want unsandboxed Codex exec.
 
 ### `session send`
 
@@ -418,3 +419,17 @@ Recommended automation loop:
 4. on `degraded`: keep polling; inspect `signals.*Error`
 5. collect results with `session capture`
 6. cleanup with `session kill`
+
+## Nested Smoke Script
+
+Repo-local command for deterministic 3-level nested interactive tmux validation:
+
+```bash
+./smoke-nested
+```
+
+Optional flags:
+
+- `--project-root PATH`
+- `--max-polls N` (default `180`)
+- `--keep-sessions` (skip auto-kill for debugging)

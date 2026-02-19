@@ -269,6 +269,9 @@ func cmdSessionSpawn(args []string) int {
 
 	if err := tmuxNewSessionWithStartupFn(session, projectRoot, agent, mode, width, height, commandToSend); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create tmux session: %v\n", err)
+		if shouldPrintCodexExecNestedTmuxHint(agent, mode, err) {
+			fmt.Fprintln(os.Stderr, "hint: codex exec --full-auto sandbox blocks tmux sockets for nested lisa runs; use --mode interactive (then session send) or pass --agent-args '--dangerously-bypass-approvals-and-sandbox'")
+		}
 		if cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); cleanupErr != nil {
 			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
 		}
@@ -317,6 +320,17 @@ func cmdSessionSpawn(args []string) int {
 	}
 	fmt.Println(session)
 	return 0
+}
+
+func shouldPrintCodexExecNestedTmuxHint(agent, mode string, err error) bool {
+	if err == nil || agent != "codex" || mode != "exec" {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "operation not permitted") ||
+		strings.Contains(msg, "permission denied") ||
+		strings.Contains(msg, "error creating /tmp/") ||
+		strings.Contains(msg, "error connecting to /private/tmp/")
 }
 
 func cmdSessionSend(args []string) int {

@@ -64,3 +64,11 @@ lisa version               # print version
 ```bash
 go build -o lisa .
 ```
+
+## Nested smoke test
+
+Run deterministic 3-level nested tmux orchestration smoke test (interactive mode):
+
+```bash
+./smoke-nested
+```

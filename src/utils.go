@@ -137,7 +137,56 @@ func shellQuote(s string) string {
 	if s == "" {
 		return "''"
 	}
+	if shellNeedsANSIQuote(s) {
+		return shellANSIQuote(s)
+	}
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+func shellNeedsANSIQuote(s string) bool {
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b < 0x20 || b == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func shellANSIQuote(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	b.WriteString("$'")
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			b.WriteString(`\\`)
+		case '\'':
+			b.WriteString(`\'`)
+		case '\a':
+			b.WriteString(`\a`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\v':
+			b.WriteString(`\v`)
+		default:
+			if s[i] < 0x20 || s[i] == 0x7f {
+				fmt.Fprintf(&b, "\\x%02x", s[i])
+				continue
+			}
+			b.WriteByte(s[i])
+		}
+	}
+	b.WriteByte('\'')
+	return b.String()
 }
 
 func filterInputBox(input string) string {

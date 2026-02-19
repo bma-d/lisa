@@ -20,13 +20,14 @@ Project conventions and patterns used across the Lisa codebase.
 - **tmux detachment**: Lisa unsets `TMUX` and routes tmux via a project socket (`/tmp/lisa-tmux-<slug>-<hash>.sock`) to avoid nested-client context issues
 - **JSON output**: `doctor`, `agent build-cmd`, and `session spawn|send|status|monitor|capture` support `--json`; `session name|list|exists|kill|kill-all` remain text-only
 - **CSV-style text output**: comma-separated fields for human/script consumption
-- **Shell quoting**: single-quote wrapping with `'"'"'` escapes
+- **Shell quoting**: single-quote wrapping with `'"'"'` escapes by default; ANSI-C `$'...'` quoting when control chars are present (preserves multiline prompts without raw control chars in JSON payloads)
 
 ## Build & Test
 
 ```bash
 go build -o lisa .           # build binary
 go test ./...                # unit + regression tests
+./smoke-nested               # 3-level nested interactive tmux smoke
 LISA_E2E_CLAUDE=1 go test ./...  # include E2E integration tests
 goreleaser release --clean   # create release artifacts + package manager formulas/manifests
 ```

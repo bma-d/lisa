@@ -1234,6 +1234,52 @@ func TestCmdSessionSpawnJSONOutputAndExecWrapping(t *testing.T) {
 	}
 }
 
+func TestCmdSessionSpawnJSONOutputEscapesMultilinePromptCommand(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionWithStartupFn = origNewWithStartup
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return false }
+	tmuxNewSessionWithStartupFn = func(session, root, agent, mode string, width, height int, startupCommand string) error {
+		return nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionSpawn([]string{
+			"--agent", "codex",
+			"--mode", "exec",
+			"--session", "lisa-spawn-json-multiline",
+			"--project-root", t.TempDir(),
+			"--prompt", "line1\nline2",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected spawn success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("failed to parse spawn json: %v (%q)", err, stdout)
+	}
+	commandText, _ := payload["command"].(string)
+	if strings.Contains(commandText, "\n") {
+		t.Fatalf("expected command payload to avoid literal newlines, got %q", commandText)
+	}
+	if !strings.Contains(commandText, "$'line1\\nline2'") {
+		t.Fatalf("expected multiline prompt to use ANSI-C shell quoting, got %q", commandText)
+	}
+	if strings.Contains(stdout, "line1\nline2") {
+		t.Fatalf("expected JSON output to avoid raw prompt newlines, got %q", stdout)
+	}
+}
+
 func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origNewWithStartup := tmuxNewSessionWithStartupFn
@@ -1272,6 +1318,38 @@ func TestCmdSessionSpawnSendFailureCleansArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "failed to create tmux session") {
 		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+}
+
+func TestCmdSessionSpawnCodexExecSocketPermissionHint(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionWithStartupFn = origNewWithStartup
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return false }
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+		return errors.New("error creating /tmp/lisa-codex.sock (Operation not permitted)")
+	}
+
+	_, stderr := captureOutput(t, func() {
+		if code := cmdSessionSpawn([]string{
+			"--agent", "codex",
+			"--mode", "exec",
+			"--session", "lisa-codex-exec-perm",
+			"--project-root", t.TempDir(),
+			"--prompt", "spawn nested session",
+		}); code == 0 {
+			t.Fatalf("expected spawn failure")
+		}
+	})
+	if !strings.Contains(stderr, "failed to create tmux session") {
+		t.Fatalf("expected spawn failure message, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "codex exec --full-auto sandbox blocks tmux sockets") {
+		t.Fatalf("expected nested tmux hint, got %q", stderr)
 	}
 }
 
@@ -2733,6 +2811,18 @@ func TestBuildAgentCommandSkipPermissionsNotInjectedForCodex(t *testing.T) {
 	}
 	if strings.Contains(cmd, "--dangerously-skip-permissions") {
 		t.Fatalf("codex should not get --dangerously-skip-permissions, got %q", cmd)
+	}
+}
+
+func TestShellQuoteUsesANSICQuotingForControlChars(t *testing.T) {
+	got := shellQuote("line1\nline2\tend")
+	if got != "$'line1\\nline2\\tend'" {
+		t.Fatalf("unexpected ANSI-C quoted string: %q", got)
+	}
+
+	plain := shellQuote("it's fine")
+	if plain != "'it'\"'\"'s fine'" {
+		t.Fatalf("expected plain single-quote escaping, got %q", plain)
 	}
 }
 

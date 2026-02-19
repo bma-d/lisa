@@ -1,6 +1,6 @@
 # Project Overview
 
-Last Updated: 2026-02-10
+Last Updated: 2026-02-19
 
 ## Technology Stack
 
@@ -25,6 +25,9 @@ lisa/
 │   ├── conventions.md
 │   ├── project-overview.md
 │   └── sdk-usage.md
+├── smoke-nested           # Repo-local nested tmux smoke command
+├── scripts/
+│   └── smoke-nested-3level.sh
 └── src/
     ├── AGENTS.md
     ├── CLAUDE.md

@@ -118,6 +118,8 @@ func helpSessionSpawn() {
 	fmt.Fprintln(os.Stderr, "  --cleanup-all-hashes  Clean artifacts across all project hashes")
 	fmt.Fprintln(os.Stderr, "  --no-dangerously-skip-permissions")
 	fmt.Fprintln(os.Stderr, "                        Don't add --dangerously-skip-permissions to claude")
+	fmt.Fprintln(os.Stderr, "  note                  Nested codex exec may require --mode interactive or")
+	fmt.Fprintln(os.Stderr, "                        --agent-args '--dangerously-bypass-approvals-and-sandbox'")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
