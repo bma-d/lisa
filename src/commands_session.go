@@ -214,6 +214,8 @@ func cmdSessionSpawn(args []string) int {
 		return 1
 	}
 	projectRoot = canonicalProjectRoot(projectRoot)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
 	session = strings.TrimSpace(session)
 	if session != "" && !strings.HasPrefix(session, "lisa-") {
 		fmt.Fprintln(os.Stderr, `invalid --session: must start with "lisa-"`)
@@ -320,6 +322,7 @@ func cmdSessionSpawn(args []string) int {
 func cmdSessionSend(args []string) int {
 	session := ""
 	projectRoot := getPWD()
+	projectRootExplicit := false
 	text := ""
 	keys := ""
 	enter := false
@@ -340,6 +343,7 @@ func cmdSessionSend(args []string) int {
 				return flagValueError("--project-root")
 			}
 			projectRoot = args[i+1]
+			projectRootExplicit = true
 			i++
 		case "--text":
 			if i+1 >= len(args) {
@@ -366,7 +370,9 @@ func cmdSessionSend(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
-	projectRoot = canonicalProjectRoot(projectRoot)
+	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
 	if !tmuxHasSessionFn(session) {
 		fmt.Fprintln(os.Stderr, "session not found")
 		return 1

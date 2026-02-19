@@ -12,6 +12,8 @@ func wrapSessionCommand(command, runID string) string {
 		"export LISA_RUN_ID=\"$__lisa_run_id\";",
 		// Avoid nested-Claude guard when lisa is launched from within Claude Code.
 		"unset CLAUDECODE;",
+		// Detach child commands from active tmux client context.
+		"unset TMUX;",
 		"__lisa_hb_pid='';",
 		"__lisa_ec=0;",
 		"__lisa_exec_ec='';",

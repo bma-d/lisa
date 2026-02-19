@@ -44,7 +44,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  doctor               Check prerequisites (tmux, claude, codex)")
 	fmt.Fprintln(os.Stderr, "  version              Print version info")
-	fmt.Fprintln(os.Stderr, "  session name          Generate deterministic session name")
+	fmt.Fprintln(os.Stderr, "  session name          Generate unique session name")
 	fmt.Fprintln(os.Stderr, "  session spawn         Create and start an agent session")
 	fmt.Fprintln(os.Stderr, "  session send          Send text or keys to a running session")
 	fmt.Fprintln(os.Stderr, "  session status        Get current session status")
@@ -75,7 +75,7 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "Usage: lisa session <subcommand> [flags]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
-	fmt.Fprintln(os.Stderr, "  name       Generate deterministic session name")
+	fmt.Fprintln(os.Stderr, "  name       Generate unique session name")
 	fmt.Fprintln(os.Stderr, "  spawn      Create and start an agent session")
 	fmt.Fprintln(os.Stderr, "  send       Send text or keys to a running session")
 	fmt.Fprintln(os.Stderr, "  status     Get current session status")
@@ -89,7 +89,7 @@ func helpSession() {
 }
 
 func helpSessionName() {
-	fmt.Fprintln(os.Stderr, "lisa session name — generate deterministic session name")
+	fmt.Fprintln(os.Stderr, "lisa session name — generate unique session name")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Usage: lisa session name [flags]")
 	fmt.Fprintln(os.Stderr, "")

@@ -36,6 +36,7 @@ func runCmdInternal(input, name string, args ...string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = commandExecEnv(name)
 	var out bytes.Buffer
 	if input != "" {
 		cmd.Stdin = strings.NewReader(input)
@@ -47,6 +48,21 @@ func runCmdInternal(input, name string, args ...string) (string, error) {
 		return out.String(), fmt.Errorf("command timed out after %s: %s %s", timeout, name, strings.Join(args, " "))
 	}
 	return out.String(), err
+}
+
+func commandExecEnv(name string) []string {
+	env := os.Environ()
+	if filepath.Base(name) != "tmux" {
+		return env
+	}
+	filtered := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "TMUX=") {
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	return filtered
 }
 
 func getPWD() string {

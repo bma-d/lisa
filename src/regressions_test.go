@@ -34,6 +34,9 @@ func TestBuildFallbackScriptBodyLeavesNonExecCommandsUntouched(t *testing.T) {
 	if !strings.Contains(body, "unset CLAUDECODE\n") {
 		t.Fatalf("expected fallback script to clear CLAUDECODE, got %q", body)
 	}
+	if !strings.Contains(body, "unset TMUX\n") {
+		t.Fatalf("expected fallback script to clear TMUX, got %q", body)
+	}
 }
 
 func TestWrapExecCommandTemporarilyDisablesErrexit(t *testing.T) {
@@ -59,6 +62,7 @@ func TestWrapSessionCommandInjectsLifecycleMarkersAndHeartbeat(t *testing.T) {
 		"LISA_HEARTBEAT_FILE",
 		"LISA_RUN_ID",
 		"unset CLAUDECODE;",
+		"unset TMUX;",
 		"trap '__lisa_ec=130; exit \"$__lisa_ec\"' INT TERM HUP",
 		"echo hello",
 	} {
@@ -1494,6 +1498,7 @@ func TestTmuxListSessionsTreatsNoServerAsEmpty(t *testing.T) {
 	tmuxPath := filepath.Join(binDir, "tmux")
 	script := strings.Join([]string{
 		"#!/usr/bin/env sh",
+		`if [ "$1" = "-S" ]; then shift 2; fi`,
 		`if [ "$1" = "list-sessions" ]; then`,
 		`  echo "no server running on /tmp/tmux-501/default" >&2`,
 		"  exit 1",
@@ -1527,6 +1532,7 @@ func TestTmuxListSessionsReturnsErrorForUnexpectedTmuxFailure(t *testing.T) {
 	tmuxPath := filepath.Join(binDir, "tmux")
 	script := strings.Join([]string{
 		"#!/usr/bin/env sh",
+		`if [ "$1" = "-S" ]; then shift 2; fi`,
 		`if [ "$1" = "list-sessions" ]; then`,
 		`  echo "permission denied" >&2`,
 		"  exit 1",

@@ -356,6 +356,7 @@ func TestTmuxListSessionsProjectOnlyFiltersByProjectHash(t *testing.T) {
 	tmuxPath := filepath.Join(binDir, "tmux")
 	script := strings.Join([]string{
 		"#!/usr/bin/env sh",
+		`if [ "$1" = "-S" ]; then shift 2; fi`,
 		`case "$1" in`,
 		`  list-sessions)`,
 		`    echo "lisa-proj"`,

@@ -40,6 +40,10 @@ func tmuxNewSession(session, projectRoot, agent, mode string, width, height int)
 }
 
 func tmuxNewSessionWithStartup(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
+
+	socketPath := currentTmuxSocketPath()
 	args := []string{"new-session", "-d", "-s", session,
 		"-x", strconv.Itoa(width),
 		"-y", strconv.Itoa(height),
@@ -48,6 +52,8 @@ func tmuxNewSessionWithStartup(session, projectRoot, agent, mode string, width, 
 		"-e", "LISA_SESSION_NAME=" + session,
 		"-e", "LISA_AGENT=" + agent,
 		"-e", "LISA_MODE=" + mode,
+		"-e", lisaProjectRootEnv + "=" + projectRoot,
+		"-e", lisaTmuxSocketEnv + "=" + socketPath,
 		"-e", "LISA_PROJECT_HASH=" + projectHash(projectRoot),
 		"-e", "LISA_HEARTBEAT_FILE=" + sessionHeartbeatFile(projectRoot, session),
 		"-e", "LISA_DONE_FILE=" + sessionDoneFile(projectRoot, session),
@@ -77,11 +83,14 @@ func tmuxNewSessionWithStartup(session, projectRoot, agent, mode string, width, 
 		args = append(args, "bash "+shellQuote(scriptPath))
 	}
 
-	_, err := runCmd("tmux", args...)
+	_, err := runTmuxCmd(args...)
 	return err
 }
 
 func tmuxSendCommandWithFallback(projectRoot, session, command string, enter bool) error {
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
+
 	_ = enter
 	scriptPath := sessionCommandScriptPath(projectRoot, session, time.Now().UnixNano())
 	body := buildFallbackScriptBody(command)
@@ -95,7 +104,7 @@ func tmuxSendCommandWithFallback(projectRoot, session, command string, enter boo
 		return fmt.Errorf("failed to write startup command script: %w", err)
 	}
 
-	_, err := runCmd("tmux", "respawn-pane", "-k", "-t", session, "bash", scriptPath)
+	_, err := runTmuxCmd("respawn-pane", "-k", "-t", session, "bash", scriptPath)
 	return err
 }
 
@@ -104,6 +113,8 @@ func buildFallbackScriptBody(command string) string {
 	b.WriteString("#!/usr/bin/env bash\n")
 	// Prevent nested Claude session failures when parent shell exports CLAUDECODE.
 	b.WriteString("unset CLAUDECODE\n")
+	// Detach child commands from active tmux client context.
+	b.WriteString("unset TMUX\n")
 	// Preserve exec completion markers even when wrapped commands fail.
 	if strings.Contains(command, execDonePrefix) {
 		b.WriteString("set +e\n")
@@ -117,20 +128,20 @@ func buildFallbackScriptBody(command string) string {
 
 func tmuxSendText(session, text string, enter bool) error {
 	bufName := fmt.Sprintf("lisa-send-%d", time.Now().UnixNano())
-	out, err := runCmdInput(text, "tmux", "load-buffer", "-b", bufName, "-")
+	out, err := runTmuxCmdInput(text, "load-buffer", "-b", bufName, "-")
 	if err != nil {
 		return fmt.Errorf("failed to load tmux buffer: %v (%s)", err, strings.TrimSpace(out))
 	}
 
 	defer func() {
-		_, _ = runCmd("tmux", "delete-buffer", "-b", bufName)
+		_, _ = runTmuxCmd("delete-buffer", "-b", bufName)
 	}()
 
-	if _, err := runCmd("tmux", "paste-buffer", "-b", bufName, "-t", session); err != nil {
+	if _, err := runTmuxCmd("paste-buffer", "-b", bufName, "-t", session); err != nil {
 		return fmt.Errorf("failed to paste tmux buffer: %w", err)
 	}
 	if enter {
-		if _, err := runCmd("tmux", "send-keys", "-t", session, "Enter"); err != nil {
+		if _, err := runTmuxCmd("send-keys", "-t", session, "Enter"); err != nil {
 			return fmt.Errorf("failed to send enter: %w", err)
 		}
 	}
@@ -143,22 +154,25 @@ func tmuxSendKeys(session string, keys []string, enter bool) error {
 	if enter {
 		args = append(args, "Enter")
 	}
-	_, err := runCmd("tmux", args...)
+	_, err := runTmuxCmd(args...)
 	return err
 }
 
 func tmuxHasSession(session string) bool {
-	_, err := runCmd("tmux", "has-session", "-t", session)
+	_, err := runTmuxCmd("has-session", "-t", session)
 	return err == nil
 }
 
 func tmuxKillSession(session string) error {
-	_, err := runCmd("tmux", "kill-session", "-t", session)
+	_, err := runTmuxCmd("kill-session", "-t", session)
 	return err
 }
 
 func tmuxListSessions(projectOnly bool, projectRoot string) ([]string, error) {
-	out, err := runCmd("tmux", "list-sessions", "-F", "#{session_name}")
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
+
+	out, err := runTmuxCmd("list-sessions", "-F", "#{session_name}")
 	if err != nil {
 		if isTmuxNoSessionsOutput(out) {
 			return []string{}, nil
@@ -215,12 +229,12 @@ func sessionMatchesProjectRoot(session, projectRoot, expectedProjectHash string)
 }
 
 func tmuxDisplay(session, format string) (string, error) {
-	out, err := runCmd("tmux", "display-message", "-t", session, "-p", format)
+	out, err := runTmuxCmd("display-message", "-t", session, "-p", format)
 	return strings.TrimSpace(out), err
 }
 
 func tmuxShowEnvironment(session, key string) (string, error) {
-	out, err := runCmd("tmux", "show-environment", "-t", session, key)
+	out, err := runTmuxCmd("show-environment", "-t", session, key)
 	if err != nil {
 		return "", err
 	}
@@ -253,7 +267,37 @@ func tmuxPaneStatus(session string) (string, error) {
 }
 
 func tmuxCapturePane(session string, lines int) (string, error) {
-	return runCmd("tmux", "capture-pane", "-t", session, "-p", "-S", fmt.Sprintf("-%d", lines))
+	return runTmuxCmd("capture-pane", "-t", session, "-p", "-S", fmt.Sprintf("-%d", lines))
+}
+
+func runTmuxCmd(args ...string) (string, error) {
+	return runTmuxCmdWithSocket("", args...)
+}
+
+func runTmuxCmdInput(input string, args ...string) (string, error) {
+	return runTmuxCmdWithSocketInput(input, "", args...)
+}
+
+func runTmuxCmdWithSocket(socketPath string, args ...string) (string, error) {
+	if socketPath == "" {
+		socketPath = currentTmuxSocketPath()
+	}
+	if err := ensureTmuxSocketDir(socketPath); err != nil {
+		return "", err
+	}
+	prefixed := append([]string{"-S", socketPath}, args...)
+	return runCmd("tmux", prefixed...)
+}
+
+func runTmuxCmdWithSocketInput(input, socketPath string, args ...string) (string, error) {
+	if socketPath == "" {
+		socketPath = currentTmuxSocketPath()
+	}
+	if err := ensureTmuxSocketDir(socketPath); err != nil {
+		return "", err
+	}
+	prefixed := append([]string{"-S", socketPath}, args...)
+	return runCmdInput(input, "tmux", prefixed...)
 }
 
 func detectAgentProcess(panePID int, agent string) (int, float64, error) {

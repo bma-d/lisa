@@ -194,6 +194,171 @@ func TestRunCmdInputRoundTripAndTimeout(t *testing.T) {
 	}
 }
 
+func TestCommandEnvStripsTMUXOnlyForTmuxCommands(t *testing.T) {
+	origTMUX := os.Getenv("TMUX")
+	origLog := os.Getenv("TMUX_LOG_FILE")
+	t.Cleanup(func() {
+		_ = os.Setenv("TMUX", origTMUX)
+		_ = os.Setenv("TMUX_LOG_FILE", origLog)
+	})
+
+	if err := os.Setenv("TMUX", "/tmp/parent,1,1"); err != nil {
+		t.Fatalf("failed to set TMUX: %v", err)
+	}
+	if err := os.Setenv("TMUX_LOG_FILE", "/tmp/tmux.log"); err != nil {
+		t.Fatalf("failed to set TMUX_LOG_FILE: %v", err)
+	}
+
+	hasKey := func(env []string, key string) bool {
+		prefix := key + "="
+		for _, kv := range env {
+			if strings.HasPrefix(kv, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	tmuxEnv := commandExecEnv("tmux")
+	if hasKey(tmuxEnv, "TMUX") {
+		t.Fatalf("expected TMUX to be stripped for tmux commands")
+	}
+	if !hasKey(tmuxEnv, "TMUX_LOG_FILE") {
+		t.Fatalf("expected non-TMUX_* variables to remain for tmux commands")
+	}
+
+	otherEnv := commandExecEnv("sh")
+	if !hasKey(otherEnv, "TMUX") {
+		t.Fatalf("expected TMUX to be preserved for non-tmux commands")
+	}
+}
+
+func TestWithProjectRuntimeEnvSetsAndRestores(t *testing.T) {
+	origRoot, hadRoot := os.LookupEnv(lisaProjectRootEnv)
+	origSocket, hadSocket := os.LookupEnv(lisaTmuxSocketEnv)
+	t.Cleanup(func() {
+		if hadRoot {
+			_ = os.Setenv(lisaProjectRootEnv, origRoot)
+		} else {
+			_ = os.Unsetenv(lisaProjectRootEnv)
+		}
+		if hadSocket {
+			_ = os.Setenv(lisaTmuxSocketEnv, origSocket)
+		} else {
+			_ = os.Unsetenv(lisaTmuxSocketEnv)
+		}
+	})
+
+	_ = os.Setenv(lisaProjectRootEnv, "old-root")
+	_ = os.Setenv(lisaTmuxSocketEnv, "old-socket")
+
+	projectRoot := t.TempDir()
+	restore := withProjectRuntimeEnv(projectRoot)
+
+	if got := os.Getenv(lisaProjectRootEnv); got != canonicalProjectRoot(projectRoot) {
+		t.Fatalf("expected %s=%q, got %q", lisaProjectRootEnv, canonicalProjectRoot(projectRoot), got)
+	}
+	if got := os.Getenv(lisaTmuxSocketEnv); got != tmuxSocketPathForProjectRoot(projectRoot) {
+		t.Fatalf("expected %s=%q, got %q", lisaTmuxSocketEnv, tmuxSocketPathForProjectRoot(projectRoot), got)
+	}
+
+	restore()
+	if got := os.Getenv(lisaProjectRootEnv); got != "old-root" {
+		t.Fatalf("expected %s restored, got %q", lisaProjectRootEnv, got)
+	}
+	if got := os.Getenv(lisaTmuxSocketEnv); got != "old-socket" {
+		t.Fatalf("expected %s restored, got %q", lisaTmuxSocketEnv, got)
+	}
+}
+
+func TestCurrentTmuxSocketPathPrefersExplicitEnv(t *testing.T) {
+	origRoot, hadRoot := os.LookupEnv(lisaProjectRootEnv)
+	origSocket, hadSocket := os.LookupEnv(lisaTmuxSocketEnv)
+	t.Cleanup(func() {
+		if hadRoot {
+			_ = os.Setenv(lisaProjectRootEnv, origRoot)
+		} else {
+			_ = os.Unsetenv(lisaProjectRootEnv)
+		}
+		if hadSocket {
+			_ = os.Setenv(lisaTmuxSocketEnv, origSocket)
+		} else {
+			_ = os.Unsetenv(lisaTmuxSocketEnv)
+		}
+	})
+
+	_ = os.Setenv(lisaProjectRootEnv, t.TempDir())
+	_ = os.Setenv(lisaTmuxSocketEnv, "/tmp/custom.sock")
+	if got := currentTmuxSocketPath(); got != "/tmp/custom.sock" {
+		t.Fatalf("expected explicit socket path, got %q", got)
+	}
+}
+
+func TestCmdSessionExistsUsesProjectRuntimeSocket(t *testing.T) {
+	projectRoot := t.TempDir()
+	expectedSocket := tmuxSocketPathForProjectRoot(projectRoot)
+	binDir := t.TempDir()
+	tmuxPath := filepath.Join(binDir, "tmux")
+	script := strings.Join([]string{
+		"#!/usr/bin/env sh",
+		`sock=""`,
+		`if [ "$1" = "-S" ]; then`,
+		`  sock="$2"`,
+		`  shift 2`,
+		`fi`,
+		`if [ "$1" = "has-session" ] && [ "$2" = "-t" ] && [ "$3" = "lisa-exists-socket" ] && [ "$sock" = "` + expectedSocket + `" ]; then`,
+		`  exit 0`,
+		`fi`,
+		`exit 1`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(tmuxPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("failed to write fake tmux: %v", err)
+	}
+
+	origPath := os.Getenv("PATH")
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get cwd: %v", err)
+	}
+	origRoot, hadRoot := os.LookupEnv(lisaProjectRootEnv)
+	origSocket, hadSocket := os.LookupEnv(lisaTmuxSocketEnv)
+	t.Cleanup(func() {
+		_ = os.Setenv("PATH", origPath)
+		_ = os.Chdir(origWD)
+		if hadRoot {
+			_ = os.Setenv(lisaProjectRootEnv, origRoot)
+		} else {
+			_ = os.Unsetenv(lisaProjectRootEnv)
+		}
+		if hadSocket {
+			_ = os.Setenv(lisaTmuxSocketEnv, origSocket)
+		} else {
+			_ = os.Unsetenv(lisaTmuxSocketEnv)
+		}
+	})
+	if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath); err != nil {
+		t.Fatalf("failed to set PATH: %v", err)
+	}
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("failed to chdir project root: %v", err)
+	}
+	_ = os.Setenv(lisaProjectRootEnv, "/tmp/wrong-root")
+	_ = os.Setenv(lisaTmuxSocketEnv, "/tmp/wrong.sock")
+
+	stdout, stderr := captureOutput(t, func() {
+		if code := cmdSessionExists([]string{"--session", "lisa-exists-socket"}); code != 0 {
+			t.Fatalf("expected exists success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if strings.TrimSpace(stdout) != "true" {
+		t.Fatalf("expected true output, got %q", stdout)
+	}
+}
+
 func TestTrimSessionEventFileEnforcesLineCapEvenWhenBytesSmall(t *testing.T) {
 	origMaxBytes := os.Getenv("LISA_EVENTS_MAX_BYTES")
 	origMaxLines := os.Getenv("LISA_EVENTS_MAX_LINES")
@@ -406,6 +571,13 @@ func TestTmuxWrappersWithFakeBinary(t *testing.T) {
 		"#!/usr/bin/env sh",
 		`log="${TMUX_LOG_FILE:-/tmp/tmux.log}"`,
 		`echo "$@" >> "$log"`,
+		`if [ -n "${TMUX:-}" ]; then echo "TMUX_ENV_SET" >> "$log"; else echo "TMUX_ENV_UNSET" >> "$log"; fi`,
+		`sock=""`,
+		`if [ "$1" = "-S" ]; then`,
+		`  sock="$2"`,
+		`  echo "TMUX_SOCKET:$sock" >> "$log"`,
+		`  shift 2`,
+		`fi`,
 		`cmd="$1"`,
 		`case "$cmd" in`,
 		`  has-session)`,
@@ -436,18 +608,22 @@ func TestTmuxWrappersWithFakeBinary(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	origLog := os.Getenv("TMUX_LOG_FILE")
 	origHas := os.Getenv("TMUX_HAS_SESSION")
+	origTMUX := os.Getenv("TMUX")
 	t.Cleanup(func() {
 		_ = os.Setenv("PATH", origPath)
 		_ = os.Setenv("TMUX_LOG_FILE", origLog)
 		_ = os.Setenv("TMUX_HAS_SESSION", origHas)
+		_ = os.Setenv("TMUX", origTMUX)
 	})
 	if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath); err != nil {
 		t.Fatalf("failed to set PATH: %v", err)
 	}
 	_ = os.Setenv("TMUX_LOG_FILE", logPath)
 	_ = os.Setenv("TMUX_HAS_SESSION", "1")
+	_ = os.Setenv("TMUX", "/tmp/parent,123,1")
 
 	projectRoot := t.TempDir()
+	expectedSocket := tmuxSocketPathForProjectRoot(projectRoot)
 	if err := tmuxNewSession("lisa-tmux-test", projectRoot, "claude", "interactive", 120, 50); err != nil {
 		t.Fatalf("tmuxNewSession failed: %v", err)
 	}
@@ -503,6 +679,21 @@ func TestTmuxWrappersWithFakeBinary(t *testing.T) {
 			t.Fatalf("expected %q in tmux invocation log: %s", cmd, logText)
 		}
 	}
+	if strings.Contains(logText, "TMUX_ENV_SET") {
+		t.Fatalf("expected tmux commands to run with TMUX unset, log: %s", logText)
+	}
+	if !strings.Contains(logText, "TMUX_ENV_UNSET") {
+		t.Fatalf("expected tmux log marker for TMUX unset, log: %s", logText)
+	}
+	if !strings.Contains(logText, "TMUX_SOCKET:"+expectedSocket) {
+		t.Fatalf("expected tmux socket path marker in log: %s", logText)
+	}
+	if !strings.Contains(logText, "LISA_TMUX_SOCKET="+expectedSocket) {
+		t.Fatalf("expected spawned pane env to include LISA_TMUX_SOCKET, log: %s", logText)
+	}
+	if !strings.Contains(logText, "LISA_PROJECT_ROOT="+projectRoot) {
+		t.Fatalf("expected spawned pane env to include LISA_PROJECT_ROOT, log: %s", logText)
+	}
 }
 
 func TestTmuxSendCommandWithFallbackLongCommandUsesTempScript(t *testing.T) {
@@ -551,7 +742,7 @@ func TestTmuxSendCommandWithFallbackLongCommandUsesTempScript(t *testing.T) {
 	logLines := trimLines(string(logRaw))
 	respawnLine := ""
 	for _, line := range logLines {
-		if strings.HasPrefix(strings.TrimSpace(line), "respawn-pane ") {
+		if strings.Contains(strings.TrimSpace(line), "respawn-pane ") {
 			respawnLine = line
 			break
 		}

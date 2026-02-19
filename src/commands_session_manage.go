@@ -28,6 +28,8 @@ func cmdSessionList(args []string) int {
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
 	list, err := tmuxListSessionsFn(projectOnly, projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to list sessions: %v\n", err)
@@ -39,6 +41,7 @@ func cmdSessionList(args []string) int {
 
 func cmdSessionExists(args []string) int {
 	session := ""
+	projectRoot := getPWD()
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
@@ -57,6 +60,9 @@ func cmdSessionExists(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
+	projectRoot = resolveSessionProjectRoot(session, projectRoot, false)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
 	if tmuxHasSessionFn(session) {
 		fmt.Println("true")
 		return 0
@@ -68,6 +74,7 @@ func cmdSessionExists(args []string) int {
 func cmdSessionKill(args []string) int {
 	session := ""
 	projectRoot := getPWD()
+	projectRootExplicit := false
 	cleanupAllHashes := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -84,6 +91,7 @@ func cmdSessionKill(args []string) int {
 				return flagValueError("--project-root")
 			}
 			projectRoot = args[i+1]
+			projectRootExplicit = true
 			i++
 		case "--cleanup-all-hashes":
 			cleanupAllHashes = true
@@ -95,7 +103,9 @@ func cmdSessionKill(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
-	projectRoot = canonicalProjectRoot(projectRoot)
+	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
 	cleanupOpts := cleanupOptions{
 		AllHashes:  cleanupAllHashes,
 		KeepEvents: true,
@@ -161,6 +171,8 @@ func cmdSessionKillAll(args []string) int {
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
 	allHashes := cleanupAllHashes || !projectOnly
 	cleanupOpts := cleanupOptions{
 		AllHashes:  allHashes,

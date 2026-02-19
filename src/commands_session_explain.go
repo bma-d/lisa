@@ -10,6 +10,7 @@ import (
 func cmdSessionExplain(args []string) int {
 	session := ""
 	projectRoot := getPWD()
+	projectRootExplicit := false
 	agentHint := "auto"
 	modeHint := "auto"
 	eventLimit := 10
@@ -30,6 +31,7 @@ func cmdSessionExplain(args []string) int {
 				return flagValueError("--project-root")
 			}
 			projectRoot = args[i+1]
+			projectRootExplicit = true
 			i++
 		case "--agent":
 			if i+1 >= len(args) {
@@ -65,7 +67,9 @@ func cmdSessionExplain(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
-	projectRoot = canonicalProjectRoot(projectRoot)
+	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
 	agentHint, err := parseAgentHint(agentHint)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())

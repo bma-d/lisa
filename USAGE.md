@@ -109,7 +109,7 @@ lisa version
 
 ### `session name`
 
-Generate session name for project+agent+mode.
+Generate a unique session name for project+agent+mode (timestamp-based).
 
 ```bash
 lisa session name \
@@ -381,6 +381,8 @@ LISA_CLEANUP_ALL_HASHES=false
 LISA_AGENT_PROCESS_MATCH=...
 LISA_AGENT_PROCESS_MATCH_CLAUDE=...
 LISA_AGENT_PROCESS_MATCH_CODEX=...
+LISA_PROJECT_ROOT=(set internally per command)
+LISA_TMUX_SOCKET=(set internally; defaults to /tmp/lisa-tmux-<slug>-<hash>.sock)
 ```
 
 tmux env keys propagated into spawned panes:
@@ -394,6 +396,10 @@ LISA_PROJECT_HASH
 LISA_HEARTBEAT_FILE
 LISA_DONE_FILE
 ```
+
+Lisa clears `TMUX` when executing tmux commands, and routes tmux through a
+project-derived socket path in `/tmp`, so nested Lisa calls are detached from
+the current tmux client context.
 
 ## Orchestrator Pattern
 

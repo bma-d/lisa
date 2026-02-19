@@ -1,6 +1,6 @@
 # Coding Conventions
 
-Last Updated: 2026-02-10
+Last Updated: 2026-02-19
 Related Files: `src/utils.go`, `src/types.go`, `src/tmux.go`
 
 ## Overview
@@ -17,6 +17,7 @@ Project conventions and patterns used across the Lisa codebase.
 - **Function variable mocking**: tmux operations stored as `var tmuxFooFn = tmuxFoo` for test substitution
 - **Atomic file writes**: temp file + `os.Rename` via `writeFileAtomic()`
 - **Manual flag parsing**: hand-rolled `for i := 0; i < len(args)` loops (no flag library)
+- **tmux detachment**: Lisa unsets `TMUX` and routes tmux via a project socket (`/tmp/lisa-tmux-<slug>-<hash>.sock`) to avoid nested-client context issues
 - **JSON output**: `doctor`, `agent build-cmd`, and `session spawn|send|status|monitor|capture` support `--json`; `session name|list|exists|kill|kill-all` remain text-only
 - **CSV-style text output**: comma-separated fields for human/script consumption
 - **Shell quoting**: single-quote wrapping with `'"'"'` escapes

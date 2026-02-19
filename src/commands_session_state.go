@@ -13,6 +13,7 @@ var computeSessionStatusFn = computeSessionStatus
 func cmdSessionStatus(args []string) int {
 	session := ""
 	projectRoot := getPWD()
+	projectRootExplicit := false
 	agentHint := "auto"
 	modeHint := "auto"
 	full := false
@@ -33,6 +34,7 @@ func cmdSessionStatus(args []string) int {
 				return flagValueError("--project-root")
 			}
 			projectRoot = args[i+1]
+			projectRootExplicit = true
 			i++
 		case "--agent":
 			if i+1 >= len(args) {
@@ -59,7 +61,9 @@ func cmdSessionStatus(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
-	projectRoot = canonicalProjectRoot(projectRoot)
+	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
 	agentHint, err := parseAgentHint(agentHint)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -130,6 +134,7 @@ func cmdSessionStatus(args []string) int {
 func cmdSessionMonitor(args []string) int {
 	session := ""
 	projectRoot := getPWD()
+	projectRootExplicit := false
 	agentHint := "auto"
 	modeHint := "auto"
 	pollInterval := defaultPollIntervalSeconds
@@ -153,6 +158,7 @@ func cmdSessionMonitor(args []string) int {
 				return flagValueError("--project-root")
 			}
 			projectRoot = args[i+1]
+			projectRootExplicit = true
 			i++
 		case "--agent":
 			if i+1 >= len(args) {
@@ -212,7 +218,9 @@ func cmdSessionMonitor(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
-	projectRoot = canonicalProjectRoot(projectRoot)
+	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
 	agentHint, err := parseAgentHint(agentHint)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -381,7 +389,9 @@ func cmdSessionCapture(args []string) int {
 		return 1
 	}
 
-	projectRoot = canonicalProjectRoot(projectRoot)
+	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
 	transcriptProjectRoot := projectRoot
 	if !projectRootExplicit {
 		// Prefer the current project by default (USAGE contract). If no local
