@@ -69,7 +69,7 @@ func buildAgentCommandWithOptions(agent, mode, prompt, agentArgs string, skipPer
 }
 
 func wrapExecCommand(command string) string {
-	return fmt.Sprintf("{ __lisa_had_errexit=0; case $- in *e*) __lisa_had_errexit=1;; esac; set +e; %s; __lisa_ec=$?; printf '\\n%s%%d\\n' \"$__lisa_ec\"; if [ \"$__lisa_had_errexit\" -eq 1 ]; then set -e; fi; }", command, execDonePrefix)
+	return fmt.Sprintf("{ __lisa_had_errexit=0; case $- in *e*) __lisa_had_errexit=1;; esac; set +e; %s; __lisa_ec=$?; printf '\\n%s%%d\\n' \"$__lisa_ec\"; __lisa_exec_ec=\"$__lisa_ec\"; if [ \"$__lisa_had_errexit\" -eq 1 ]; then set -e; fi; }", command, execDonePrefix)
 }
 
 func parseAgent(agent string) (string, error) {

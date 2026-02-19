@@ -221,6 +221,49 @@ func TestCmdSessionMonitorStopsOnWaitingInput(t *testing.T) {
 	}
 }
 
+func TestCmdSessionMonitorDoesNotStopOnWaitingInputWhenDisabled(t *testing.T) {
+	origCompute := computeSessionStatusFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origCompute
+	})
+
+	calls := 0
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		calls++
+		return sessionStatus{
+			Session:      session,
+			Status:       "idle",
+			SessionState: "waiting_input",
+		}, nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionMonitor([]string{
+			"--session", "lisa-monitor-waiting-disabled",
+			"--project-root", t.TempDir(),
+			"--poll-interval", "1",
+			"--max-polls", "1",
+			"--stop-on-waiting", "false",
+			"--json",
+		})
+		if code != 2 {
+			t.Fatalf("expected timeout monitor exit 2 when waiting stop disabled, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if calls != 1 {
+		t.Fatalf("expected one monitor poll, got %d", calls)
+	}
+	if !strings.Contains(stdout, `"finalState":"timeout"`) {
+		t.Fatalf("expected timeout final state when waiting stop disabled, got %q", stdout)
+	}
+	if !strings.Contains(stdout, `"exitReason":"max_polls_exceeded"`) {
+		t.Fatalf("expected max_polls_exceeded reason when waiting stop disabled, got %q", stdout)
+	}
+}
+
 func TestCmdSessionMonitorVerboseWritesProgressLine(t *testing.T) {
 	origCompute := computeSessionStatusFn
 	t.Cleanup(func() {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -64,6 +65,28 @@ func TestWrapSessionCommandInjectsLifecycleMarkersAndHeartbeat(t *testing.T) {
 		if !strings.Contains(wrapped, token) {
 			t.Fatalf("expected wrapped session command to contain %q, got %q", token, wrapped)
 		}
+	}
+}
+
+func TestWrapSessionCommandTracksExecFailureInSessionDoneMarker(t *testing.T) {
+	runID := "run-exec-fail"
+	wrapped := wrapSessionCommand(wrapExecCommand("bash -lc 'exit 7'"), runID)
+	cmd := exec.Command("bash", "-lc", wrapped)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected wrapped command to fail with non-zero exit")
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected exec.ExitError, got %T: %v", err, err)
+	}
+	if exitErr.ExitCode() != 7 {
+		t.Fatalf("expected wrapped command to exit 7, got %d; output=%q", exitErr.ExitCode(), string(out))
+	}
+
+	done, code, markerRunID, mismatch := parseSessionCompletionForRun(string(out), runID)
+	if !done || mismatch || markerRunID != runID || code != 7 {
+		t.Fatalf("expected run marker exit code 7, got done=%v mismatch=%v run=%q code=%d output=%q", done, mismatch, markerRunID, code, string(out))
 	}
 }
 

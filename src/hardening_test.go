@@ -505,6 +505,93 @@ func TestTmuxWrappersWithFakeBinary(t *testing.T) {
 	}
 }
 
+func TestTmuxSendCommandWithFallbackLongCommandUsesTempScript(t *testing.T) {
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "tmux.log")
+	tmuxPath := filepath.Join(binDir, "tmux")
+	script := strings.Join([]string{
+		"#!/usr/bin/env sh",
+		`log="${TMUX_LOG_FILE:-/tmp/tmux.log}"`,
+		`echo "$@" >> "$log"`,
+		"exit 0",
+		"",
+	}, "\n")
+	if err := os.WriteFile(tmuxPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("failed to write fake tmux: %v", err)
+	}
+
+	origPath := os.Getenv("PATH")
+	origLog := os.Getenv("TMUX_LOG_FILE")
+	t.Cleanup(func() {
+		_ = os.Setenv("PATH", origPath)
+		_ = os.Setenv("TMUX_LOG_FILE", origLog)
+	})
+	if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath); err != nil {
+		t.Fatalf("failed to set PATH: %v", err)
+	}
+	if err := os.Setenv("TMUX_LOG_FILE", logPath); err != nil {
+		t.Fatalf("failed to set TMUX_LOG_FILE: %v", err)
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-long-command-fallback"
+	longCommand := "echo LONG_COMMAND_START " + strings.Repeat("x", 560)
+	if len(longCommand) <= maxInlineSendLength {
+		t.Fatalf("expected command length > %d, got %d", maxInlineSendLength, len(longCommand))
+	}
+
+	if err := tmuxSendCommandWithFallback(projectRoot, session, longCommand, true); err != nil {
+		t.Fatalf("tmuxSendCommandWithFallback failed: %v", err)
+	}
+
+	logRaw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("failed to read tmux log: %v", err)
+	}
+	logLines := trimLines(string(logRaw))
+	respawnLine := ""
+	for _, line := range logLines {
+		if strings.HasPrefix(strings.TrimSpace(line), "respawn-pane ") {
+			respawnLine = line
+			break
+		}
+	}
+	if respawnLine == "" {
+		t.Fatalf("expected respawn-pane invocation in log, got %q", string(logRaw))
+	}
+
+	fields := strings.Fields(respawnLine)
+	if len(fields) < 2 {
+		t.Fatalf("unexpected respawn-pane invocation: %q", respawnLine)
+	}
+	scriptPath := fields[len(fields)-1]
+	if !strings.HasPrefix(scriptPath, "/tmp/lisa-cmd-") {
+		t.Fatalf("expected temp script path in respawn command, got %q", scriptPath)
+	}
+	if !strings.Contains(scriptPath, projectHash(projectRoot)) {
+		t.Fatalf("expected project hash in temp script path %q", scriptPath)
+	}
+	if !strings.Contains(scriptPath, sessionArtifactID(session)) {
+		t.Fatalf("expected session artifact id in temp script path %q", scriptPath)
+	}
+
+	scriptRaw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("failed to read fallback script %q: %v", scriptPath, err)
+	}
+	scriptText := string(scriptRaw)
+	for _, token := range []string{
+		"#!/usr/bin/env bash",
+		"unset CLAUDECODE",
+		longCommand,
+		"exec \"${SHELL:-/bin/sh}\" -l",
+	} {
+		if !strings.Contains(scriptText, token) {
+			t.Fatalf("expected token %q in fallback script: %q", token, scriptText)
+		}
+	}
+}
+
 func TestCmdDoctorJSONReadyAndNotReady(t *testing.T) {
 	makeBin := func(dir, name string) {
 		path := filepath.Join(dir, name)
