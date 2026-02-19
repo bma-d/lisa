@@ -312,6 +312,82 @@ func TestCmdSessionCaptureRawFlag(t *testing.T) {
 	}
 }
 
+func TestCmdSessionCaptureStripsNoiseByDefault(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return strings.Join([]string{
+			"2026-02-19T00:00:00Z  WARN codex_state::runtime: failed to open state db at /Users/test/.codex/state_5.sqlite: migration mismatch",
+			"mcp startup: ready: context7, linear; failed: notion",
+			"real output line",
+		}, "\n"), nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionCapture([]string{
+			"--session", "lisa-test-noise",
+			"--raw",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected filtered raw capture success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if strings.Contains(stdout, "codex_state::runtime") || strings.Contains(stdout, "mcp startup:") {
+		t.Fatalf("expected noise lines to be removed, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "real output line") {
+		t.Fatalf("expected non-noise line to remain, got %q", stdout)
+	}
+}
+
+func TestCmdSessionCaptureKeepNoise(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return strings.Join([]string{
+			"2026-02-19T00:00:00Z  WARN codex_state::runtime: failed to open state db at /Users/test/.codex/state_5.sqlite: migration mismatch",
+			"real output line",
+		}, "\n"), nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionCapture([]string{
+			"--session", "lisa-test-noise-keep",
+			"--raw",
+			"--keep-noise",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected keep-noise raw capture success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, "codex_state::runtime") {
+		t.Fatalf("expected noise line to remain with --keep-noise, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "real output line") {
+		t.Fatalf("expected non-noise line to remain, got %q", stdout)
+	}
+}
+
 func TestCmdSessionCaptureDefaultFallsBackToRawForNonClaude(t *testing.T) {
 	origMetaGlobFn := loadSessionMetaByGlobFn
 	origHas := tmuxHasSessionFn

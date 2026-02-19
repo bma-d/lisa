@@ -2466,6 +2466,126 @@ func TestInteractiveSessionDetectsWaitingInput(t *testing.T) {
 	}
 }
 
+func TestInteractiveShellIdleWithoutAgentProcessClassifiesWaitingInput(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origDisplay := tmuxDisplayFn
+	origDetect := detectAgentProcessFn
+	origInspect := inspectPaneProcessTreeFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxDisplayFn = origDisplay
+		detectAgentProcessFn = origDetect
+		inspectPaneProcessTreeFn = origInspect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tzsh\t123", nil
+		default:
+			return "", nil
+		}
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
+	}
+	inspectPaneProcessTreeFn = func(panePID int) (float64, bool, error) {
+		return 0.01, false, nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-shell-idle-waiting"
+	if err := os.WriteFile(sessionHeartbeatFile(projectRoot, session), []byte("hb"), 0o600); err != nil {
+		t.Fatalf("failed to seed heartbeat file: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "codex", "interactive", false, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "waiting_input" {
+		t.Fatalf("expected waiting_input, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
+	}
+	if status.ClassificationReason != "interactive_shell_idle" {
+		t.Fatalf("expected interactive_shell_idle reason, got %q", status.ClassificationReason)
+	}
+	if !status.Signals.InteractiveWaiting {
+		t.Fatal("expected InteractiveWaiting=true")
+	}
+}
+
+func TestInteractiveShellChildProcessStaysInProgress(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origDisplay := tmuxDisplayFn
+	origDetect := detectAgentProcessFn
+	origInspect := inspectPaneProcessTreeFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxDisplayFn = origDisplay
+		detectAgentProcessFn = origDetect
+		inspectPaneProcessTreeFn = origInspect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tzsh\t123", nil
+		default:
+			return "", nil
+		}
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
+	}
+	inspectPaneProcessTreeFn = func(panePID int) (float64, bool, error) {
+		return 0.01, true, nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-shell-child-running"
+	if err := os.WriteFile(sessionHeartbeatFile(projectRoot, session), []byte("hb"), 0o600); err != nil {
+		t.Fatalf("failed to seed heartbeat file: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "codex", "interactive", false, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "in_progress" {
+		t.Fatalf("expected in_progress, got state=%s reason=%s", status.SessionState, status.ClassificationReason)
+	}
+	if status.ClassificationReason != "interactive_child_process" {
+		t.Fatalf("expected interactive_child_process reason, got %q", status.ClassificationReason)
+	}
+}
+
+func TestInspectPaneProcessTreeIgnoresPassiveSleepChild(t *testing.T) {
+	origListCached := listProcessesCachedFn
+	t.Cleanup(func() {
+		listProcessesCachedFn = origListCached
+	})
+
+	listProcessesCachedFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 100, PPID: 1, CPU: 0.04, Command: "/bin/bash /tmp/lisa-cmd.sh"},
+			{PID: 101, PPID: 100, CPU: 0.00, Command: "sleep 2"},
+		}, nil
+	}
+
+	paneCPU, hasNonShellDescendant, err := inspectPaneProcessTree(100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if hasNonShellDescendant {
+		t.Fatal("expected sleep helper child to be ignored")
+	}
+	if paneCPU <= 0 {
+		t.Fatalf("expected pane CPU to be retained, got %.2f", paneCPU)
+	}
+}
+
 func TestInteractiveSessionGracePeriodPreventsWaitingInput(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn

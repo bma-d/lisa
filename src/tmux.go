@@ -25,6 +25,7 @@ var tmuxSendCommandWithFallbackFn = tmuxSendCommandWithFallback
 var tmuxDisplayFn = tmuxDisplay
 var tmuxPaneStatusFn = tmuxPaneStatus
 var detectAgentProcessFn = detectAgentProcess
+var inspectPaneProcessTreeFn = inspectPaneProcessTree
 var listProcessesFn = listProcesses
 var listProcessesCachedFn = listProcessesCached
 
@@ -370,6 +371,70 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 		return 0, 0, nil
 	}
 	return bestPID, bestCPU, nil
+}
+
+func inspectPaneProcessTree(panePID int) (float64, bool, error) {
+	if panePID <= 0 {
+		return 0, false, nil
+	}
+	procs, err := listProcessesCachedFn()
+	if err != nil {
+		return 0, false, fmt.Errorf("process scan failed: %w", err)
+	}
+
+	children := map[int][]processInfo{}
+	processByPID := make(map[int]processInfo, len(procs))
+	for _, p := range procs {
+		children[p.PPID] = append(children[p.PPID], p)
+		processByPID[p.PID] = p
+	}
+
+	paneCPU := 0.0
+	if paneProc, ok := processByPID[panePID]; ok {
+		paneCPU = paneProc.CPU
+	}
+
+	queue := make([]int, 0, len(children[panePID]))
+	for _, child := range children[panePID] {
+		queue = append(queue, child.PID)
+	}
+	seen := map[int]bool{}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if seen[cur] {
+			continue
+		}
+		seen[cur] = true
+		proc, ok := processByPID[cur]
+		if !ok {
+			continue
+		}
+		execName := commandExecutableName(strings.ToLower(proc.Command))
+		if execName == "grep" {
+			continue
+		}
+		if isPassiveChildProcess(execName) {
+			continue
+		}
+		if execName != "" && !isShellCommand(execName) {
+			return paneCPU, true, nil
+		}
+		for _, child := range children[cur] {
+			queue = append(queue, child.PID)
+		}
+	}
+
+	return paneCPU, false, nil
+}
+
+func isPassiveChildProcess(executable string) bool {
+	switch strings.ToLower(strings.TrimSpace(executable)) {
+	case "sleep":
+		return true
+	default:
+		return false
+	}
 }
 
 func listProcessesCached() ([]processInfo, error) {

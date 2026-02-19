@@ -346,6 +346,7 @@ func cmdSessionCapture(args []string) int {
 	lines := 200
 	jsonOut := false
 	raw := false
+	stripNoise := true
 	projectRoot := getPWD()
 	projectRootExplicit := false
 	for i := 0; i < len(args); i++ {
@@ -371,6 +372,10 @@ func cmdSessionCapture(args []string) int {
 			i++
 		case "--raw":
 			raw = true
+		case "--keep-noise":
+			stripNoise = false
+		case "--strip-noise":
+			stripNoise = true
 		case "--project-root":
 			if i+1 >= len(args) {
 				return flagValueError("--project-root")
@@ -418,6 +423,9 @@ func cmdSessionCapture(args []string) int {
 		return 1
 	}
 	capture = strings.Join(trimLines(capture), "\n")
+	if stripNoise {
+		capture = filterCaptureNoise(capture)
+	}
 	if jsonOut {
 		writeJSON(map[string]any{
 			"session": session,

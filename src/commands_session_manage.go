@@ -42,6 +42,7 @@ func cmdSessionList(args []string) int {
 func cmdSessionExists(args []string) int {
 	session := ""
 	projectRoot := getPWD()
+	projectRootExplicit := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
@@ -52,6 +53,13 @@ func cmdSessionExists(args []string) int {
 			}
 			session = args[i+1]
 			i++
+		case "--project-root":
+			if i+1 >= len(args) {
+				return flagValueError("--project-root")
+			}
+			projectRoot = args[i+1]
+			projectRootExplicit = true
+			i++
 		default:
 			return unknownFlagError(args[i])
 		}
@@ -60,7 +68,7 @@ func cmdSessionExists(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, false)
+	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	if tmuxHasSessionFn(session) {

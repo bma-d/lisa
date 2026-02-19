@@ -169,6 +169,11 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 
 	agent := resolveAgent(agentHint, meta, session, strings.ToLower(strings.TrimSpace(stateHint.LastResolvedAgent)))
 	mode := resolveMode(modeHint, meta, session, strings.ToLower(strings.TrimSpace(stateHint.LastResolvedMode)))
+	sessionLower := strings.ToLower(strings.TrimSpace(session))
+	interactiveModeKnown := mode == "interactive" && (strings.EqualFold(strings.TrimSpace(modeHint), "interactive") ||
+		strings.EqualFold(strings.TrimSpace(meta.Mode), "interactive") ||
+		strings.HasSuffix(sessionLower, "-interactive") ||
+		strings.Contains(sessionLower, "-interactive-"))
 	status.Agent = agent
 	status.Mode = mode
 	if metaErr == nil {
@@ -244,6 +249,17 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 
 	paneIsShell := isShellCommand(paneCommand)
 	status.Signals.PaneIsShell = paneIsShell
+	paneTreeReady := false
+	paneHasNonShellDescendant := false
+	paneCPU := 0.0
+	if mode == "interactive" && paneIsShell && agentPID == 0 {
+		cpu, hasNonShellDescendant, paneTreeErr := inspectPaneProcessTreeFn(panePID)
+		if paneTreeErr == nil {
+			paneCPU = cpu
+			paneHasNonShellDescendant = hasNonShellDescendant
+			paneTreeReady = true
+		}
+	}
 
 	var pendingEvent sessionEvent
 	pendingEventReady := false
@@ -312,6 +328,25 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 					status.Status = "active"
 					status.SessionState = "in_progress"
 					status.ClassificationReason = "agent_pid_alive"
+				}
+			case interactiveModeKnown && paneIsShell && heartbeatFresh && pollCount > 3 && paneTreeReady:
+				activeProcessBusy := paneCPU >= agentCPUBusyThreshold
+				status.Signals.ActiveProcessBusy = activeProcessBusy
+				switch {
+				case paneHasNonShellDescendant:
+					status.Status = "active"
+					status.SessionState = "in_progress"
+					status.ClassificationReason = "interactive_child_process"
+				case activeProcessBusy:
+					status.Status = "active"
+					status.SessionState = "in_progress"
+					status.ClassificationReason = "interactive_shell_busy"
+				default:
+					status.Status = "idle"
+					status.SessionState = "waiting_input"
+					status.WaitEstimate = 0
+					status.ClassificationReason = "interactive_shell_idle"
+					status.Signals.InteractiveWaiting = true
 				}
 			case heartbeatFresh:
 				status.Status = "active"

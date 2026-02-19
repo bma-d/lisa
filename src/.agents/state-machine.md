@@ -1,6 +1,6 @@
 # State Machine & Status Classification
 
-Last Updated: 2026-02-15
+Last Updated: 2026-02-19
 Related Files: `src/status.go`, `src/types.go`
 
 ## Overview
@@ -12,9 +12,8 @@ Related Files: `src/status.go`, `src/types.go`
 1. **Pane status snapshot** (`readPaneSnapshot`): prefers a single tmux format query (`pane_dead`, `pane_dead_status`, `pane_current_command`, `pane_pid`) with fallback to per-field reads
 2. **Agent process** (`detectAgentProcess`): BFS walk from pane PID through process tree, prefers strict executable matches for `claude`/`codex` and uses env custom token matchers only as fallback, returns PID + CPU%; cached between polls via `LISA_PROCESS_SCAN_INTERVAL_SECONDS` (default 8s)
 3. **Output freshness**: MD5 hash of captured pane output compared to last known hash; stale after `LISA_OUTPUT_STALE_SECONDS` (default 240s). Updates are monotonic by nanosecond capture timestamp so older concurrent polls cannot overwrite newer freshness state.
-4. **Prompt detection** (`looksLikePromptWaiting`): agent-specific regex patterns on last output line
-   - Claude: trailing `>` or `›`, or "press enter to send"
-   - Codex: `❯` with timestamp pattern, or "tokens used"
+4. **Interactive shell idle detection** (`inspectPaneProcessTree`): for interactive shell sessions with no detected agent PID, classify `waiting_input` when heartbeat is fresh, pane CPU is below threshold, and no active non-shell descendants are found
+   - Passive `sleep` descendants (heartbeat helper) are ignored
 5. **Session completion** (`readSessionDoneFile` + `parseSessionCompletionForRun`): prefers `/tmp/.lisa-*-done.txt` sidecar (`{runID}:{exit}`) written by wrapper trap, with marker fallback parsing from pane output
 6. **Exec completion** (`parseExecCompletion`): searches for `__LISA_EXEC_DONE__:N` marker
 7. **Heartbeat freshness**: reads `/tmp/.lisa-*-heartbeat.txt` mtime (`LISA_HEARTBEAT_FILE`), stale after `LISA_HEARTBEAT_STALE_SECONDS` (default 8s)
@@ -33,6 +32,7 @@ pane crashed/exited → immediate terminal state
 session done marker (matching runId) → completed/crashed based on exit code
 exec mode + exec done marker → completed/crashed based on exit code
 interactive mode + agent PID alive + CPU < 0.2 + poll > 3 → waiting_input (`interactive_idle_cpu`)
+interactive mode (known) + shell pane + no agent PID + heartbeat fresh + low shell CPU + no active descendants + poll > 3 → waiting_input (`interactive_shell_idle`)
 transcript turn complete (Claude only, stale JSONL + assistant text block) → waiting_input
 prompt regex + agent not busy → waiting_input
 agent PID alive (busy, or exec mode, or grace-period interactive) OR output fresh OR heartbeat fresh OR non-shell pane command → in_progress

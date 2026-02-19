@@ -177,6 +177,57 @@ func filterInputBox(input string) string {
 	return strings.Join(out, "\n")
 }
 
+func filterCaptureNoise(input string) string {
+	lines := trimLines(input)
+	out := make([]string, 0, len(lines))
+	skipIndentedNoiseContinuation := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			skipIndentedNoiseContinuation = false
+			out = append(out, line)
+			continue
+		}
+		if skipIndentedNoiseContinuation {
+			if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+				continue
+			}
+			skipIndentedNoiseContinuation = false
+		}
+		if isCaptureNoiseLine(trimmed) {
+			if strings.HasPrefix(trimmed, "⚠ MCP client for ") {
+				skipIndentedNoiseContinuation = true
+			}
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func isCaptureNoiseLine(trimmed string) bool {
+	switch {
+	case strings.HasPrefix(trimmed, "mcp: "):
+		return true
+	case strings.HasPrefix(trimmed, "mcp startup: "):
+		return true
+	case strings.HasPrefix(trimmed, "⚠ MCP client for "):
+		return true
+	case strings.HasPrefix(trimmed, "⚠ MCP startup incomplete"):
+		return true
+	case strings.HasPrefix(trimmed, "⚠ Under-development features enabled:"):
+		return true
+	case strings.Contains(trimmed, "codex_state::runtime: failed to open state db"):
+		return true
+	case strings.Contains(trimmed, "codex_core::rollout::list: state db missing rollout path"):
+		return true
+	case strings.Contains(trimmed, "codex_core::state_db: state db record_discrepancy"):
+		return true
+	default:
+		return false
+	}
+}
+
 func containsAnyPrefix(line string, prefixes []string) bool {
 	for _, p := range prefixes {
 		if strings.HasPrefix(line, p) {

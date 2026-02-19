@@ -254,6 +254,7 @@ Flags:
 
 - `--session` (required)
 - `--raw`: force tmux pane capture
+- `--keep-noise`: keep Codex/MCP startup noise in pane capture
 - `--lines N`: pane lines for raw capture (default `200`)
 - `--project-root`
 - `--json`
@@ -262,7 +263,8 @@ Behavior:
 
 - default: for Claude sessions, tries transcript capture first
 - fallback: raw tmux pane capture if transcript path fails/unavailable
-- `--raw`: always use tmux pane capture
+- raw capture path filters known Codex/MCP startup noise by default
+- `--keep-noise`: disables that filtering
 
 ### `session list`
 
@@ -285,6 +287,11 @@ Check existence of one session.
 ```bash
 lisa session exists --session <NAME>
 ```
+
+Flags:
+
+- `--session` (required)
+- `--project-root` (default cwd)
 
 Output: `true` or `false`.
 

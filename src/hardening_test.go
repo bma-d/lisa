@@ -359,6 +359,58 @@ func TestCmdSessionExistsUsesProjectRuntimeSocket(t *testing.T) {
 	}
 }
 
+func TestCmdSessionExistsSupportsProjectRootFlag(t *testing.T) {
+	projectRoot := t.TempDir()
+	otherRoot := t.TempDir()
+	expectedSocket := tmuxSocketPathForProjectRoot(projectRoot)
+	binDir := t.TempDir()
+	tmuxPath := filepath.Join(binDir, "tmux")
+	script := strings.Join([]string{
+		"#!/usr/bin/env sh",
+		`sock=""`,
+		`if [ "$1" = "-S" ]; then`,
+		`  sock="$2"`,
+		`  shift 2`,
+		`fi`,
+		`if [ "$1" = "has-session" ] && [ "$2" = "-t" ] && [ "$3" = "lisa-exists-project-root" ] && [ "$sock" = "` + expectedSocket + `" ]; then`,
+		`  exit 0`,
+		`fi`,
+		`exit 1`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(tmuxPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("failed to write fake tmux: %v", err)
+	}
+
+	origPath := os.Getenv("PATH")
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get cwd: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("PATH", origPath)
+		_ = os.Chdir(origWD)
+	})
+	if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath); err != nil {
+		t.Fatalf("failed to set PATH: %v", err)
+	}
+	if err := os.Chdir(otherRoot); err != nil {
+		t.Fatalf("failed to chdir other root: %v", err)
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		if code := cmdSessionExists([]string{"--session", "lisa-exists-project-root", "--project-root", projectRoot}); code != 0 {
+			t.Fatalf("expected exists success with --project-root, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if strings.TrimSpace(stdout) != "true" {
+		t.Fatalf("expected true output, got %q", stdout)
+	}
+}
+
 func TestTrimSessionEventFileEnforcesLineCapEvenWhenBytesSmall(t *testing.T) {
 	origMaxBytes := os.Getenv("LISA_EVENTS_MAX_BYTES")
 	origMaxLines := os.Getenv("LISA_EVENTS_MAX_LINES")

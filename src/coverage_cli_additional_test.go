@@ -460,6 +460,7 @@ func TestCmdSessionRoutesCoreSubcommands(t *testing.T) {
 		{args: []string{"capture", "--session", "lisa-route-spawn", "--raw"}, want: 0},
 		{args: []string{"list", "--project-root", projectRoot}, want: 0},
 		{args: []string{"exists", "--session", "lisa-route-spawn"}, want: 0},
+		{args: []string{"exists", "--session", "lisa-route-spawn", "--project-root", projectRoot}, want: 0},
 		{args: []string{"kill", "--session", "lisa-route-spawn", "--project-root", projectRoot}, want: 0},
 		{args: []string{"kill-all", "--project-root", projectRoot}, want: 0},
 	}

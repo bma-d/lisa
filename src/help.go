@@ -188,6 +188,7 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
 	fmt.Fprintln(os.Stderr, "  --raw                 Raw tmux pane capture instead of transcript")
+	fmt.Fprintln(os.Stderr, "  --keep-noise          Keep Codex/MCP startup noise in pane capture")
 	fmt.Fprintln(os.Stderr, "  --lines N             Number of pane lines for raw capture (default: 200)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
@@ -210,6 +211,7 @@ func helpSessionExists() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 }
 
 func helpSessionKill() {
