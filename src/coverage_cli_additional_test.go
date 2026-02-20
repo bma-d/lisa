@@ -199,6 +199,131 @@ func TestCmdSessionStatusFullTextIncludesSignals(t *testing.T) {
 	}
 }
 
+func TestNormalizeStatusForSessionStatusOutput(t *testing.T) {
+	cases := []struct {
+		name         string
+		status       string
+		sessionState string
+		wantStatus   string
+	}{
+		{name: "in progress unchanged", status: "active", sessionState: "in_progress", wantStatus: "active"},
+		{name: "waiting unchanged", status: "idle", sessionState: "waiting_input", wantStatus: "idle"},
+		{name: "completed normalized", status: "idle", sessionState: "completed", wantStatus: "completed"},
+		{name: "crashed normalized", status: "idle", sessionState: "crashed", wantStatus: "crashed"},
+		{name: "stuck normalized", status: "idle", sessionState: "stuck", wantStatus: "stuck"},
+		{name: "not found normalized", status: "not_found", sessionState: "not_found", wantStatus: "not_found"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeStatusForSessionStatusOutput(sessionStatus{
+				Status:       tc.status,
+				SessionState: tc.sessionState,
+			})
+			if got.Status != tc.wantStatus {
+				t.Fatalf("normalizeStatusForSessionStatusOutput(%q,%q) status=%q want=%q", tc.status, tc.sessionState, got.Status, tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestCmdSessionStatusNormalizesTerminalStatusOutput(t *testing.T) {
+	origCompute := computeSessionStatusFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origCompute
+	})
+
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:      session,
+			Status:       "idle",
+			SessionState: "crashed",
+		}, nil
+	}
+
+	jsonOut, stderr := captureOutput(t, func() {
+		code := cmdSessionStatus([]string{"--session", "lisa-status-normalized", "--json"})
+		if code != 0 {
+			t.Fatalf("expected json status success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(jsonOut), &payload); err != nil {
+		t.Fatalf("failed to parse JSON status payload: %v (%q)", err, jsonOut)
+	}
+	if payload["status"] != "crashed" || payload["sessionState"] != "crashed" {
+		t.Fatalf("expected normalized terminal status in JSON payload, got %v", payload)
+	}
+
+	csvOut, stderr := captureOutput(t, func() {
+		code := cmdSessionStatus([]string{"--session", "lisa-status-normalized"})
+		if code != 0 {
+			t.Fatalf("expected csv status success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	record, err := parseSingleCSVLine(csvOut)
+	if err != nil {
+		t.Fatalf("failed to parse CSV status output: %v (%q)", err, csvOut)
+	}
+	if len(record) != 6 {
+		t.Fatalf("expected 6 csv fields, got %d (%q)", len(record), csvOut)
+	}
+	if record[0] != "crashed" || record[5] != "crashed" {
+		t.Fatalf("expected normalized terminal status in CSV output, got %v", record)
+	}
+
+	fullOut, stderr := captureOutput(t, func() {
+		code := cmdSessionStatus([]string{"--session", "lisa-status-normalized", "--full"})
+		if code != 0 {
+			t.Fatalf("expected full status success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	fullRecord, err := parseSingleCSVLine(fullOut)
+	if err != nil {
+		t.Fatalf("failed to parse full CSV status output: %v (%q)", err, fullOut)
+	}
+	if len(fullRecord) < 7 {
+		t.Fatalf("expected expanded full status output columns, got %d (%q)", len(fullRecord), fullOut)
+	}
+	if fullRecord[1] != "crashed" || fullRecord[6] != "crashed" {
+		t.Fatalf("expected normalized terminal status in full CSV output, got %v", fullRecord)
+	}
+}
+
+func TestNormalizeMonitorFinalStatus(t *testing.T) {
+	cases := []struct {
+		name       string
+		finalState string
+		finalStat  string
+		want       string
+	}{
+		{name: "completed normalized", finalState: "completed", finalStat: "idle", want: "completed"},
+		{name: "crashed normalized", finalState: "crashed", finalStat: "idle", want: "crashed"},
+		{name: "stuck normalized", finalState: "stuck", finalStat: "idle", want: "stuck"},
+		{name: "not found normalized", finalState: "not_found", finalStat: "idle", want: "not_found"},
+		{name: "timeout passthrough", finalState: "timeout", finalStat: "active", want: "active"},
+		{name: "waiting passthrough", finalState: "waiting_input", finalStat: "idle", want: "idle"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeMonitorFinalStatus(tc.finalState, tc.finalStat)
+			if got != tc.want {
+				t.Fatalf("normalizeMonitorFinalStatus(%q,%q)=%q want=%q", tc.finalState, tc.finalStat, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCmdSessionSendValidationAndLifecycle(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origSendKeys := tmuxSendKeysFn
@@ -346,13 +471,14 @@ func TestCmdSessionMonitorEmitsLifecycleEvent(t *testing.T) {
 		}, nil
 	}
 
-	var gotReason string
+	var gotReason, gotStatus string
 	appendSessionEventFn = func(projectRoot, session string, event sessionEvent) error {
 		gotReason = event.Reason
+		gotStatus = event.Status
 		return nil
 	}
 
-	_, stderr := captureOutput(t, func() {
+	stdout, stderr := captureOutput(t, func() {
 		code := cmdSessionMonitor([]string{
 			"--session", "lisa-monitor-event",
 			"--max-polls", "1",
@@ -368,6 +494,12 @@ func TestCmdSessionMonitorEmitsLifecycleEvent(t *testing.T) {
 	}
 	if gotReason != "monitor_completed" {
 		t.Fatalf("expected lifecycle reason monitor_completed, got %q", gotReason)
+	}
+	if gotStatus != "completed" {
+		t.Fatalf("expected normalized lifecycle status completed, got %q", gotStatus)
+	}
+	if !strings.Contains(stdout, `"finalStatus":"completed"`) {
+		t.Fatalf("expected normalized monitor finalStatus in json output, got %q", stdout)
 	}
 }
 

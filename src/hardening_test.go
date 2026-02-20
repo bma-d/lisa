@@ -39,6 +39,7 @@ func TestUsageIncludesCoreCommands(t *testing.T) {
 	_, stderr := captureOutput(t, func() { usage() })
 	for _, token := range []string{
 		"doctor",
+		"cleanup",
 		"session spawn",
 		"session explain",
 		"agent build-cmd",

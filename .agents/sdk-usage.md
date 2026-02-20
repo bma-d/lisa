@@ -11,6 +11,8 @@ How to use Lisa as infrastructure from an LLM orchestrator or script.
 
 1. **Spawn** one session per task (`session spawn --json`), store returned session name (custom `--session` values must start with `lisa-`)
 2. **Poll** with `session monitor --json` (blocking loop) or `session status --json` (one-shot)
+   - In `session status` output, `sessionState` is lifecycle truth; `status` is normalized for terminal states (`completed`, `crashed`, `stuck`, `not_found`) to avoid idle-vs-terminal mismatches in JSON/CSV parsing.
+   - In `session monitor` output, `finalState` is stop-state truth; `finalStatus` is normalized for terminal states (`completed`, `crashed`, `stuck`, `not_found`) so scripts don't see `finalStatus=idle` for terminal outcomes.
    - For stricter interactive stop semantics, use `session monitor --stop-on-waiting true --waiting-requires-turn-complete true` to stop only after transcript turn completion is detected
 3. If state is `stuck`, send next instruction with `session send --text "..." --enter`; if state is `degraded`, retry polling and inspect `signals.*Error`
 4. Fetch artifacts with `session capture --lines N`

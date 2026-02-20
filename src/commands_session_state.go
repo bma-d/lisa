@@ -11,6 +11,24 @@ import (
 var computeSessionStatusFn = computeSessionStatus
 var monitorWaitingTurnCompleteFn = monitorWaitingTurnComplete
 
+func normalizeStatusForSessionStatusOutput(status sessionStatus) sessionStatus {
+	normalized := status
+	switch normalized.SessionState {
+	case "completed", "crashed", "stuck", "not_found":
+		normalized.Status = normalized.SessionState
+	}
+	return normalized
+}
+
+func normalizeMonitorFinalStatus(finalState, finalStatus string) string {
+	switch finalState {
+	case "completed", "crashed", "stuck", "not_found":
+		return finalState
+	default:
+		return finalStatus
+	}
+}
+
 func cmdSessionStatus(args []string) int {
 	session := ""
 	projectRoot := getPWD()
@@ -84,6 +102,7 @@ func cmdSessionStatus(args []string) int {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
+	status = normalizeStatusForSessionStatusOutput(status)
 
 	if jsonOut {
 		writeJSON(status)
@@ -271,8 +290,9 @@ func cmdSessionMonitor(args []string) int {
 		}
 
 		if verbose {
+			displayStatus := normalizeMonitorFinalStatus(status.SessionState, status.Status)
 			fmt.Fprintf(os.Stderr, "[%s] poll=%d state=%s status=%s active=%q wait=%ds\n",
-				time.Now().Format("15:04:05"), poll, status.SessionState, status.Status, status.ActiveTask, status.WaitEstimate)
+				time.Now().Format("15:04:05"), poll, status.SessionState, displayStatus, status.ActiveTask, status.WaitEstimate)
 		}
 
 		reason := ""
@@ -305,7 +325,7 @@ func cmdSessionMonitor(args []string) int {
 				OutputFile:  status.OutputFile,
 				ExitReason:  reason,
 				Polls:       poll,
-				FinalStatus: status.Status,
+				FinalStatus: normalizeMonitorFinalStatus(status.SessionState, status.Status),
 			}
 			if jsonOut {
 				writeJSON(result)
@@ -345,7 +365,7 @@ func cmdSessionMonitor(args []string) int {
 		OutputFile:  last.OutputFile,
 		ExitReason:  "max_polls_exceeded",
 		Polls:       maxPolls,
-		FinalStatus: last.Status,
+		FinalStatus: normalizeMonitorFinalStatus("timeout", last.Status),
 	}
 	if degradedPolls == maxPolls && maxPolls > 0 {
 		result.ExitReason = "degraded_max_polls_exceeded"

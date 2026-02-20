@@ -15,6 +15,7 @@ func TestHelpExitZero(t *testing.T) {
 		{"top-level help", []string{"help"}},
 		{"doctor --help", []string{"doctor", "--help"}},
 		{"doctor -h", []string{"doctor", "-h"}},
+		{"cleanup --help", []string{"cleanup", "--help"}},
 		{"session --help", []string{"session", "--help"}},
 		{"session spawn --help", []string{"session", "spawn", "--help"}},
 		{"session send --help", []string{"session", "send", "--help"}},
@@ -52,7 +53,12 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"top-level",
 			[]string{"--help"},
-			[]string{"lisa <command> [args]", "doctor", "session spawn", "session explain", "agent build-cmd"},
+			[]string{"lisa <command> [args]", "doctor", "cleanup", "session spawn", "session explain", "agent build-cmd"},
+		},
+		{
+			"cleanup",
+			[]string{"cleanup", "--help"},
+			[]string{"lisa cleanup", "--dry-run", "--include-tmux-default", "--json"},
 		},
 		{
 			"session",

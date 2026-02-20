@@ -325,7 +325,7 @@ func TestCmdSessionMonitorVerboseWritesProgressLine(t *testing.T) {
 			t.Fatalf("expected completed monitor exit 0, got %d", code)
 		}
 	})
-	if !strings.Contains(stderr, "poll=1 state=completed status=idle") {
+	if !strings.Contains(stderr, "poll=1 state=completed status=completed") {
 		t.Fatalf("expected verbose monitor progress line in stderr, got %q", stderr)
 	}
 	if !strings.Contains(stdout, `"finalState":"completed"`) {

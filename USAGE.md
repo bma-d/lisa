@@ -29,6 +29,7 @@ Install options are also listed in `README.md` (Homebrew, `go install`, release 
 
 ```text
 lisa doctor
+lisa cleanup
 lisa version
 lisa session name
 lisa session spawn
@@ -106,6 +107,23 @@ Print build metadata:
 ```bash
 lisa version
 ```
+
+### `cleanup`
+
+Sweep tmux socket residue (stale sockets + detached Lisa tmux servers).
+
+```bash
+lisa cleanup
+lisa cleanup --dry-run
+lisa cleanup --json
+lisa cleanup --include-tmux-default
+```
+
+Flags:
+
+- `--dry-run`: print what would be removed/killed
+- `--include-tmux-default`: also sweep `/tmp/tmux-*` default sockets
+- `--json`: JSON summary
 
 ### `session name`
 
@@ -203,6 +221,11 @@ Flags:
 - `--fail-not-found`: exit `1` when resolved state is `not_found`
 - `--json`
 
+Output note:
+
+- `sessionState` is the lifecycle state.
+- `status` is normalized to match terminal lifecycle states (`completed`, `crashed`, `stuck`, `not_found`) so JSON/CSV no longer report `status=idle` for terminal outcomes.
+
 ### `session explain`
 
 Diagnostics: status + recent lifecycle events.
@@ -241,6 +264,11 @@ Flags:
 - `--waiting-requires-turn-complete true|false` (default `false`)
 - `--json`
 - `--verbose`
+
+Output note:
+
+- `finalState` is the terminal/stop-state from monitor.
+- `finalStatus` is normalized for terminal monitor states (`completed`, `crashed`, `stuck`, `not_found`) so it aligns with `finalState` in JSON/CSV output.
 
 When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
 `waiting_input` after transcript tail inspection confirms an assistant turn is
@@ -368,6 +396,7 @@ Flags:
 JSON support:
 
 - `doctor`
+- `cleanup`
 - `agent build-cmd`
 - `session spawn`
 - `session send`

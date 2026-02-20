@@ -12,6 +12,7 @@ func isHelpFlag(arg string) bool {
 var helpFuncs = map[string]func(){
 	"":                 helpTop,
 	"doctor":           helpDoctor,
+	"cleanup":          helpCleanup,
 	"session":          helpSession,
 	"session name":     helpSessionName,
 	"session spawn":    helpSessionSpawn,
@@ -43,6 +44,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  doctor               Check prerequisites (tmux, claude, codex)")
+	fmt.Fprintln(os.Stderr, "  cleanup              Clean stale tmux socket residue")
 	fmt.Fprintln(os.Stderr, "  version              Print version info")
 	fmt.Fprintln(os.Stderr, "  session name          Generate unique session name")
 	fmt.Fprintln(os.Stderr, "  session spawn         Create and start an agent session")
@@ -67,6 +69,17 @@ func helpDoctor() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --json    JSON output")
+}
+
+func helpCleanup() {
+	fmt.Fprintln(os.Stderr, "lisa cleanup — clean stale tmux socket residue")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa cleanup [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --dry-run                Show what would be removed/killed without mutating")
+	fmt.Fprintln(os.Stderr, "  --include-tmux-default   Also sweep tmux default sockets (/tmp/tmux-*)")
+	fmt.Fprintln(os.Stderr, "  --json                   JSON output")
 }
 
 func helpSession() {

@@ -281,7 +281,7 @@ func runTmuxCmdInput(input string, args ...string) (string, error) {
 }
 
 func runTmuxCmdWithSocket(socketPath string, args ...string) (string, error) {
-	return runTmuxWithSocketCandidates("", "", args...)
+	return runTmuxWithSocketCandidates("", socketPath, args...)
 }
 
 func runTmuxCmdWithSocketInput(input, socketPath string, args ...string) (string, error) {
