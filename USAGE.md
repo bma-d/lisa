@@ -162,15 +162,21 @@ Install repo `skills/lisa` into Codex, Claude, or a project path.
 lisa skills install --to codex --repo-root /path/to/lisa-repo
 lisa skills install --to claude --repo-root /path/to/lisa-repo
 lisa skills install --to project --project-path /tmp/target-project --repo-root /path/to/lisa-repo
+lisa skills install --repo-root /path/to/lisa-repo   # auto: install to available ~/.codex and ~/.claude
 ```
 
 Flags:
 
-- `--to`: `codex|claude|project` (default `codex`)
+- `--to`: `codex|claude|project` (default `auto`)
 - `--project-path`: required when `--to project` (installs to `<project>/skills/lisa`)
 - `--path`: explicit destination path override
 - `--repo-root`: repo root containing `skills/` (default cwd)
 - `--json`: JSON summary output
+
+Auto target behavior (when `--to` and `--path` are omitted):
+
+- installs to all available targets among `~/.codex` and `~/.claude`
+- errors if neither exists (use `--to` or `--path` to override)
 
 Source behavior:
 

@@ -128,6 +128,99 @@ func TestCmdSkillsInstallProjectRequiresProjectPath(t *testing.T) {
 	}
 }
 
+func TestCmdSkillsInstallDefaultInstallsAllAvailableTargets(t *testing.T) {
+	origHomeFn := osUserHomeDirFn
+	origVersion := BuildVersion
+	t.Cleanup(func() {
+		osUserHomeDirFn = origHomeFn
+		BuildVersion = origVersion
+	})
+	BuildVersion = "dev"
+
+	home := t.TempDir()
+	osUserHomeDirFn = func() (string, error) { return home, nil }
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatalf("mkdir codex root: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatalf("mkdir claude root: %v", err)
+	}
+
+	repoRoot := t.TempDir()
+	repoSkillDir := filepath.Join(repoRoot, "skills", lisaSkillName)
+	if err := os.MkdirAll(repoSkillDir, 0o755); err != nil {
+		t.Fatalf("mkdir repo skill dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoSkillDir, "SKILL.md"), []byte("default-install\n"), 0o644); err != nil {
+		t.Fatalf("write repo skill file: %v", err)
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSkillsInstall([]string{"--repo-root", repoRoot, "--json"})
+		if code != 0 {
+			t.Fatalf("expected default install success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+
+	var payload skillsInstallBatchSummary
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("decode payload: %v (%q)", err, stdout)
+	}
+	if len(payload.Installs) != 2 {
+		t.Fatalf("expected 2 install targets, got %+v", payload)
+	}
+
+	codexRaw, err := os.ReadFile(filepath.Join(home, ".codex", "skills", lisaSkillName, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read codex installed file: %v", err)
+	}
+	claudeRaw, err := os.ReadFile(filepath.Join(home, ".claude", "skills", lisaSkillName, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read claude installed file: %v", err)
+	}
+	if strings.TrimSpace(string(codexRaw)) != "default-install" {
+		t.Fatalf("unexpected codex content: %q", string(codexRaw))
+	}
+	if strings.TrimSpace(string(claudeRaw)) != "default-install" {
+		t.Fatalf("unexpected claude content: %q", string(claudeRaw))
+	}
+}
+
+func TestCmdSkillsInstallDefaultRequiresAvailableTargets(t *testing.T) {
+	origHomeFn := osUserHomeDirFn
+	origVersion := BuildVersion
+	t.Cleanup(func() {
+		osUserHomeDirFn = origHomeFn
+		BuildVersion = origVersion
+	})
+	BuildVersion = "dev"
+
+	home := t.TempDir()
+	osUserHomeDirFn = func() (string, error) { return home, nil }
+
+	repoRoot := t.TempDir()
+	repoSkillDir := filepath.Join(repoRoot, "skills", lisaSkillName)
+	if err := os.MkdirAll(repoSkillDir, 0o755); err != nil {
+		t.Fatalf("mkdir repo skill dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoSkillDir, "SKILL.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write repo skill file: %v", err)
+	}
+
+	_, stderr := captureOutput(t, func() {
+		code := cmdSkillsInstall([]string{"--repo-root", repoRoot})
+		if code == 0 {
+			t.Fatalf("expected default install to fail without ~/.codex or ~/.claude")
+		}
+	})
+	if !strings.Contains(stderr, "no default install targets found") {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+}
+
 func TestResolveSkillsInstallSourceUsesRepoForDevBuild(t *testing.T) {
 	origVersion := BuildVersion
 	origFetch := fetchReleaseSkillToTempDirFn

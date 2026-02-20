@@ -28,6 +28,10 @@ type skillsCopySummary struct {
 	Symlinks    int    `json:"symlinks"`
 }
 
+type skillsInstallBatchSummary struct {
+	Installs []skillsCopySummary `json:"installs"`
+}
+
 func cmdSkills(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: lisa skills <subcommand>")
@@ -114,7 +118,8 @@ func cmdSkillsSync(args []string) int {
 }
 
 func cmdSkillsInstall(args []string) int {
-	to := "codex"
+	to := ""
+	toExplicit := false
 	installPath := ""
 	projectPath := ""
 	repoRoot := getPWD()
@@ -129,6 +134,7 @@ func cmdSkillsInstall(args []string) int {
 				return flagValueError("--to")
 			}
 			to = args[i+1]
+			toExplicit = true
 			i++
 		case "--path":
 			if i+1 >= len(args) {
@@ -161,23 +167,33 @@ func cmdSkillsInstall(args []string) int {
 		return 1
 	}
 	defer cleanupSource()
-	destinationPath, err := resolveSkillsInstallPath(to, projectPath, installPath)
+	destinationPaths, err := resolveSkillsInstallDestinations(to, toExplicit, projectPath, installPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
 
-	summary, err := copyDirReplace(sourcePath, destinationPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "skills install failed: %v\n", err)
-		return 1
+	summaries := make([]skillsCopySummary, 0, len(destinationPaths))
+	for _, destinationPath := range destinationPaths {
+		summary, err := copyDirReplace(sourcePath, destinationPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "skills install failed: %v\n", err)
+			return 1
+		}
+		summaries = append(summaries, summary)
 	}
 
 	if jsonOut {
-		writeJSON(summary)
+		if len(summaries) == 1 {
+			writeJSON(summaries[0])
+		} else {
+			writeJSON(skillsInstallBatchSummary{Installs: summaries})
+		}
 		return 0
 	}
-	fmt.Printf("skills install ok: %s -> %s (%d files)\n", summary.Source, summary.Destination, summary.Files)
+	for _, summary := range summaries {
+		fmt.Printf("skills install ok: %s -> %s (%d files)\n", summary.Source, summary.Destination, summary.Files)
+	}
 	return 0
 }
 
@@ -222,6 +238,37 @@ func resolveSkillsInstallPath(to, projectPath, installPath string) (string, erro
 	}
 }
 
+func resolveSkillsInstallDestinations(to string, toExplicit bool, projectPath, installPath string) ([]string, error) {
+	if strings.TrimSpace(installPath) != "" {
+		path, err := resolveSkillsInstallPath("", projectPath, installPath)
+		if err != nil {
+			return nil, err
+		}
+		return []string{path}, nil
+	}
+	if toExplicit {
+		path, err := resolveSkillsInstallPath(to, projectPath, "")
+		if err != nil {
+			return nil, err
+		}
+		return []string{path}, nil
+	}
+
+	targets, err := discoverDefaultInstallTargets()
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(targets))
+	for _, target := range targets {
+		path, err := defaultSkillInstallPath(target)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
 func resolveSkillsInstallSource(repoRoot string) (string, func(), error) {
 	if isTaggedReleaseBuild() {
 		path, err := fetchReleaseSkillToTempDirFn(BuildVersion)
@@ -263,6 +310,29 @@ func defaultSkillInstallPath(target string) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid target: %s", target)
 	}
+}
+
+func discoverDefaultInstallTargets() ([]string, error) {
+	home, err := osUserHomeDirFn()
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]string, 0, 2)
+	if pathExists(filepath.Join(home, ".codex")) {
+		targets = append(targets, "codex")
+	}
+	if pathExists(filepath.Join(home, ".claude")) {
+		targets = append(targets, "claude")
+	}
+	if len(targets) == 0 {
+		return nil, errors.New("no default install targets found (expected ~/.codex and/or ~/.claude); pass --to or --path")
+	}
+	return targets, nil
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func expandAndCleanPath(raw string) (string, error) {
