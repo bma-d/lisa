@@ -1,7 +1,7 @@
 # Testing
 
-Last Updated: 2026-02-19
-Related Files: `src/regressions_test.go`, `src/command_coverage_test.go`, `src/session_wrapper_test.go`, `src/e2e_claude_test.go`, `src/e2e_codex_test.go`, `src/e2e_exec_fake_test.go`, `src/e2e_nested_interactive_fake_test.go`, `scripts/smoke-nested-3level.sh`, `smoke-nested`
+Last Updated: 2026-02-20
+Related Files: `src/regressions_test.go`, `src/command_coverage_test.go`, `src/monitor_waiting_turn_complete_test.go`, `src/claude_capture_fallback_test.go`, `src/session_wrapper_test.go`, `src/e2e_claude_test.go`, `src/e2e_codex_test.go`, `src/e2e_exec_fake_test.go`, `src/e2e_nested_interactive_fake_test.go`, `scripts/smoke-nested-3level.sh`, `smoke-nested`
 
 ## Overview
 
@@ -20,6 +20,7 @@ tmuxCapturePaneFn = func(session string, lines int) (string, error) { return moc
 ```
 
 Covers: state machine classification, command/output branches, artifact paths, sanitization, edge cases.
+Includes monitor strict-waiting behavior (`--waiting-requires-turn-complete`) and transcript fallback guards for promptless Claude metadata.
 
 ## Wrapper/Observability Tests
 

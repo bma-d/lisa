@@ -186,13 +186,14 @@ func checkCodexTranscriptTurnComplete(prompt, createdAt, cachedSessionID string)
 			if err := json.Unmarshal(e.Payload, &payload); err != nil {
 				return false, fileAge, sessionID, nil
 			}
-			if payload.Type == "token_count" {
+			switch payload.Type {
+			case "token_count", "task_started", "task_complete", "agent_reasoning":
 				continue
-			}
-			if payload.Type == "agent_message" {
+			case "agent_message":
 				return true, fileAge, sessionID, nil
+			default:
+				return false, fileAge, sessionID, nil
 			}
-			return false, fileAge, sessionID, nil
 		case "response_item":
 			var payload codexResponseItemPayload
 			if err := json.Unmarshal(e.Payload, &payload); err != nil {

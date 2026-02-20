@@ -234,12 +234,17 @@ Flags:
 - `--poll-interval N` seconds (default `30`)
 - `--max-polls N` (default `120`)
 - `--stop-on-waiting true|false` (default `true`)
+- `--waiting-requires-turn-complete true|false` (default `false`)
 - `--json`
 - `--verbose`
 
+When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
+`waiting_input` after transcript tail inspection confirms an assistant turn is
+complete (Claude/Codex interactive sessions with prompt metadata).
+
 Exit code behavior:
 
-- `0`: final `completed` (or `waiting_input` when emitted and stop enabled)
+- `0`: final `completed` (or `waiting_input` / `waiting_input_turn_complete` when emitted and stop enabled)
 - `2`: `crashed`, `stuck`, `not_found`, timeout, degraded timeout path
 - `1`: argument/infra errors
 

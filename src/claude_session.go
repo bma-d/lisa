@@ -405,6 +405,9 @@ func captureSessionTranscript(session, projectRoot string) (string, []transcript
 			return "", nil, fmt.Errorf("cannot load session metadata: %w", err)
 		}
 	}
+	if strings.TrimSpace(meta.Prompt) == "" || strings.TrimSpace(meta.CreatedAt) == "" {
+		return "", nil, fmt.Errorf("cannot find Claude transcript: session metadata missing prompt/createdAt")
+	}
 
 	sessionID, err := findClaudeSessionIDFn(meta.ProjectRoot, meta.Prompt, meta.CreatedAt)
 	if err != nil {

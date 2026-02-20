@@ -9,6 +9,7 @@ import (
 )
 
 var computeSessionStatusFn = computeSessionStatus
+var monitorWaitingTurnCompleteFn = monitorWaitingTurnComplete
 
 func cmdSessionStatus(args []string) int {
 	session := ""
@@ -140,6 +141,7 @@ func cmdSessionMonitor(args []string) int {
 	pollInterval := defaultPollIntervalSeconds
 	maxPolls := defaultMaxPolls
 	stopOnWaiting := true
+	waitingRequiresTurnComplete := false
 	jsonOut := false
 	verbose := false
 
@@ -205,6 +207,17 @@ func cmdSessionMonitor(args []string) int {
 			}
 			stopOnWaiting = parsed
 			i++
+		case "--waiting-requires-turn-complete":
+			if i+1 >= len(args) {
+				return flagValueError("--waiting-requires-turn-complete")
+			}
+			parsed, err := parseBoolFlag(args[i+1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "invalid --waiting-requires-turn-complete: %s (expected true|false)\n", args[i+1])
+				return 1
+			}
+			waitingRequiresTurnComplete = parsed
+			i++
 		case "--json":
 			jsonOut = true
 		case "--verbose":
@@ -262,7 +275,13 @@ func cmdSessionMonitor(args []string) int {
 			reason = "stuck"
 		case "waiting_input":
 			if stopOnWaiting {
-				reason = "waiting_input"
+				if waitingRequiresTurnComplete {
+					if monitorWaitingTurnCompleteFn(session, projectRoot, status) {
+						reason = "waiting_input_turn_complete"
+					}
+				} else {
+					reason = "waiting_input"
+				}
 			}
 		}
 		if reason != "" {
@@ -295,7 +314,7 @@ func cmdSessionMonitor(args []string) int {
 			if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+reason); err != nil {
 				fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 			}
-			if reason == "completed" || reason == "waiting_input" {
+			if reason == "completed" || strings.HasPrefix(reason, "waiting_input") {
 				return 0
 			}
 			return 2
@@ -339,6 +358,47 @@ func cmdSessionMonitor(args []string) int {
 		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 	}
 	return 2
+}
+
+func monitorWaitingTurnComplete(session, projectRoot string, status sessionStatus) bool {
+	if status.SessionState != "waiting_input" {
+		return false
+	}
+
+	meta, err := loadSessionMeta(projectRoot, session)
+	if err != nil {
+		return false
+	}
+	agent := normalizeAgent(meta.Agent)
+	if agent == "" {
+		agent = normalizeAgent(status.Agent)
+	}
+	mode := strings.ToLower(strings.TrimSpace(meta.Mode))
+	if mode == "" {
+		mode = strings.ToLower(strings.TrimSpace(status.Mode))
+	}
+	if mode != "interactive" {
+		return false
+	}
+
+	prompt := strings.TrimSpace(meta.Prompt)
+	createdAt := strings.TrimSpace(meta.CreatedAt)
+	if prompt == "" || createdAt == "" {
+		return false
+	}
+
+	state, _ := loadSessionStateWithError(sessionStateFile(projectRoot, session))
+
+	switch agent {
+	case "claude":
+		turnComplete, _, _, err := checkTranscriptTurnCompleteFn(meta.ProjectRoot, prompt, createdAt, state.ClaudeSessionID)
+		return err == nil && turnComplete
+	case "codex":
+		turnComplete, _, _, err := checkCodexTranscriptTurnCompleteFn(prompt, createdAt, state.CodexSessionID)
+		return err == nil && turnComplete
+	default:
+		return false
+	}
 }
 
 func cmdSessionCapture(args []string) int {

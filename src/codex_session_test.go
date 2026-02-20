@@ -234,6 +234,53 @@ func TestCheckCodexTranscriptTurnCompleteSkipsTokenCount(t *testing.T) {
 	}
 }
 
+func TestCheckCodexTranscriptTurnCompleteSkipsTaskComplete(t *testing.T) {
+	dir := t.TempDir()
+	sessionID := "codex-skip-task-complete"
+
+	sessDir := filepath.Join(dir, ".codex", "sessions", "2026", "02", "12")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatalf("failed to create sessions dir: %v", err)
+	}
+
+	sessFile := filepath.Join(sessDir, "rollout-1707700000-"+sessionID+".jsonl")
+
+	assistPayload := codexResponseItemPayload{
+		Type: "message",
+		Role: "assistant",
+		Content: []codexContentBlock{
+			{Type: "output_text", Text: "All done."},
+		},
+	}
+	assistPayloadJSON, _ := json.Marshal(assistPayload)
+	assistEntry := codexJSONLEntry{Timestamp: "2026-01-01T00:00:02Z", Type: "response_item", Payload: assistPayloadJSON}
+	assistJSON, _ := json.Marshal(assistEntry)
+
+	taskCompletePayload := codexEventMsgPayload{Type: "task_complete"}
+	taskCompletePayloadJSON, _ := json.Marshal(taskCompletePayload)
+	taskCompleteEntry := codexJSONLEntry{Timestamp: "2026-01-01T00:00:03Z", Type: "event_msg", Payload: taskCompletePayloadJSON}
+	taskCompleteJSON, _ := json.Marshal(taskCompleteEntry)
+
+	content := string(assistJSON) + "\n" + string(taskCompleteJSON) + "\n"
+	if err := os.WriteFile(sessFile, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed to write session file: %v", err)
+	}
+	past := time.Now().Add(-10 * time.Second)
+	os.Chtimes(sessFile, past, past)
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", dir)
+
+	turnComplete, _, _, err := checkCodexTranscriptTurnComplete("", "", sessionID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !turnComplete {
+		t.Fatal("expected turnComplete=true — task_complete should be skipped, finding assistant message behind it")
+	}
+}
+
 func TestCheckCodexTranscriptTurnCompleteFreshFile(t *testing.T) {
 	dir := t.TempDir()
 	sessionID := "codex-fresh"

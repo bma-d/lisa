@@ -179,6 +179,7 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --poll-interval N     Seconds between polls (default: 30)")
 	fmt.Fprintln(os.Stderr, "  --max-polls N         Maximum number of polls (default: 120)")
 	fmt.Fprintln(os.Stderr, "  --stop-on-waiting BOOL  Stop on waiting_input (default: true)")
+	fmt.Fprintln(os.Stderr, "  --waiting-requires-turn-complete BOOL  Require transcript turn-complete before stopping on waiting_input (default: false)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --verbose             Print poll details to stderr")
 }

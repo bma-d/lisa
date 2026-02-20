@@ -183,9 +183,11 @@ func TestCmdSessionMonitorRetriesDegradedUntilCompletion(t *testing.T) {
 func TestCmdSessionMonitorStopsOnWaitingInput(t *testing.T) {
 	origCompute := computeSessionStatusFn
 	origAppend := appendSessionEventFn
+	origWaitingTurnComplete := monitorWaitingTurnCompleteFn
 	t.Cleanup(func() {
 		computeSessionStatusFn = origCompute
 		appendSessionEventFn = origAppend
+		monitorWaitingTurnCompleteFn = origWaitingTurnComplete
 	})
 
 	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
@@ -201,6 +203,7 @@ func TestCmdSessionMonitorStopsOnWaitingInput(t *testing.T) {
 		observedReason = event.Reason
 		return nil
 	}
+	monitorWaitingTurnCompleteFn = func(session, projectRoot string, status sessionStatus) bool { return false }
 
 	stdout, stderr := captureOutput(t, func() {
 		code := cmdSessionMonitor([]string{
@@ -226,8 +229,10 @@ func TestCmdSessionMonitorStopsOnWaitingInput(t *testing.T) {
 
 func TestCmdSessionMonitorDoesNotStopOnWaitingInputWhenDisabled(t *testing.T) {
 	origCompute := computeSessionStatusFn
+	origWaitingTurnComplete := monitorWaitingTurnCompleteFn
 	t.Cleanup(func() {
 		computeSessionStatusFn = origCompute
+		monitorWaitingTurnCompleteFn = origWaitingTurnComplete
 	})
 
 	calls := 0
@@ -239,6 +244,7 @@ func TestCmdSessionMonitorDoesNotStopOnWaitingInputWhenDisabled(t *testing.T) {
 			SessionState: "waiting_input",
 		}, nil
 	}
+	monitorWaitingTurnCompleteFn = func(session, projectRoot string, status sessionStatus) bool { return true }
 
 	stdout, stderr := captureOutput(t, func() {
 		code := cmdSessionMonitor([]string{
