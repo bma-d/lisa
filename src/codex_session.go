@@ -39,6 +39,7 @@ type codexContentBlock struct {
 }
 
 var checkCodexTranscriptTurnCompleteFn = checkCodexTranscriptTurnComplete
+var codexHasAssistantTurnSinceFn = codexHasAssistantTurnSince
 
 func findCodexSessionID(prompt, createdAt string) (string, error) {
 	home, err := os.UserHomeDir()
@@ -215,4 +216,148 @@ func checkCodexTranscriptTurnComplete(prompt, createdAt, cachedSessionID string)
 	}
 
 	return false, fileAge, sessionID, nil
+}
+
+func codexHasAssistantTurnSince(sessionID string, minUserAtNanos int64) (bool, error) {
+	if strings.TrimSpace(sessionID) == "" || minUserAtNanos <= 0 {
+		return false, nil
+	}
+	if ok, err := codexHistoryHasSubmittedInputSince(sessionID, minUserAtNanos); err == nil && ok {
+		return true, nil
+	}
+	sessionPath, err := findCodexSessionFile(sessionID)
+	if err != nil {
+		return false, nil
+	}
+	info, err := os.Stat(sessionPath)
+	if err != nil {
+		return false, nil
+	}
+
+	f, err := os.Open(sessionPath)
+	if err != nil {
+		return false, nil
+	}
+	defer f.Close()
+
+	// Read tail only; submitted-input + assistant completion should be recent.
+	const tailBytes = 64 * 1024
+	fSize := info.Size()
+	offset := int64(0)
+	if fSize > tailBytes {
+		offset = fSize - tailBytes
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return false, nil
+	}
+
+	var entries []codexJSONLEntry
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 256*1024), 2*1024*1024)
+	first := offset > 0
+	for scanner.Scan() {
+		if first {
+			first = false
+			continue // skip potentially partial first line
+		}
+		var entry codexJSONLEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	if err := scanner.Err(); err != nil {
+		return false, nil
+	}
+
+	const userTimestampSkewTolerance = int64(2 * time.Second)
+	sawRecentUser := false
+	for _, entry := range entries {
+		switch entry.Type {
+		case "user_message":
+			if tsNanos, ok := parseCodexEntryTimestampNanos(entry.Timestamp); ok {
+				if tsNanos+userTimestampSkewTolerance >= minUserAtNanos {
+					sawRecentUser = true
+				}
+			}
+		default:
+			if sawRecentUser && codexEntryHasAssistantCompletion(entry) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func codexHistoryHasSubmittedInputSince(sessionID string, minUserAtNanos int64) (bool, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, err
+	}
+	historyPath := filepath.Join(home, ".codex", "history.jsonl")
+	f, err := os.Open(historyPath)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	const historyTimestampSkewTolerance = int64(2 * time.Second)
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 256*1024), 2*1024*1024)
+	for scanner.Scan() {
+		var entry codexHistoryEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		if strings.TrimSpace(entry.SessionID) != sessionID {
+			continue
+		}
+		entryNanos := entry.Ts * int64(time.Second)
+		if entryNanos+historyTimestampSkewTolerance >= minUserAtNanos {
+			return true, nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func parseCodexEntryTimestampNanos(raw string) (int64, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return t.UnixNano(), true
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UnixNano(), true
+	}
+	return 0, false
+}
+
+func codexEntryHasAssistantCompletion(entry codexJSONLEntry) bool {
+	switch entry.Type {
+	case "event_msg":
+		var payload codexEventMsgPayload
+		if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+			return false
+		}
+		return payload.Type == "agent_message"
+	case "response_item":
+		var payload codexResponseItemPayload
+		if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+			return false
+		}
+		if payload.Type != "message" || payload.Role != "assistant" {
+			return false
+		}
+		for _, block := range payload.Content {
+			if block.Type == "output_text" && strings.TrimSpace(block.Text) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }

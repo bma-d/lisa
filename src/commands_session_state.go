@@ -400,16 +400,88 @@ func monitorWaitingTurnComplete(session, projectRoot string, status sessionStatu
 	}
 
 	state, _ := loadSessionStateWithError(sessionStateFile(projectRoot, session))
+	lastInputAtNanos := state.LastInputAtNanos
+	if lastInputAtNanos <= 0 && state.LastInputAt > 0 {
+		lastInputAtNanos = state.LastInputAt * int64(time.Second)
+	}
 
 	switch agent {
 	case "claude":
-		turnComplete, _, _, err := checkTranscriptTurnCompleteFn(meta.ProjectRoot, prompt, createdAt, state.ClaudeSessionID)
-		return err == nil && turnComplete
+		turnComplete, fileAge, sessionID, err := checkTranscriptTurnCompleteFn(meta.ProjectRoot, prompt, createdAt, state.ClaudeSessionID)
+		if err != nil {
+			return false
+		}
+		cacheTranscriptSessionID(projectRoot, session, "claude", sessionID)
+		if !turnComplete {
+			return false
+		}
+		return transcriptLikelyIncludesLatestInput(lastInputAtNanos, fileAge)
 	case "codex":
-		turnComplete, _, _, err := checkCodexTranscriptTurnCompleteFn(prompt, createdAt, state.CodexSessionID)
-		return err == nil && turnComplete
+		turnComplete, fileAge, sessionID, err := checkCodexTranscriptTurnCompleteFn(prompt, createdAt, state.CodexSessionID)
+		if err != nil {
+			return false
+		}
+		cacheTranscriptSessionID(projectRoot, session, "codex", sessionID)
+		if !turnComplete {
+			return false
+		}
+		if !transcriptLikelyIncludesLatestInput(lastInputAtNanos, fileAge) {
+			return false
+		}
+		if lastInputAtNanos > 0 {
+			hasAssistantTurn, err := codexHasAssistantTurnSinceFn(sessionID, lastInputAtNanos)
+			if err != nil || !hasAssistantTurn {
+				return false
+			}
+		}
+		return true
 	default:
 		return false
+	}
+}
+
+func transcriptLikelyIncludesLatestInput(lastInputAtNanos int64, fileAge int) bool {
+	if lastInputAtNanos <= 0 {
+		return true
+	}
+	if fileAge < 0 {
+		return false
+	}
+	latestPossibleWrite := nowFn().Add(-time.Duration(fileAge) * time.Second).UnixNano()
+	const transcriptClockSkewTolerance = int64(2 * time.Second)
+	return latestPossibleWrite+transcriptClockSkewTolerance >= lastInputAtNanos
+}
+
+func cacheTranscriptSessionID(projectRoot, session, agent, sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	statePath := sessionStateFile(projectRoot, session)
+	_, err := withStateFileLockFn(statePath, func() error {
+		state, loadErr := loadSessionStateWithError(statePath)
+		if loadErr != nil {
+			state = sessionState{}
+		}
+		switch strings.ToLower(strings.TrimSpace(agent)) {
+		case "claude":
+			if state.ClaudeSessionID == sessionID {
+				return nil
+			}
+			state.ClaudeSessionID = sessionID
+		case "codex":
+			if state.CodexSessionID == sessionID {
+				return nil
+			}
+			state.CodexSessionID = sessionID
+		default:
+			return nil
+		}
+		return saveSessionState(statePath, state)
+	})
+	if err != nil {
+		// Best-effort cache update; monitor semantics should not fail on this.
+		return
 	}
 }
 

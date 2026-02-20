@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 type doctorCheck struct {
@@ -148,6 +149,9 @@ func cmdAgentBuildCmd(args []string) int {
 		default:
 			return unknownFlagError(args[i])
 		}
+	}
+	if shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs) {
+		agentArgs = strings.TrimSpace(agentArgs + " --dangerously-bypass-approvals-and-sandbox")
 	}
 
 	cmd, err := buildAgentCommandWithOptions(agent, mode, prompt, agentArgs, skipPermissions)

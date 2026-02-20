@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -319,5 +320,149 @@ func TestCheckCodexTranscriptTurnCompleteFreshFile(t *testing.T) {
 	}
 	if fileAge >= 3 {
 		t.Fatalf("expected fileAge < 3 for just-written file, got %d", fileAge)
+	}
+}
+
+func TestCodexHasAssistantTurnSince(t *testing.T) {
+	dir := t.TempDir()
+	sessionID := "codex-turn-since"
+
+	sessDir := filepath.Join(dir, ".codex", "sessions", "2026", "02", "12")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatalf("failed to create sessions dir: %v", err)
+	}
+
+	userAt := time.Date(2026, 1, 1, 0, 0, 5, 0, time.UTC)
+	entries := []codexJSONLEntry{
+		{
+			Timestamp: "2026-01-01T00:00:01Z",
+			Type:      "response_item",
+			Payload:   json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"old"}]}`),
+		},
+		{
+			Timestamp: "2026-01-01T00:00:05Z",
+			Type:      "user_message",
+			Payload:   json.RawMessage(`{"text":"next task"}`),
+		},
+		{
+			Timestamp: "2026-01-01T00:00:06Z",
+			Type:      "event_msg",
+			Payload:   json.RawMessage(`{"type":"agent_message"}`),
+		},
+	}
+	var lines []string
+	for _, entry := range entries {
+		raw, _ := json.Marshal(entry)
+		lines = append(lines, string(raw))
+	}
+	sessFile := filepath.Join(sessDir, "rollout-1707700000-"+sessionID+".jsonl")
+	if err := os.WriteFile(sessFile, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write session file: %v", err)
+	}
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", dir)
+
+	ok, err := codexHasAssistantTurnSince(sessionID, userAt.UnixNano())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected assistant turn after recent user input")
+	}
+}
+
+func TestCodexHasAssistantTurnSinceRequiresRecentUserTurn(t *testing.T) {
+	dir := t.TempDir()
+	sessionID := "codex-turn-since-missing-user"
+
+	sessDir := filepath.Join(dir, ".codex", "sessions", "2026", "02", "12")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatalf("failed to create sessions dir: %v", err)
+	}
+
+	entries := []codexJSONLEntry{
+		{
+			Timestamp: "2026-01-01T00:00:01Z",
+			Type:      "response_item",
+			Payload:   json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"old"}]}`),
+		},
+		{
+			Timestamp: "2026-01-01T00:00:03Z",
+			Type:      "event_msg",
+			Payload:   json.RawMessage(`{"type":"token_count"}`),
+		},
+	}
+	var lines []string
+	for _, entry := range entries {
+		raw, _ := json.Marshal(entry)
+		lines = append(lines, string(raw))
+	}
+	sessFile := filepath.Join(sessDir, "rollout-1707700000-"+sessionID+".jsonl")
+	if err := os.WriteFile(sessFile, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write session file: %v", err)
+	}
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", dir)
+
+	ok, err := codexHasAssistantTurnSince(sessionID, time.Date(2026, 1, 1, 0, 0, 5, 0, time.UTC).UnixNano())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected false when no recent user turn exists before assistant completion")
+	}
+}
+
+func TestCodexHasAssistantTurnSinceUsesHistoryFallbackForRecentInput(t *testing.T) {
+	dir := t.TempDir()
+	sessionID := "codex-turn-since-history"
+	minInput := time.Date(2026, 1, 1, 0, 0, 5, 0, time.UTC)
+
+	sessDir := filepath.Join(dir, ".codex", "sessions", "2026", "02", "12")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatalf("failed to create sessions dir: %v", err)
+	}
+
+	// Transcript tail has assistant completion but no user_message entries.
+	entries := []codexJSONLEntry{
+		{
+			Timestamp: "2026-01-01T00:00:06Z",
+			Type:      "event_msg",
+			Payload:   json.RawMessage(`{"type":"agent_message"}`),
+		},
+	}
+	var lines []string
+	for _, entry := range entries {
+		raw, _ := json.Marshal(entry)
+		lines = append(lines, string(raw))
+	}
+	sessFile := filepath.Join(sessDir, "rollout-1707700000-"+sessionID+".jsonl")
+	if err := os.WriteFile(sessFile, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write session file: %v", err)
+	}
+
+	codexDir := filepath.Join(dir, ".codex")
+	historyLines := []string{
+		`{"session_id":"` + sessionID + `","ts":` + strconv.FormatInt(minInput.Add(-10*time.Second).Unix(), 10) + `,"text":"old"}`,
+		`{"session_id":"` + sessionID + `","ts":` + strconv.FormatInt(minInput.Unix(), 10) + `,"text":"new prompt"}`,
+	}
+	if err := os.WriteFile(filepath.Join(codexDir, "history.jsonl"), []byte(strings.Join(historyLines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write history: %v", err)
+	}
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", dir)
+
+	ok, err := codexHasAssistantTurnSince(sessionID, minInput.UnixNano())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected history fallback to mark recent user input as observed")
 	}
 }

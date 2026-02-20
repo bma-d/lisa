@@ -166,6 +166,13 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		status.Signals.StateReadError = stateHintErr.Error()
 		stateHint = sessionState{}
 	}
+	effectivePollCount := pollCount
+	if effectivePollCount <= 0 {
+		effectivePollCount = stateHint.PollCount + 1
+		if effectivePollCount <= 0 {
+			effectivePollCount = 1
+		}
+	}
 
 	agent := resolveAgent(agentHint, meta, session, strings.ToLower(strings.TrimSpace(stateHint.LastResolvedAgent)))
 	mode := resolveMode(modeHint, meta, session, strings.ToLower(strings.TrimSpace(stateHint.LastResolvedMode)))
@@ -318,7 +325,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			case agentPID > 0:
 				activeProcessBusy := agentCPU >= agentCPUBusyThreshold
 				status.Signals.ActiveProcessBusy = activeProcessBusy
-				if mode == "interactive" && !activeProcessBusy && pollCount > 3 {
+				if mode == "interactive" && !activeProcessBusy && effectivePollCount > 3 {
 					status.Status = "idle"
 					status.SessionState = "waiting_input"
 					status.WaitEstimate = 0
@@ -329,7 +336,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 					status.SessionState = "in_progress"
 					status.ClassificationReason = "agent_pid_alive"
 				}
-			case interactiveModeKnown && paneIsShell && heartbeatFresh && pollCount > 3 && paneTreeReady:
+			case interactiveModeKnown && paneIsShell && heartbeatFresh && effectivePollCount > 3 && paneTreeReady:
 				activeProcessBusy := paneCPU >= agentCPUBusyThreshold
 				status.Signals.ActiveProcessBusy = activeProcessBusy
 				switch {
@@ -369,7 +376,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			default:
 				status.Status = "idle"
 				status.WaitEstimate = 0
-				if pollCount > 0 && pollCount <= 3 {
+				if effectivePollCount > 0 && effectivePollCount <= 3 {
 					status.SessionState = "just_started"
 					status.ClassificationReason = "grace_period_just_started"
 				} else {
@@ -389,11 +396,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 		if status.Status == "active" {
 			state.HasEverBeenActive = true
 		}
-		if pollCount > 0 {
-			state.PollCount = pollCount
-		} else {
-			state.PollCount++
-		}
+		state.PollCount = effectivePollCount
 		currentPoll := state.PollCount
 
 		eventType := "snapshot"

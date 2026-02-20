@@ -41,6 +41,8 @@ type sessionState struct {
 	LastOutputHash            string  `json:"lastOutputHash"`
 	LastOutputAt              int64   `json:"lastOutputAt"`
 	LastOutputAtNanos         int64   `json:"lastOutputAtNanos,omitempty"`
+	LastInputAt               int64   `json:"lastInputAt,omitempty"`
+	LastInputAtNanos          int64   `json:"lastInputAtNanos,omitempty"`
 	LastAgentPID              int     `json:"lastAgentPid,omitempty"`
 	LastAgentProbeAt          int64   `json:"lastAgentProbeAt,omitempty"`
 	LastAgentCPU              float64 `json:"lastAgentCpu,omitempty"`

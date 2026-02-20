@@ -1,8 +1,10 @@
 package app
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCmdSessionMonitorWaitingRequiresTurnCompleteStopsWhenReady(t *testing.T) {
@@ -97,5 +99,115 @@ func TestCmdSessionMonitorWaitingRequiresTurnCompleteDoesNotStopWhenNotReady(t *
 	}
 	if !strings.Contains(stdout, `"exitReason":"max_polls_exceeded"`) {
 		t.Fatalf("expected max_polls_exceeded reason when turn complete requirement is unmet, got %q", stdout)
+	}
+}
+
+func TestMonitorWaitingTurnCompleteRequiresTranscriptFreshnessAfterLatestInput(t *testing.T) {
+	origNow := nowFn
+	origCodexTranscript := checkCodexTranscriptTurnCompleteFn
+	origCodexSince := codexHasAssistantTurnSinceFn
+	t.Cleanup(func() {
+		nowFn = origNow
+		checkCodexTranscriptTurnCompleteFn = origCodexTranscript
+		codexHasAssistantTurnSinceFn = origCodexSince
+	})
+
+	fixedNow := time.Date(2026, 2, 20, 8, 0, 0, 0, time.UTC)
+	nowFn = func() time.Time { return fixedNow }
+	checkCodexTranscriptTurnCompleteFn = func(prompt, createdAt, cachedSessionID string) (bool, int, string, error) {
+		return true, 90, "codex-session-stale", nil
+	}
+	codexHasAssistantTurnSinceFn = func(sessionID string, minUserAtNanos int64) (bool, error) {
+		return true, nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-monitor-turn-freshness"
+	if err := saveSessionMeta(projectRoot, session, sessionMeta{
+		Session:     session,
+		Agent:       "codex",
+		Mode:        "interactive",
+		ProjectRoot: projectRoot,
+		Prompt:      "prompt",
+		CreatedAt:   fixedNow.Add(-5 * time.Minute).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("failed to save meta: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(sessionMetaFile(projectRoot, session)) })
+	t.Cleanup(func() { _ = os.Remove(sessionStateFile(projectRoot, session)) })
+	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
+		LastInputAt:      fixedNow.Add(-5 * time.Second).Unix(),
+		LastInputAtNanos: fixedNow.Add(-5 * time.Second).UnixNano(),
+	}); err != nil {
+		t.Fatalf("failed to seed state: %v", err)
+	}
+
+	ready := monitorWaitingTurnComplete(session, projectRoot, sessionStatus{
+		Session:      session,
+		Agent:        "codex",
+		Mode:         "interactive",
+		SessionState: "waiting_input",
+	})
+	if ready {
+		t.Fatalf("expected stale transcript to block waiting_input_turn_complete")
+	}
+
+	state, err := loadSessionStateWithError(sessionStateFile(projectRoot, session))
+	if err != nil {
+		t.Fatalf("failed to load session state: %v", err)
+	}
+	if state.CodexSessionID != "codex-session-stale" {
+		t.Fatalf("expected codex session id cache update, got %q", state.CodexSessionID)
+	}
+}
+
+func TestMonitorWaitingTurnCompleteAllowsFreshTranscriptAfterInput(t *testing.T) {
+	origNow := nowFn
+	origCodexTranscript := checkCodexTranscriptTurnCompleteFn
+	origCodexSince := codexHasAssistantTurnSinceFn
+	t.Cleanup(func() {
+		nowFn = origNow
+		checkCodexTranscriptTurnCompleteFn = origCodexTranscript
+		codexHasAssistantTurnSinceFn = origCodexSince
+	})
+
+	fixedNow := time.Date(2026, 2, 20, 8, 10, 0, 0, time.UTC)
+	nowFn = func() time.Time { return fixedNow }
+	checkCodexTranscriptTurnCompleteFn = func(prompt, createdAt, cachedSessionID string) (bool, int, string, error) {
+		return true, 1, "codex-session-fresh", nil
+	}
+	codexHasAssistantTurnSinceFn = func(sessionID string, minUserAtNanos int64) (bool, error) {
+		return true, nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-monitor-turn-fresh"
+	if err := saveSessionMeta(projectRoot, session, sessionMeta{
+		Session:     session,
+		Agent:       "codex",
+		Mode:        "interactive",
+		ProjectRoot: projectRoot,
+		Prompt:      "prompt",
+		CreatedAt:   fixedNow.Add(-5 * time.Minute).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("failed to save meta: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(sessionMetaFile(projectRoot, session)) })
+	t.Cleanup(func() { _ = os.Remove(sessionStateFile(projectRoot, session)) })
+	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
+		LastInputAt:      fixedNow.Add(-10 * time.Second).Unix(),
+		LastInputAtNanos: fixedNow.Add(-10 * time.Second).UnixNano(),
+	}); err != nil {
+		t.Fatalf("failed to seed state: %v", err)
+	}
+
+	ready := monitorWaitingTurnComplete(session, projectRoot, sessionStatus{
+		Session:      session,
+		Agent:        "codex",
+		Mode:         "interactive",
+		SessionState: "waiting_input",
+	})
+	if !ready {
+		t.Fatalf("expected fresh transcript to satisfy waiting_input_turn_complete")
 	}
 }

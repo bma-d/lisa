@@ -366,6 +366,36 @@ func shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs string) bo
 	return false
 }
 
+func shouldRecordInputTimestamp(text string, keyList []string, enter bool) bool {
+	if text != "" {
+		return enter
+	}
+	if enter {
+		return true
+	}
+	for _, key := range keyList {
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		if normalized == "enter" || normalized == "kpenter" || normalized == "c-m" {
+			return true
+		}
+	}
+	return false
+}
+
+func recordSessionInputTimestamp(projectRoot, session string, at time.Time) error {
+	statePath := sessionStateFile(projectRoot, session)
+	_, err := withStateFileLockFn(statePath, func() error {
+		state, stateErr := loadSessionStateWithError(statePath)
+		if stateErr != nil {
+			state = sessionState{}
+		}
+		state.LastInputAt = at.Unix()
+		state.LastInputAtNanos = at.UnixNano()
+		return saveSessionState(statePath, state)
+	})
+	return err
+}
+
 func cmdSessionSend(args []string) int {
 	session := ""
 	projectRoot := getPWD()
@@ -441,6 +471,8 @@ func cmdSessionSend(args []string) int {
 		fmt.Fprintln(os.Stderr, "session not found")
 		return 1
 	}
+	recordInputAt := shouldRecordInputTimestamp(text, keyList, enter)
+	sendAt := time.Now()
 
 	if text != "" {
 		if err := tmuxSendTextFn(session, text, enter); err != nil {
@@ -457,6 +489,11 @@ func cmdSessionSend(args []string) int {
 		}
 		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "in_progress", "active", "send_keys"); err != nil {
 			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+		}
+	}
+	if recordInputAt {
+		if err := recordSessionInputTimestamp(projectRoot, session, sendAt); err != nil {
+			fmt.Fprintf(os.Stderr, "observability warning: failed to record input timestamp: %v\n", err)
 		}
 	}
 

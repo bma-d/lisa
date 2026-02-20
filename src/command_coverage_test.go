@@ -64,6 +64,32 @@ func TestCmdAgentBuildCmdExecPath(t *testing.T) {
 	}
 }
 
+func TestCmdAgentBuildCmdExecPathAutoBypassesNestedCodexPrompt(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdAgentBuildCmd([]string{
+			"--agent", "codex",
+			"--mode", "exec",
+			"--prompt", "Use ./lisa session spawn for nested workers",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected exec build-cmd success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `--dangerously-bypass-approvals-and-sandbox`) {
+		t.Fatalf("expected nested codex exec build-cmd to include bypass sandbox, got %q", stdout)
+	}
+	if strings.Contains(stdout, `--full-auto`) {
+		t.Fatalf("expected nested codex exec build-cmd to omit --full-auto, got %q", stdout)
+	}
+	if !strings.Contains(stdout, `--skip-git-repo-check`) {
+		t.Fatalf("expected codex exec command to include --skip-git-repo-check, got %q", stdout)
+	}
+}
+
 func TestAgentDisplayNameFormatting(t *testing.T) {
 	if got := agentDisplayName("claude"); got != "Claude" {
 		t.Fatalf("expected Claude display name, got %q", got)
@@ -346,9 +372,8 @@ func TestCmdSessionExplainTextOutputWithTmuxReadError(t *testing.T) {
 
 	for _, token := range []string{
 		"session: lisa-explain-text",
-		"state: stuck (idle)",
-		"reason: stuck_no_signals",
-		"tmux_read_error: tmux server busy",
+		"state: just_started (idle)",
+		"reason: grace_period_just_started",
 		"events: none",
 	} {
 		if !strings.Contains(stdout, token) {
