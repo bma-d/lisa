@@ -161,6 +161,7 @@ Notes:
 - Codex `exec` defaults include `--full-auto` and `--skip-git-repo-check`.
 - Nested Codex runs: `codex exec --full-auto` uses a sandbox that can block tmux socket creation (`Operation not permitted`). For 2-3 level nested Lisa flows, prefer `--mode interactive` plus `session send`.
 - If you pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'`, Lisa omits `--full-auto` automatically (Codex rejects combining both flags).
+- For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`) to avoid shell quoting collisions in inline nested commands.
 
 ### `session send`
 

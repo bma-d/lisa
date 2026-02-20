@@ -388,6 +388,45 @@ func TestCmdSessionCaptureKeepNoise(t *testing.T) {
 	}
 }
 
+func TestCmdSessionCaptureStripsCodexAuthRefreshNoise(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return strings.Join([]string{
+			"2026-02-20T06:21:24.946557Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Auth(TokenRefreshFailed(\"Server returned error response: invalid_grant: Invalid refresh token\"))",
+			"_client::StreamableHttpClientWorker<rmcp::transport::auth::AuthClient<reqwest::async_impl::client::Client>>>] error: Auth error: OAuth token refresh failed: Server returned error response: invalid_grant: Invalid refresh",
+			"token, when send initialize request",
+			"real output line",
+		}, "\n"), nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionCapture([]string{
+			"--session", "lisa-test-auth-noise",
+			"--raw",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected filtered raw capture success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if strings.Contains(stdout, "invalid_grant") || strings.Contains(stdout, "rmcp::transport::worker") || strings.Contains(stdout, "when send initialize request") {
+		t.Fatalf("expected auth refresh noise lines to be removed, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "real output line") {
+		t.Fatalf("expected non-noise line to remain, got %q", stdout)
+	}
+}
+
 func TestCmdSessionCaptureDefaultFallsBackToRawForNonClaude(t *testing.T) {
 	origMetaGlobFn := loadSessionMetaByGlobFn
 	origHas := tmuxHasSessionFn

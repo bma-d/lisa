@@ -1635,6 +1635,42 @@ func TestTmuxListSessionsReturnsErrorForUnexpectedTmuxFailure(t *testing.T) {
 
 	if _, err := tmuxListSessions(false, t.TempDir()); err == nil {
 		t.Fatalf("expected tmux list-sessions to return error for unexpected failures")
+	} else if !strings.Contains(strings.ToLower(err.Error()), "permission denied") {
+		t.Fatalf("expected wrapped error to include tmux output, got: %v", err)
+	}
+}
+
+func TestTmuxListSessionsTreatsMissingSocketAsEmpty(t *testing.T) {
+	binDir := t.TempDir()
+	tmuxPath := filepath.Join(binDir, "tmux")
+	script := strings.Join([]string{
+		"#!/usr/bin/env sh",
+		`if [ "$1" = "-S" ]; then shift 2; fi`,
+		`if [ "$1" = "list-sessions" ]; then`,
+		`  echo "error connecting to /tmp/lisa-tmux-missing.sock (No such file or directory)" >&2`,
+		"  exit 1",
+		"fi",
+		"exit 0",
+		"",
+	}, "\n")
+	if err := os.WriteFile(tmuxPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("failed to write fake tmux binary: %v", err)
+	}
+
+	origPath := os.Getenv("PATH")
+	if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath); err != nil {
+		t.Fatalf("failed to set PATH: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("PATH", origPath)
+	})
+
+	sessions, err := tmuxListSessions(false, t.TempDir())
+	if err != nil {
+		t.Fatalf("expected missing-socket tmux output to be handled as empty list, got error: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected zero sessions, got %v", sessions)
 	}
 }
 

@@ -1,6 +1,6 @@
 # Tmux Interaction Layer
 
-Last Updated: 2026-02-11
+Last Updated: 2026-02-20
 Related Files: `src/tmux.go`
 
 ## Overview
@@ -33,7 +33,7 @@ Spawn path now hard-fails before session creation if heartbeat artifact path can
 - `tmuxCapturePane()`: captures N lines from pane via `capture-pane -p -S -N`
 - `tmuxDisplay()`: queries tmux format strings (`pane_dead`, `pane_pid`, etc.)
 - `tmuxPaneStatus()`: combines `pane_dead` + `pane_dead_status` into alive/exited/crashed
-- `tmuxListSessions()`: normalizes tmux "no server running"/"no sessions" errors to an empty list so list/kill-all behave correctly when no tmux sessions exist
+- `tmuxListSessions()`: normalizes tmux "no server running"/"no sessions"/missing-socket (`error connecting ... no such file or directory`) errors to an empty list so list/kill-all behave correctly when no tmux sessions exist
 
 ## Process Detection
 

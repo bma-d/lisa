@@ -255,22 +255,35 @@ func filterCaptureNoise(input string) string {
 }
 
 func isCaptureNoiseLine(trimmed string) bool {
+	lower := strings.ToLower(trimmed)
 	switch {
-	case strings.HasPrefix(trimmed, "mcp: "):
+	case strings.HasPrefix(lower, "mcp: "):
 		return true
-	case strings.HasPrefix(trimmed, "mcp startup: "):
+	case strings.HasPrefix(lower, "mcp startup: "):
 		return true
-	case strings.HasPrefix(trimmed, "⚠ MCP client for "):
+	case strings.HasPrefix(lower, "⚠ mcp client for "):
 		return true
-	case strings.HasPrefix(trimmed, "⚠ MCP startup incomplete"):
+	case strings.HasPrefix(lower, "⚠ mcp startup incomplete"):
 		return true
-	case strings.HasPrefix(trimmed, "⚠ Under-development features enabled:"):
+	case strings.HasPrefix(lower, "⚠ under-development features enabled:"):
 		return true
-	case strings.Contains(trimmed, "codex_state::runtime: failed to open state db"):
+	case strings.Contains(lower, "rmcp::transport::worker: worker quit with fatal:"):
 		return true
-	case strings.Contains(trimmed, "codex_core::rollout::list: state db missing rollout path"):
+	case strings.Contains(lower, "auth(tokenrefreshfailed("):
 		return true
-	case strings.Contains(trimmed, "codex_core::state_db: state db record_discrepancy"):
+	case strings.Contains(lower, "auth error: oauth token refresh failed:"):
+		return true
+	case strings.Contains(lower, "invalid_grant: invalid refresh token"):
+		return true
+	case strings.Contains(lower, "when send initialize request"):
+		return true
+	case strings.HasPrefix(lower, "_client::streamablehttpclientworker"):
+		return true
+	case strings.Contains(lower, "codex_state::runtime: failed to open state db"):
+		return true
+	case strings.Contains(lower, "codex_core::rollout::list: state db missing rollout path"):
+		return true
+	case strings.Contains(lower, "codex_core::state_db: state db record_discrepancy"):
 		return true
 	default:
 		return false

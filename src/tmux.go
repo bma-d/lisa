@@ -175,10 +175,10 @@ func tmuxListSessions(projectOnly bool, projectRoot string) ([]string, error) {
 
 	out, err := runTmuxCmd("list-sessions", "-F", "#{session_name}")
 	if err != nil {
-		if isTmuxNoSessionsOutput(out) {
+		if isTmuxNoSessionsOutput(out) || isTmuxNoSessionsOutput(err.Error()) {
 			return []string{}, nil
 		}
-		return nil, err
+		return nil, wrapTmuxCommandError(err, out)
 	}
 	lines := trimLines(out)
 	filtered := make([]string, 0, len(lines))
@@ -205,6 +205,7 @@ func isTmuxNoSessionsOutput(output string) bool {
 	}
 	return strings.Contains(msg, "no server running") ||
 		strings.Contains(msg, "failed to connect to server") ||
+		(strings.Contains(msg, "error connecting to") && strings.Contains(msg, "no such file or directory")) ||
 		msg == "no sessions" ||
 		strings.HasPrefix(msg, "no sessions ")
 }
