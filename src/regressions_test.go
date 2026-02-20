@@ -3224,3 +3224,146 @@ func TestComputeSessionStatusCodexTranscriptTurnComplete(t *testing.T) {
 		t.Fatalf("expected no cached CodexSessionID without transcript path, got %q", state.CodexSessionID)
 	}
 }
+
+func TestComputeSessionStatusUsesCachedTurnCompleteSignal(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "capture", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tnode\t123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 456, 0.01, nil }
+
+	projectRoot := t.TempDir()
+	session := "lisa-cached-turn-complete"
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "codex",
+		Mode:        "interactive",
+		ProjectRoot: projectRoot,
+		Prompt:      "test prompt",
+		CreatedAt:   "2026-01-01T00:00:00Z",
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("failed to save meta: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(sessionMetaFile(projectRoot, session)) })
+	t.Cleanup(func() { _ = os.Remove(sessionStateFile(projectRoot, session)) })
+
+	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
+		LastInputAtNanos:           1000,
+		LastTurnCompleteInputNanos: 1000,
+		LastTurnCompleteFileAge:    9,
+	}); err != nil {
+		t.Fatalf("failed to seed state: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "codex", "interactive", false, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.SessionState != "waiting_input" {
+		t.Fatalf("expected waiting_input for idle interactive process, got %q", status.SessionState)
+	}
+	if !status.Signals.TranscriptTurnComplete {
+		t.Fatal("expected TranscriptTurnComplete signal from cached turn-complete marker")
+	}
+	if status.Signals.TranscriptFileAge != 9 {
+		t.Fatalf("expected TranscriptFileAge=9, got %d", status.Signals.TranscriptFileAge)
+	}
+
+	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
+		LastInputAtNanos:           2000,
+		LastTurnCompleteInputNanos: 1000,
+		LastTurnCompleteFileAge:    9,
+	}); err != nil {
+		t.Fatalf("failed to reseed state: %v", err)
+	}
+	status, err = computeSessionStatus(session, projectRoot, "codex", "interactive", false, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.Signals.TranscriptTurnComplete {
+		t.Fatal("expected cached turn-complete signal to clear once newer input is recorded")
+	}
+}
+
+func TestComputeSessionStatusUsesTurnCompleteTimestampWhenInputTimestampMissing(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) { return "capture", nil }
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{pane_pid}":
+			return "0\t0\tnode\t123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) { return "", errors.New("missing") }
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) { return 456, 0.01, nil }
+
+	projectRoot := t.TempDir()
+	session := "lisa-cached-turn-complete-no-input"
+	meta := sessionMeta{
+		Session:     session,
+		Agent:       "codex",
+		Mode:        "interactive",
+		ProjectRoot: projectRoot,
+		Prompt:      "test prompt",
+		CreatedAt:   "2026-01-01T00:00:00Z",
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("failed to save meta: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(sessionMetaFile(projectRoot, session)) })
+	t.Cleanup(func() { _ = os.Remove(sessionStateFile(projectRoot, session)) })
+
+	if err := saveSessionState(sessionStateFile(projectRoot, session), sessionState{
+		LastTurnCompleteAtNanos: 1_000_000_000,
+		LastTurnCompleteFileAge: 4,
+	}); err != nil {
+		t.Fatalf("failed to seed state: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "codex", "interactive", false, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !status.Signals.TranscriptTurnComplete {
+		t.Fatal("expected TranscriptTurnComplete signal from cached completion timestamp")
+	}
+	if status.Signals.TranscriptFileAge != 4 {
+		t.Fatalf("expected TranscriptFileAge=4, got %d", status.Signals.TranscriptFileAge)
+	}
+}

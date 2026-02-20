@@ -455,6 +455,60 @@ func TestCmdSessionExplainReadEventError(t *testing.T) {
 	}
 }
 
+func TestCmdSessionExplainNormalizesTerminalStatus(t *testing.T) {
+	origCompute := computeSessionStatusFn
+	origReadTail := readSessionEventTailFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origCompute
+		readSessionEventTailFn = origReadTail
+	})
+
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:      session,
+			Status:       "idle",
+			SessionState: "crashed",
+		}, nil
+	}
+	readSessionEventTailFn = func(projectRoot, session string, max int) (sessionEventTail, error) {
+		return sessionEventTail{}, nil
+	}
+
+	jsonOut, stderr := captureOutput(t, func() {
+		code := cmdSessionExplain([]string{"--session", "lisa-explain-normalized", "--json"})
+		if code != 0 {
+			t.Fatalf("expected explain json success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(jsonOut), &payload); err != nil {
+		t.Fatalf("failed to parse explain json: %v (%q)", err, jsonOut)
+	}
+	statusObj, ok := payload["status"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected status object in explain payload, got %T", payload["status"])
+	}
+	if statusObj["status"] != "crashed" || statusObj["sessionState"] != "crashed" {
+		t.Fatalf("expected normalized terminal status in explain json payload, got %v", statusObj)
+	}
+
+	textOut, stderr := captureOutput(t, func() {
+		code := cmdSessionExplain([]string{"--session", "lisa-explain-normalized"})
+		if code != 0 {
+			t.Fatalf("expected explain text success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(textOut, "state: crashed (crashed)") {
+		t.Fatalf("expected normalized explain text status, got %q", textOut)
+	}
+}
+
 func TestCmdSessionMonitorEmitsLifecycleEvent(t *testing.T) {
 	origCompute := computeSessionStatusFn
 	origAppend := appendSessionEventFn

@@ -130,6 +130,30 @@ func agentDisplayName(agent string) string {
 	return string(runes)
 }
 
+func stateLastInputAtNanos(state sessionState) int64 {
+	lastInputAtNanos := state.LastInputAtNanos
+	if lastInputAtNanos <= 0 && state.LastInputAt > 0 {
+		lastInputAtNanos = state.LastInputAt * int64(time.Second)
+	}
+	return lastInputAtNanos
+}
+
+func applyCachedTurnCompleteSignals(status *sessionStatus, state sessionState) {
+	turnCompleteMarker := state.LastTurnCompleteInputNanos
+	if turnCompleteMarker <= 0 {
+		turnCompleteMarker = state.LastTurnCompleteAtNanos
+	}
+	if turnCompleteMarker <= 0 {
+		return
+	}
+	lastInputAtNanos := stateLastInputAtNanos(state)
+	if lastInputAtNanos > 0 && turnCompleteMarker < lastInputAtNanos {
+		return
+	}
+	status.Signals.TranscriptTurnComplete = true
+	status.Signals.TranscriptFileAge = state.LastTurnCompleteFileAge
+}
+
 func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
 	status := sessionStatus{
 		Session:              session,
@@ -173,6 +197,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			effectivePollCount = 1
 		}
 	}
+	applyCachedTurnCompleteSignals(&status, stateHint)
 
 	agent := resolveAgent(agentHint, meta, session, strings.ToLower(strings.TrimSpace(stateHint.LastResolvedAgent)))
 	mode := resolveMode(modeHint, meta, session, strings.ToLower(strings.TrimSpace(stateHint.LastResolvedMode)))

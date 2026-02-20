@@ -27,7 +27,9 @@ func TestCmdSessionMonitorWaitingRequiresTurnCompleteStopsWhenReady(t *testing.T
 		}, nil
 	}
 
-	monitorWaitingTurnCompleteFn = func(session, projectRoot string, status sessionStatus) bool { return true }
+	monitorWaitingTurnCompleteFn = func(session, projectRoot string, status sessionStatus) waitingTurnCompleteResult {
+		return waitingTurnCompleteResult{Ready: true}
+	}
 
 	var observedReason string
 	appendSessionEventFn = func(projectRoot, session string, event sessionEvent) error {
@@ -58,6 +60,70 @@ func TestCmdSessionMonitorWaitingRequiresTurnCompleteStopsWhenReady(t *testing.T
 	}
 }
 
+func TestCmdSessionMonitorWaitingRequiresTurnCompletePersistsTurnCompleteState(t *testing.T) {
+	origCompute := computeSessionStatusFn
+	origWaitingTurnComplete := monitorWaitingTurnCompleteFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origCompute
+		monitorWaitingTurnCompleteFn = origWaitingTurnComplete
+	})
+
+	projectRoot := t.TempDir()
+	session := "lisa-monitor-waiting-turn-state"
+
+	computeSessionStatusFn = func(sessionName, projectRootArg, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:      sessionName,
+			Agent:        "codex",
+			Mode:         "interactive",
+			Status:       "idle",
+			SessionState: "waiting_input",
+		}, nil
+	}
+
+	monitorWaitingTurnCompleteFn = func(sessionName, projectRootArg string, status sessionStatus) waitingTurnCompleteResult {
+		return waitingTurnCompleteResult{
+			Ready:        true,
+			InputAtNanos: 12345,
+			FileAge:      3,
+		}
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionMonitor([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--poll-interval", "1",
+			"--max-polls", "1",
+			"--waiting-requires-turn-complete", "true",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected monitor success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"exitReason":"waiting_input_turn_complete"`) {
+		t.Fatalf("expected waiting_input_turn_complete payload, got %q", stdout)
+	}
+
+	state, err := loadSessionStateWithError(sessionStateFile(projectRoot, session))
+	if err != nil {
+		t.Fatalf("failed to load state: %v", err)
+	}
+	if state.LastTurnCompleteInputNanos != 12345 {
+		t.Fatalf("expected LastTurnCompleteInputNanos=12345, got %d", state.LastTurnCompleteInputNanos)
+	}
+	if state.LastTurnCompleteFileAge != 3 {
+		t.Fatalf("expected LastTurnCompleteFileAge=3, got %d", state.LastTurnCompleteFileAge)
+	}
+	if state.LastTurnCompleteAtNanos <= 0 {
+		t.Fatalf("expected LastTurnCompleteAtNanos to be recorded, got %d", state.LastTurnCompleteAtNanos)
+	}
+}
+
 func TestCmdSessionMonitorWaitingRequiresTurnCompleteDoesNotStopWhenNotReady(t *testing.T) {
 	origCompute := computeSessionStatusFn
 	origWaitingTurnComplete := monitorWaitingTurnCompleteFn
@@ -76,7 +142,9 @@ func TestCmdSessionMonitorWaitingRequiresTurnCompleteDoesNotStopWhenNotReady(t *
 		}, nil
 	}
 
-	monitorWaitingTurnCompleteFn = func(session, projectRoot string, status sessionStatus) bool { return false }
+	monitorWaitingTurnCompleteFn = func(session, projectRoot string, status sessionStatus) waitingTurnCompleteResult {
+		return waitingTurnCompleteResult{Ready: false}
+	}
 
 	stdout, stderr := captureOutput(t, func() {
 		code := cmdSessionMonitor([]string{
@@ -148,7 +216,7 @@ func TestMonitorWaitingTurnCompleteRequiresTranscriptFreshnessAfterLatestInput(t
 		Mode:         "interactive",
 		SessionState: "waiting_input",
 	})
-	if ready {
+	if ready.Ready {
 		t.Fatalf("expected stale transcript to block waiting_input_turn_complete")
 	}
 
@@ -207,7 +275,7 @@ func TestMonitorWaitingTurnCompleteAllowsFreshTranscriptAfterInput(t *testing.T)
 		Mode:         "interactive",
 		SessionState: "waiting_input",
 	})
-	if !ready {
+	if !ready.Ready {
 		t.Fatalf("expected fresh transcript to satisfy waiting_input_turn_complete")
 	}
 }

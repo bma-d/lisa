@@ -229,7 +229,9 @@ func TestCmdSessionMonitorStopsOnWaitingInput(t *testing.T) {
 		observedReason = event.Reason
 		return nil
 	}
-	monitorWaitingTurnCompleteFn = func(session, projectRoot string, status sessionStatus) bool { return false }
+	monitorWaitingTurnCompleteFn = func(session, projectRoot string, status sessionStatus) waitingTurnCompleteResult {
+		return waitingTurnCompleteResult{Ready: false}
+	}
 
 	stdout, stderr := captureOutput(t, func() {
 		code := cmdSessionMonitor([]string{
@@ -270,7 +272,9 @@ func TestCmdSessionMonitorDoesNotStopOnWaitingInputWhenDisabled(t *testing.T) {
 			SessionState: "waiting_input",
 		}, nil
 	}
-	monitorWaitingTurnCompleteFn = func(session, projectRoot string, status sessionStatus) bool { return true }
+	monitorWaitingTurnCompleteFn = func(session, projectRoot string, status sessionStatus) waitingTurnCompleteResult {
+		return waitingTurnCompleteResult{Ready: true}
+	}
 
 	stdout, stderr := captureOutput(t, func() {
 		code := cmdSessionMonitor([]string{

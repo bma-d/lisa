@@ -86,6 +86,7 @@ func cmdSessionExplain(args []string) int {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
+	status = normalizeStatusForSessionStatusOutput(status)
 
 	eventTail, err := readSessionEventTailFn(projectRoot, session, eventLimit)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

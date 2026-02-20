@@ -11,6 +11,12 @@ import (
 var computeSessionStatusFn = computeSessionStatus
 var monitorWaitingTurnCompleteFn = monitorWaitingTurnComplete
 
+type waitingTurnCompleteResult struct {
+	Ready        bool
+	InputAtNanos int64
+	FileAge      int
+}
+
 func normalizeStatusForSessionStatusOutput(status sessionStatus) sessionStatus {
 	normalized := status
 	switch normalized.SessionState {
@@ -308,7 +314,13 @@ func cmdSessionMonitor(args []string) int {
 		case "waiting_input":
 			if stopOnWaiting {
 				if waitingRequiresTurnComplete {
-					if monitorWaitingTurnCompleteFn(session, projectRoot, status) {
+					waitingTurn := monitorWaitingTurnCompleteFn(session, projectRoot, status)
+					if waitingTurn.Ready {
+						status.Signals.TranscriptTurnComplete = true
+						status.Signals.TranscriptFileAge = waitingTurn.FileAge
+						if err := recordSessionTurnComplete(projectRoot, session, waitingTurn.InputAtNanos, waitingTurn.FileAge); err != nil {
+							fmt.Fprintf(os.Stderr, "observability warning: failed to persist turn-complete marker: %v\n", err)
+						}
 						reason = "waiting_input_turn_complete"
 					}
 				} else {
@@ -392,14 +404,15 @@ func cmdSessionMonitor(args []string) int {
 	return 2
 }
 
-func monitorWaitingTurnComplete(session, projectRoot string, status sessionStatus) bool {
+func monitorWaitingTurnComplete(session, projectRoot string, status sessionStatus) waitingTurnCompleteResult {
+	result := waitingTurnCompleteResult{}
 	if status.SessionState != "waiting_input" {
-		return false
+		return result
 	}
 
 	meta, err := loadSessionMeta(projectRoot, session)
 	if err != nil {
-		return false
+		return result
 	}
 	agent := normalizeAgent(meta.Agent)
 	if agent == "" {
@@ -410,13 +423,13 @@ func monitorWaitingTurnComplete(session, projectRoot string, status sessionStatu
 		mode = strings.ToLower(strings.TrimSpace(status.Mode))
 	}
 	if mode != "interactive" {
-		return false
+		return result
 	}
 
 	prompt := strings.TrimSpace(meta.Prompt)
 	createdAt := strings.TrimSpace(meta.CreatedAt)
 	if prompt == "" || createdAt == "" {
-		return false
+		return result
 	}
 
 	state, _ := loadSessionStateWithError(sessionStateFile(projectRoot, session))
@@ -429,34 +442,43 @@ func monitorWaitingTurnComplete(session, projectRoot string, status sessionStatu
 	case "claude":
 		turnComplete, fileAge, sessionID, err := checkTranscriptTurnCompleteFn(meta.ProjectRoot, prompt, createdAt, state.ClaudeSessionID)
 		if err != nil {
-			return false
+			return result
 		}
 		cacheTranscriptSessionID(projectRoot, session, "claude", sessionID)
 		if !turnComplete {
-			return false
+			return result
 		}
-		return transcriptLikelyIncludesLatestInput(lastInputAtNanos, fileAge)
+		if !transcriptLikelyIncludesLatestInput(lastInputAtNanos, fileAge) {
+			return result
+		}
+		result.Ready = true
+		result.InputAtNanos = lastInputAtNanos
+		result.FileAge = fileAge
+		return result
 	case "codex":
 		turnComplete, fileAge, sessionID, err := checkCodexTranscriptTurnCompleteFn(prompt, createdAt, state.CodexSessionID)
 		if err != nil {
-			return false
+			return result
 		}
 		cacheTranscriptSessionID(projectRoot, session, "codex", sessionID)
 		if !turnComplete {
-			return false
+			return result
 		}
 		if !transcriptLikelyIncludesLatestInput(lastInputAtNanos, fileAge) {
-			return false
+			return result
 		}
 		if lastInputAtNanos > 0 {
 			hasAssistantTurn, err := codexHasAssistantTurnSinceFn(sessionID, lastInputAtNanos)
 			if err != nil || !hasAssistantTurn {
-				return false
+				return result
 			}
 		}
-		return true
+		result.Ready = true
+		result.InputAtNanos = lastInputAtNanos
+		result.FileAge = fileAge
+		return result
 	default:
-		return false
+		return result
 	}
 }
 
@@ -503,6 +525,21 @@ func cacheTranscriptSessionID(projectRoot, session, agent, sessionID string) {
 		// Best-effort cache update; monitor semantics should not fail on this.
 		return
 	}
+}
+
+func recordSessionTurnComplete(projectRoot, session string, inputAtNanos int64, fileAge int) error {
+	statePath := sessionStateFile(projectRoot, session)
+	_, err := withStateFileLockFn(statePath, func() error {
+		state, loadErr := loadSessionStateWithError(statePath)
+		if loadErr != nil {
+			state = sessionState{}
+		}
+		state.LastTurnCompleteAtNanos = nowFn().UnixNano()
+		state.LastTurnCompleteInputNanos = inputAtNanos
+		state.LastTurnCompleteFileAge = fileAge
+		return saveSessionState(statePath, state)
+	})
+	return err
 }
 
 func cmdSessionCapture(args []string) int {

@@ -34,24 +34,27 @@ type sessionMeta struct {
 }
 
 type sessionState struct {
-	PollCount                 int     `json:"pollCount"`
-	HasEverBeenActive         bool    `json:"hasEverBeenActive"`
-	LastResolvedAgent         string  `json:"lastResolvedAgent,omitempty"`
-	LastResolvedMode          string  `json:"lastResolvedMode,omitempty"`
-	LastOutputHash            string  `json:"lastOutputHash"`
-	LastOutputAt              int64   `json:"lastOutputAt"`
-	LastOutputAtNanos         int64   `json:"lastOutputAtNanos,omitempty"`
-	LastInputAt               int64   `json:"lastInputAt,omitempty"`
-	LastInputAtNanos          int64   `json:"lastInputAtNanos,omitempty"`
-	LastAgentPID              int     `json:"lastAgentPid,omitempty"`
-	LastAgentProbeAt          int64   `json:"lastAgentProbeAt,omitempty"`
-	LastAgentCPU              float64 `json:"lastAgentCpu,omitempty"`
-	LastSessionState          string  `json:"lastSessionState,omitempty"`
-	LastStatus                string  `json:"lastStatus,omitempty"`
-	LastClassificationReason  string  `json:"lastClassificationReason,omitempty"`
-	LastClassificationPollRef int     `json:"lastClassificationPollRef,omitempty"`
-	ClaudeSessionID           string  `json:"claudeSessionId,omitempty"`
-	CodexSessionID            string  `json:"codexSessionId,omitempty"`
+	PollCount                  int     `json:"pollCount"`
+	HasEverBeenActive          bool    `json:"hasEverBeenActive"`
+	LastResolvedAgent          string  `json:"lastResolvedAgent,omitempty"`
+	LastResolvedMode           string  `json:"lastResolvedMode,omitempty"`
+	LastOutputHash             string  `json:"lastOutputHash"`
+	LastOutputAt               int64   `json:"lastOutputAt"`
+	LastOutputAtNanos          int64   `json:"lastOutputAtNanos,omitempty"`
+	LastInputAt                int64   `json:"lastInputAt,omitempty"`
+	LastInputAtNanos           int64   `json:"lastInputAtNanos,omitempty"`
+	LastAgentPID               int     `json:"lastAgentPid,omitempty"`
+	LastAgentProbeAt           int64   `json:"lastAgentProbeAt,omitempty"`
+	LastAgentCPU               float64 `json:"lastAgentCpu,omitempty"`
+	LastTurnCompleteAtNanos    int64   `json:"lastTurnCompleteAtNanos,omitempty"`
+	LastTurnCompleteInputNanos int64   `json:"lastTurnCompleteInputNanos,omitempty"`
+	LastTurnCompleteFileAge    int     `json:"lastTurnCompleteFileAge,omitempty"`
+	LastSessionState           string  `json:"lastSessionState,omitempty"`
+	LastStatus                 string  `json:"lastStatus,omitempty"`
+	LastClassificationReason   string  `json:"lastClassificationReason,omitempty"`
+	LastClassificationPollRef  int     `json:"lastClassificationPollRef,omitempty"`
+	ClaudeSessionID            string  `json:"claudeSessionId,omitempty"`
+	CodexSessionID             string  `json:"codexSessionId,omitempty"`
 }
 
 type sessionStatus struct {
