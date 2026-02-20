@@ -121,11 +121,16 @@ func TestCmdSessionSpawnDryRunJSONSkipsSessionCreation(t *testing.T) {
 
 func TestCmdSessionListAllSocketsFindsCrossRootSessions(t *testing.T) {
 	origHas := tmuxHasSessionFn
+	origList := tmuxListSessionsFn
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
+		tmuxListSessionsFn = origList
 	})
 	tmuxHasSessionFn = func(session string) bool {
 		return session == "lisa-cross-a" || session == "lisa-cross-b"
+	}
+	tmuxListSessionsFn = func(projectOnly bool, root string) ([]string, error) {
+		return []string{}, nil
 	}
 
 	rootA := t.TempDir()
