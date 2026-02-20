@@ -84,8 +84,8 @@ func tmuxNewSessionWithStartup(session, projectRoot, agent, mode string, width, 
 		args = append(args, "bash "+shellQuote(scriptPath))
 	}
 
-	_, err := runTmuxCmd(args...)
-	return err
+	out, err := runTmuxCmd(args...)
+	return wrapTmuxCommandError(err, out)
 }
 
 func tmuxSendCommandWithFallback(projectRoot, session, command string, enter bool) error {
@@ -105,8 +105,8 @@ func tmuxSendCommandWithFallback(projectRoot, session, command string, enter boo
 		return fmt.Errorf("failed to write startup command script: %w", err)
 	}
 
-	_, err := runTmuxCmd("respawn-pane", "-k", "-t", session, "bash", scriptPath)
-	return err
+	out, err := runTmuxCmd("respawn-pane", "-k", "-t", session, "bash", scriptPath)
+	return wrapTmuxCommandError(err, out)
 }
 
 func buildFallbackScriptBody(command string) string {
@@ -155,8 +155,8 @@ func tmuxSendKeys(session string, keys []string, enter bool) error {
 	if enter {
 		args = append(args, "Enter")
 	}
-	_, err := runTmuxCmd(args...)
-	return err
+	out, err := runTmuxCmd(args...)
+	return wrapTmuxCommandError(err, out)
 }
 
 func tmuxHasSession(session string) bool {
@@ -165,8 +165,8 @@ func tmuxHasSession(session string) bool {
 }
 
 func tmuxKillSession(session string) error {
-	_, err := runTmuxCmd("kill-session", "-t", session)
-	return err
+	out, err := runTmuxCmd("kill-session", "-t", session)
+	return wrapTmuxCommandError(err, out)
 }
 
 func tmuxListSessions(projectOnly bool, projectRoot string) ([]string, error) {
@@ -299,6 +299,17 @@ func runTmuxCmdWithSocketInput(input, socketPath string, args ...string) (string
 	}
 	prefixed := append([]string{"-S", socketPath}, args...)
 	return runCmdInput(input, "tmux", prefixed...)
+}
+
+func wrapTmuxCommandError(err error, output string) error {
+	if err == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return err
+	}
+	return fmt.Errorf("%w (%s)", err, trimmed)
 }
 
 func detectAgentProcess(panePID int, agent string) (int, float64, error) {

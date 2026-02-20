@@ -52,11 +52,31 @@ func buildAgentCommandWithOptions(agent, mode, prompt, agentArgs string, skipPer
 			return "", errors.New("exec mode requires --prompt (or provide --command)")
 		}
 		if agent == "codex" {
-			base := fmt.Sprintf("codex exec %s --full-auto", shellQuote(prompt))
-			if strings.TrimSpace(agentArgs) != "" {
-				base += " " + strings.TrimSpace(agentArgs)
+			trimmedArgs := strings.TrimSpace(agentArgs)
+			hasBypassSandbox := hasFlagToken(trimmedArgs, "--dangerously-bypass-approvals-and-sandbox")
+			hasFullAuto := hasFlagToken(trimmedArgs, "--full-auto")
+			hasSkipGitRepoCheck := hasFlagToken(trimmedArgs, "--skip-git-repo-check")
+			if hasBypassSandbox && hasFullAuto {
+				return "", errors.New("invalid --agent-args: --dangerously-bypass-approvals-and-sandbox cannot be combined with --full-auto for codex exec")
 			}
-			return base, nil
+
+			parts := []string{
+				"codex",
+				"exec",
+				shellQuote(prompt),
+			}
+			// Default codex exec mode is fully automatic unless bypass sandbox is requested.
+			if !hasBypassSandbox && !hasFullAuto {
+				parts = append(parts, "--full-auto")
+			}
+			// Keep codex exec usable in non-repo and nested orchestration roots.
+			if !hasSkipGitRepoCheck {
+				parts = append(parts, "--skip-git-repo-check")
+			}
+			if trimmedArgs != "" {
+				parts = append(parts, trimmedArgs)
+			}
+			return strings.Join(parts, " "), nil
 		}
 		base := fmt.Sprintf("claude -p %s", shellQuote(prompt))
 		if strings.TrimSpace(agentArgs) != "" {
@@ -110,4 +130,13 @@ func normalizeMode(mode string) string {
 		return "interactive"
 	}
 	return m
+}
+
+func hasFlagToken(args, flag string) bool {
+	for _, token := range strings.Fields(strings.TrimSpace(args)) {
+		if token == flag || strings.HasPrefix(token, flag+"=") {
+			return true
+		}
+	}
+	return false
 }

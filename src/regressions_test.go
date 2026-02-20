@@ -1226,6 +1226,9 @@ func TestCmdSessionSpawnJSONOutputAndExecWrapping(t *testing.T) {
 	if !strings.Contains(commandText, "codex exec 'hello world' --full-auto") {
 		t.Fatalf("unexpected command payload: %q", commandText)
 	}
+	if !strings.Contains(commandText, "--skip-git-repo-check") {
+		t.Fatalf("expected command payload to include --skip-git-repo-check, got %q", commandText)
+	}
 	if !strings.Contains(sentCommand, execDonePrefix) {
 		t.Fatalf("expected wrapped exec marker in startup command, got %q", sentCommand)
 	}
@@ -1348,7 +1351,7 @@ func TestCmdSessionSpawnCodexExecSocketPermissionHint(t *testing.T) {
 	if !strings.Contains(stderr, "failed to create tmux session") {
 		t.Fatalf("expected spawn failure message, got %q", stderr)
 	}
-	if !strings.Contains(stderr, "codex exec --full-auto sandbox blocks tmux sockets") {
+	if !strings.Contains(stderr, "codex exec --full-auto sandbox can block nested tmux sockets") {
 		t.Fatalf("expected nested tmux hint, got %q", stderr)
 	}
 }
@@ -2811,6 +2814,45 @@ func TestBuildAgentCommandSkipPermissionsNotInjectedForCodex(t *testing.T) {
 	}
 	if strings.Contains(cmd, "--dangerously-skip-permissions") {
 		t.Fatalf("codex should not get --dangerously-skip-permissions, got %q", cmd)
+	}
+}
+
+func TestBuildAgentCommandCodexExecDefaultsIncludeFullAutoAndSkipGitRepoCheck(t *testing.T) {
+	cmd, err := buildAgentCommand("codex", "exec", "hello", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(cmd, "codex exec 'hello' --full-auto") {
+		t.Fatalf("expected full-auto by default, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "--skip-git-repo-check") {
+		t.Fatalf("expected --skip-git-repo-check by default, got %q", cmd)
+	}
+}
+
+func TestBuildAgentCommandCodexExecBypassOmitsFullAuto(t *testing.T) {
+	cmd, err := buildAgentCommand("codex", "exec", "hello", "--dangerously-bypass-approvals-and-sandbox")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(cmd, "--full-auto") {
+		t.Fatalf("expected bypass mode to omit --full-auto, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("expected bypass flag to be preserved, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "--skip-git-repo-check") {
+		t.Fatalf("expected --skip-git-repo-check with bypass mode, got %q", cmd)
+	}
+}
+
+func TestBuildAgentCommandCodexExecRejectsBypassWithFullAuto(t *testing.T) {
+	_, err := buildAgentCommand("codex", "exec", "hello", "--dangerously-bypass-approvals-and-sandbox --full-auto")
+	if err == nil {
+		t.Fatalf("expected bypass + full-auto conflict")
+	}
+	if !strings.Contains(err.Error(), "cannot be combined with --full-auto") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

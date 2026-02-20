@@ -93,6 +93,9 @@ func TestCmdAgentRoutesAndBuildCmd(t *testing.T) {
 	if !strings.Contains(command, "codex exec 'ship it' --full-auto") {
 		t.Fatalf("unexpected command: %q", command)
 	}
+	if !strings.Contains(command, "--skip-git-repo-check") {
+		t.Fatalf("expected codex exec command to include --skip-git-repo-check, got %q", command)
+	}
 }
 
 func TestCmdSessionRouterAndName(t *testing.T) {
@@ -191,6 +194,20 @@ func TestRunCmdInputRoundTripAndTimeout(t *testing.T) {
 	}
 	if time.Since(start) > 4*time.Second {
 		t.Fatalf("timeout path took too long: %s", time.Since(start))
+	}
+}
+
+func TestWrapTmuxCommandErrorIncludesOutputWhenPresent(t *testing.T) {
+	base := errors.New("exit status 1")
+	err := wrapTmuxCommandError(base, "failed to create socket: operation not permitted\n")
+	if err == nil {
+		t.Fatalf("expected wrapped error")
+	}
+	if !strings.Contains(err.Error(), "exit status 1") {
+		t.Fatalf("expected base error in wrapped error, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "failed to create socket: operation not permitted") {
+		t.Fatalf("expected tmux output in wrapped error, got %q", err.Error())
 	}
 }
 

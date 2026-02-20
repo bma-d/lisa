@@ -16,7 +16,7 @@ How to use Lisa as infrastructure from an LLM orchestrator or script.
    - Raw capture now suppresses known Codex/MCP startup noise by default; use `session capture --raw --keep-noise` to keep full raw output
 5. Kill and clean up with `session kill --session NAME`
 
-Nested Codex note: `codex exec --full-auto` runs sandboxed and can block tmux socket creation for child Lisa sessions. For deep nested orchestration (L1->L2->L3), prefer interactive sessions (`--mode interactive` + `session send`) unless you intentionally use unsandboxed Codex exec via `--agent-args '--dangerously-bypass-approvals-and-sandbox'`.
+Nested Codex note: `codex exec --full-auto` runs sandboxed and can block tmux socket creation for child Lisa sessions. For deep nested orchestration (L1->L2->L3), prefer interactive sessions (`--mode interactive` + `session send`). If you pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'`, Lisa omits `--full-auto` automatically because Codex rejects combining both flags.
 
 Manual nested smoke command: run `./smoke-nested` from repo root to validate L1->L2->L3 interactive nesting end-to-end with deterministic markers.
 

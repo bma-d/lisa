@@ -270,7 +270,7 @@ func cmdSessionSpawn(args []string) int {
 	if err := tmuxNewSessionWithStartupFn(session, projectRoot, agent, mode, width, height, commandToSend); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create tmux session: %v\n", err)
 		if shouldPrintCodexExecNestedTmuxHint(agent, mode, err) {
-			fmt.Fprintln(os.Stderr, "hint: codex exec --full-auto sandbox blocks tmux sockets for nested lisa runs; use --mode interactive (then session send) or pass --agent-args '--dangerously-bypass-approvals-and-sandbox'")
+			fmt.Fprintln(os.Stderr, "hint: codex exec --full-auto sandbox can block nested tmux sockets; use --mode interactive (then session send) or pass --agent-args '--dangerously-bypass-approvals-and-sandbox' (lisa omits --full-auto for that spawn)")
 		}
 		if cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); cleanupErr != nil {
 			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)

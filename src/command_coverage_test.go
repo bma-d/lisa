@@ -49,6 +49,9 @@ func TestCmdAgentBuildCmdExecPath(t *testing.T) {
 	if !strings.Contains(stdout, `codex exec 'ship release' --full-auto`) {
 		t.Fatalf("expected codex exec command in payload (codex should not have --dangerously-skip-permissions), got %q", stdout)
 	}
+	if !strings.Contains(stdout, `--skip-git-repo-check`) {
+		t.Fatalf("expected codex exec command to include --skip-git-repo-check, got %q", stdout)
+	}
 
 	_, stderr = captureOutput(t, func() {
 		code := cmdAgentBuildCmd([]string{"--agent", "codex", "--mode", "exec"})

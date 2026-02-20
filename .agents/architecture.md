@@ -1,6 +1,6 @@
 # Architecture
 
-Last Updated: 2026-02-14
+Last Updated: 2026-02-19
 Related Files: `src/status.go`, `src/tmux.go`, `src/session_files.go`, `src/commands_session.go`
 
 ## Overview
@@ -17,7 +17,7 @@ spawn → in_progress → completed
                    ↘ just_started (first 3 polls, idle)
 ```
 
-`waiting_input` remains in the public enum for compatibility but is currently non-emitting in default classification.
+`waiting_input` is emitted when interactive sessions look idle and ready for user input.
 
 ## State Classification (Multi-Signal)
 

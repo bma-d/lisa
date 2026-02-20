@@ -84,7 +84,7 @@ Lisa classifies sessions process-first (pane/process/heartbeat/done-file signals
 - `stuck`: inactive beyond grace rules
 - `degraded`: infra contention/read-error path
 - `not_found`: tmux session missing
-- `waiting_input`: compatibility state (currently non-emitting in default classifier path)
+- `waiting_input`: interactive session appears idle and waiting for user input
 
 ## Command Reference
 
@@ -158,7 +158,9 @@ Notes:
 - For Claude, Lisa injects `--dangerously-skip-permissions` by default unless disabled.
 - `exec` mode requires a prompt unless `--command` is provided.
 - If no `--session`, Lisa auto-generates one.
-- Nested Codex runs: `codex exec --full-auto` uses a sandbox that can block tmux socket creation (`Operation not permitted`). For 2-3 level nested Lisa flows, prefer `--mode interactive` plus `session send`, or pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'` if you explicitly want unsandboxed Codex exec.
+- Codex `exec` defaults include `--full-auto` and `--skip-git-repo-check`.
+- Nested Codex runs: `codex exec --full-auto` uses a sandbox that can block tmux socket creation (`Operation not permitted`). For 2-3 level nested Lisa flows, prefer `--mode interactive` plus `session send`.
+- If you pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'`, Lisa omits `--full-auto` automatically (Codex rejects combining both flags).
 
 ### `session send`
 
