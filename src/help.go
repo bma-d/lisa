@@ -118,9 +118,9 @@ func helpSessionSpawn() {
 	fmt.Fprintln(os.Stderr, "  --cleanup-all-hashes  Clean artifacts across all project hashes")
 	fmt.Fprintln(os.Stderr, "  --no-dangerously-skip-permissions")
 	fmt.Fprintln(os.Stderr, "                        Don't add --dangerously-skip-permissions to claude")
-	fmt.Fprintln(os.Stderr, "  note                  Nested codex exec may require --mode interactive or")
-	fmt.Fprintln(os.Stderr, "                        --agent-args '--dangerously-bypass-approvals-and-sandbox'")
-	fmt.Fprintln(os.Stderr, "                        (lisa omits --full-auto in that bypass mode)")
+	fmt.Fprintln(os.Stderr, "  note                  Nested codex exec prompts (./lisa, lisa session spawn)")
+	fmt.Fprintln(os.Stderr, "                        auto-enable '--dangerously-bypass-approvals-and-sandbox'")
+	fmt.Fprintln(os.Stderr, "                        and omit --full-auto")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -149,6 +149,7 @@ func helpSessionStatus() {
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Mode hint: auto|interactive|exec (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --full                Include classification/signal columns")
+	fmt.Fprintln(os.Stderr, "  --fail-not-found      Exit 1 when session resolves to not_found")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 

@@ -252,6 +252,9 @@ func cmdSessionSpawn(args []string) int {
 	}
 
 	if command == "" {
+		if shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs) {
+			agentArgs = strings.TrimSpace(agentArgs + " --dangerously-bypass-approvals-and-sandbox")
+		}
 		command, err = buildAgentCommandWithOptions(agent, mode, prompt, agentArgs, skipPermissions)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
@@ -280,14 +283,15 @@ func cmdSessionSpawn(args []string) int {
 	}
 
 	meta := sessionMeta{
-		Session:     session,
-		Agent:       agent,
-		Mode:        mode,
-		RunID:       runID,
-		ProjectRoot: projectRoot,
-		StartCmd:    command,
-		Prompt:      prompt,
-		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		Session:       session,
+		ParentSession: parentSessionFromEnv(session),
+		Agent:         agent,
+		Mode:          mode,
+		RunID:         runID,
+		ProjectRoot:   projectRoot,
+		StartCmd:      command,
+		Prompt:        prompt,
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := saveSessionMetaFn(projectRoot, session, meta); err != nil {
 		killErr := tmuxKillSessionFn(session)
@@ -330,7 +334,36 @@ func shouldPrintCodexExecNestedTmuxHint(agent, mode string, err error) bool {
 	return strings.Contains(msg, "operation not permitted") ||
 		strings.Contains(msg, "permission denied") ||
 		strings.Contains(msg, "error creating /tmp/") ||
+		strings.Contains(msg, "error connecting to /var/folders/") ||
 		strings.Contains(msg, "error connecting to /private/tmp/")
+}
+
+func parentSessionFromEnv(currentSession string) string {
+	parent := strings.TrimSpace(os.Getenv("LISA_SESSION_NAME"))
+	if parent == "" || parent == currentSession {
+		return ""
+	}
+	if !strings.HasPrefix(parent, "lisa-") {
+		return ""
+	}
+	return parent
+}
+
+func shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs string) bool {
+	if normalizeAgent(agent) != "codex" || normalizeMode(mode) != "exec" {
+		return false
+	}
+	if hasFlagToken(agentArgs, "--dangerously-bypass-approvals-and-sandbox") || hasFlagToken(agentArgs, "--full-auto") {
+		return false
+	}
+	lowerPrompt := strings.ToLower(prompt)
+	if strings.Contains(lowerPrompt, "./lisa") {
+		return true
+	}
+	if strings.Contains(lowerPrompt, "lisa session spawn") || strings.Contains(lowerPrompt, "nested lisa") {
+		return true
+	}
+	return false
 }
 
 func cmdSessionSend(args []string) int {

@@ -1237,6 +1237,49 @@ func TestCmdSessionSpawnJSONOutputAndExecWrapping(t *testing.T) {
 	}
 }
 
+func TestCmdSessionSpawnAutoBypassesCodexSandboxForNestedLisaPrompt(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origNewWithStartup := tmuxNewSessionWithStartupFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionWithStartupFn = origNewWithStartup
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return false }
+	tmuxNewSessionWithStartupFn = func(session, root, agent, mode string, width, height int, startupCommand string) error {
+		return nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionSpawn([]string{
+			"--agent", "codex",
+			"--mode", "exec",
+			"--session", "lisa-spawn-nested-auto-bypass",
+			"--project-root", t.TempDir(),
+			"--prompt", "Use ./lisa session spawn and monitor nested workers.",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected spawn success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("failed to parse spawn json: %v (%q)", err, stdout)
+	}
+	commandText, _ := payload["command"].(string)
+	if strings.Contains(commandText, "--full-auto") {
+		t.Fatalf("expected nested codex prompt to omit --full-auto, got %q", commandText)
+	}
+	if !strings.Contains(commandText, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("expected nested codex prompt to auto-enable bypass sandbox, got %q", commandText)
+	}
+}
+
 func TestCmdSessionSpawnJSONOutputEscapesMultilinePromptCommand(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origNewWithStartup := tmuxNewSessionWithStartupFn

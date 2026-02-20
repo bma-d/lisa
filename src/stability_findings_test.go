@@ -270,6 +270,107 @@ func TestCmdSessionSpawnFailureEmitsLifecycleReason(t *testing.T) {
 	}
 }
 
+func TestCmdSessionSpawnCapturesParentSessionFromEnv(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionWithStartupFn
+	origSave := saveSessionMetaFn
+	origParent := os.Getenv("LISA_SESSION_NAME")
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionWithStartupFn = origNew
+		saveSessionMetaFn = origSave
+		_ = os.Setenv("LISA_SESSION_NAME", origParent)
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return false }
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+		return nil
+	}
+	var saved sessionMeta
+	saveSessionMetaFn = func(projectRoot, session string, meta sessionMeta) error {
+		saved = meta
+		return nil
+	}
+	if err := os.Setenv("LISA_SESSION_NAME", "lisa-parent-session"); err != nil {
+		t.Fatalf("failed to set parent session env: %v", err)
+	}
+
+	_, stderr := captureOutput(t, func() {
+		if code := cmdSessionSpawn([]string{
+			"--session", "lisa-child-session",
+			"--project-root", t.TempDir(),
+			"--command", "echo hello",
+		}); code != 0 {
+			t.Fatalf("expected spawn success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if saved.ParentSession != "lisa-parent-session" {
+		t.Fatalf("expected parent session metadata, got %q", saved.ParentSession)
+	}
+}
+
+func TestCmdSessionKillAlsoKillsNestedDescendants(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origKill := tmuxKillSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxKillSessionFn = origKill
+	})
+
+	projectRoot := t.TempDir()
+	root := "lisa-parent-root"
+	child := "lisa-parent-child"
+	grandchild := "lisa-parent-grandchild"
+	for _, meta := range []sessionMeta{
+		{Session: root, ProjectRoot: projectRoot, Agent: "claude", Mode: "interactive"},
+		{Session: child, ParentSession: root, ProjectRoot: projectRoot, Agent: "claude", Mode: "interactive"},
+		{Session: grandchild, ParentSession: child, ProjectRoot: projectRoot, Agent: "codex", Mode: "exec"},
+	} {
+		if err := saveSessionMeta(projectRoot, meta.Session, meta); err != nil {
+			t.Fatalf("failed to seed metadata for %s: %v", meta.Session, err)
+		}
+	}
+
+	alive := map[string]bool{
+		root:       true,
+		child:      true,
+		grandchild: true,
+	}
+	var killed []string
+	tmuxHasSessionFn = func(session string) bool {
+		return alive[session]
+	}
+	tmuxKillSessionFn = func(session string) error {
+		killed = append(killed, session)
+		alive[session] = false
+		return nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		if code := cmdSessionKill([]string{"--session", root, "--project-root", projectRoot}); code != 0 {
+			t.Fatalf("expected cascading kill success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if strings.TrimSpace(stdout) != "ok" {
+		t.Fatalf("unexpected stdout: %q", stdout)
+	}
+	wantOrder := []string{grandchild, child, root}
+	if len(killed) != len(wantOrder) {
+		t.Fatalf("expected %d kills, got %d (%v)", len(wantOrder), len(killed), killed)
+	}
+	for i := range wantOrder {
+		if killed[i] != wantOrder[i] {
+			t.Fatalf("unexpected kill order at %d: got %q want %q (%v)", i, killed[i], wantOrder[i], killed)
+		}
+	}
+}
+
 func TestReadSessionEventTailRespectsWriterLockTimeout(t *testing.T) {
 	projectRoot := t.TempDir()
 	session := "lisa-read-tail-lock-timeout"

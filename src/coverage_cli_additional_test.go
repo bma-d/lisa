@@ -110,6 +110,38 @@ func TestCmdSessionStatusJSONAndHintValidation(t *testing.T) {
 	}
 }
 
+func TestCmdSessionStatusFailNotFound(t *testing.T) {
+	origCompute := computeSessionStatusFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origCompute
+	})
+
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:      session,
+			Status:       "not_found",
+			SessionState: "not_found",
+		}, nil
+	}
+
+	_, _ = captureOutput(t, func() {
+		code := cmdSessionStatus([]string{"--session", "lisa-missing"})
+		if code != 0 {
+			t.Fatalf("expected default status behavior to stay zero, got %d", code)
+		}
+	})
+
+	_, stderr := captureOutput(t, func() {
+		code := cmdSessionStatus([]string{"--session", "lisa-missing", "--fail-not-found", "--json"})
+		if code == 0 {
+			t.Fatal("expected non-zero status exit with --fail-not-found")
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+}
+
 func TestCmdSessionStatusFullTextIncludesSignals(t *testing.T) {
 	origCompute := computeSessionStatusFn
 	t.Cleanup(func() {

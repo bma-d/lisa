@@ -159,7 +159,8 @@ Notes:
 - `exec` mode requires a prompt unless `--command` is provided.
 - If no `--session`, Lisa auto-generates one.
 - Codex `exec` defaults include `--full-auto` and `--skip-git-repo-check`.
-- Nested Codex runs: `codex exec --full-auto` uses a sandbox that can block tmux socket creation (`Operation not permitted`). For 2-3 level nested Lisa flows, prefer `--mode interactive` plus `session send`.
+- Nested Codex prompts: when prompt text suggests Lisa nesting (`./lisa`, `lisa session spawn`, `nested lisa`), Lisa auto-adds `--dangerously-bypass-approvals-and-sandbox` and omits `--full-auto`.
+- For non-nested Codex `exec`, `--full-auto` sandbox can still block tmux socket creation for child Lisa sessions (`Operation not permitted`); use `--mode interactive` + `session send` or pass explicit bypass args.
 - If you pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'`, Lisa omits `--full-auto` automatically (Codex rejects combining both flags).
 - For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`) to avoid shell quoting collisions in inline nested commands.
 
@@ -189,6 +190,7 @@ One-shot session status snapshot.
 lisa session status --session <NAME>
 lisa session status --session <NAME> --full
 lisa session status --session <NAME> --json
+lisa session status --session <NAME> --json --fail-not-found
 ```
 
 Flags:
@@ -198,6 +200,7 @@ Flags:
 - `--mode`: `auto|interactive|exec` (default `auto`)
 - `--project-root` (default cwd)
 - `--full`: include classification/signal columns in CSV mode
+- `--fail-not-found`: exit `1` when resolved state is `not_found`
 - `--json`
 
 ### `session explain`
@@ -322,6 +325,10 @@ Flags:
 - `--session` (required)
 - `--project-root`
 - `--cleanup-all-hashes`
+
+Behavior note:
+
+- If metadata links descendants (`parentSession`), `session kill` kills descendants first, then the target session.
 
 ### `session kill-all`
 

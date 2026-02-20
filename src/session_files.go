@@ -268,6 +268,101 @@ func loadSessionMetaByGlob(session string) (sessionMeta, error) {
 	return best.meta, nil
 }
 
+func loadSessionMetasForProject(projectRoot string, allHashes bool) ([]sessionMeta, error) {
+	pattern := fmt.Sprintf("/tmp/.lisa-%s-session-*-meta.json", projectHash(projectRoot))
+	if allHashes {
+		pattern = "/tmp/.lisa-*-session-*-meta.json"
+	}
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, err
+	}
+	type metaCandidate struct {
+		meta    sessionMeta
+		modTime time.Time
+		path    string
+	}
+	bestBySession := make(map[string]metaCandidate, len(matches))
+	for _, path := range matches {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		var meta sessionMeta
+		if unmarshalErr := json.Unmarshal(raw, &meta); unmarshalErr != nil {
+			continue
+		}
+		name := strings.TrimSpace(meta.Session)
+		if name == "" {
+			continue
+		}
+		modTime := time.Time{}
+		if info, statErr := os.Stat(path); statErr == nil {
+			modTime = info.ModTime()
+		}
+		current, ok := bestBySession[name]
+		if ok && (current.modTime.After(modTime) || (current.modTime.Equal(modTime) && current.path > path)) {
+			continue
+		}
+		bestBySession[name] = metaCandidate{
+			meta:    meta,
+			modTime: modTime,
+			path:    path,
+		}
+	}
+	metas := make([]sessionMeta, 0, len(bestBySession))
+	for _, c := range bestBySession {
+		metas = append(metas, c.meta)
+	}
+	sort.Slice(metas, func(i, j int) bool {
+		return metas[i].Session < metas[j].Session
+	})
+	return metas, nil
+}
+
+func listSessionDescendants(projectRoot, session string, allHashes bool) ([]string, error) {
+	metas, err := loadSessionMetasForProject(projectRoot, allHashes)
+	if err != nil {
+		return nil, err
+	}
+	childrenByParent := make(map[string][]string)
+	for _, meta := range metas {
+		parent := strings.TrimSpace(meta.ParentSession)
+		child := strings.TrimSpace(meta.Session)
+		if parent == "" || child == "" || parent == child {
+			continue
+		}
+		childrenByParent[parent] = append(childrenByParent[parent], child)
+	}
+	for parent := range childrenByParent {
+		sort.Strings(childrenByParent[parent])
+	}
+
+	root := strings.TrimSpace(session)
+	if root == "" {
+		return []string{}, nil
+	}
+	queue := []string{root}
+	visited := map[string]bool{root: true}
+	order := make([]string, 0)
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, child := range childrenByParent[current] {
+			if visited[child] {
+				continue
+			}
+			visited[child] = true
+			order = append(order, child)
+			queue = append(queue, child)
+		}
+	}
+	for i, j := 0, len(order)-1; i < j; i, j = i+1, j-1 {
+		order[i], order[j] = order[j], order[i]
+	}
+	return order, nil
+}
+
 func cleanupSessionArtifacts(projectRoot, session string) error {
 	return cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOptions{
 		AllHashes: cleanupAllHashesEnabled(),

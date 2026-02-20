@@ -1,6 +1,6 @@
 # Session Lifecycle & File Management
 
-Last Updated: 2026-02-15
+Last Updated: 2026-02-20
 Related Files: `src/session_files.go`, `src/commands_session.go`
 
 ## Overview
@@ -26,7 +26,7 @@ All stored in `/tmp/`:
 
 | Type | Path Pattern | Content |
 |------|-------------|---------|
-| Meta | `.lisa-{hash}-session-{id}-meta.json` | `sessionMeta`: agent, mode, projectRoot, startCmd, prompt, createdAt, runId |
+| Meta | `.lisa-{hash}-session-{id}-meta.json` | `sessionMeta`: session, parentSession (when nested), agent, mode, projectRoot, startCmd, prompt, createdAt, runId |
 | State | `.lisa-{hash}-session-{id}-state.json` | `sessionState`: pollCount, hasEverBeenActive, output freshness fields, last classification |
 | Output | `lisa-{hash}-output-{id}.txt` | Captured pane output (up to 260 lines) |
 | Heartbeat | `.lisa-{hash}-session-{id}-heartbeat.txt` | File mtime refreshed by wrapper heartbeat loop |
@@ -38,8 +38,9 @@ All stored in `/tmp/`:
 
 1. **Spawn** (`cmdSessionSpawn`): reset stale artifacts -> validate heartbeat path -> create tmux session -> wrap startup command (`__LISA_SESSION_START__:{runId}:{ts}` / `__LISA_SESSION_DONE__:{runId}:{exit}` + heartbeat loop + signal traps) -> send command -> save meta -> clear state. Metadata persistence is fail-fast: if meta write fails, Lisa kills the new tmux session and cleans artifacts before returning non-zero. If tmux session creation itself fails after heartbeat prep, Lisa now cleans artifacts before returning. Spawn failure paths also emit lifecycle failure reasons (`spawn_*_error`) for observability.
    - Wrapper exports `LISA_RUN_ID` to child processes so project-scoped hooks (for example Claude finish hooks) can emit run-id-matching done sidecars via `LISA_DONE_FILE`.
+   - Spawn metadata now records `parentSession` when session is created from inside another Lisa session (`LISA_SESSION_NAME`).
 2. **Monitor** (`cmdSessionMonitor`): poll loop calling `computeSessionStatus()` at interval, stops on terminal state
-3. **Kill** (`cmdSessionKill`): kill tmux session -> cleanup runtime artifacts (preserve event log) -> append lifecycle event
+3. **Kill** (`cmdSessionKill`): resolve descendants from metadata parent links -> kill descendants first -> kill target session -> cleanup runtime artifacts (preserve event log) -> append lifecycle events
 4. **Kill-all** (`cmdSessionKillAll`): list sessions -> kill each -> cleanup runtime artifacts (preserve event log) -> append lifecycle event. Non-`--project-only` kill-all now cleans artifacts across hashes by default for the listed session IDs.
 
 Cleanup scope is hash-scoped by default (current project hash only). Cross-hash cleanup for spawn/kill paths requires explicit `--cleanup-all-hashes`, except non-`--project-only` kill-all which now enables cross-hash cleanup automatically.

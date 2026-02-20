@@ -104,11 +104,55 @@ func TestTmuxSocketPathForProjectRootIsShortStableAndDistinct(t *testing.T) {
 	if sockA1 == sockB {
 		t.Fatalf("expected different project roots to map to different socket paths, got %q", sockA1)
 	}
-	if !strings.HasPrefix(sockA1, filepath.Join(os.TempDir(), "lisa-tmux-")) {
+	if !strings.HasPrefix(sockA1, "/tmp/lisa-tmux-") {
 		t.Fatalf("expected /tmp socket path, got %q", sockA1)
 	}
 	if len(sockA1) > 100 {
 		t.Fatalf("expected unix-safe short socket path, got len=%d path=%q", len(sockA1), sockA1)
+	}
+}
+
+func TestCurrentTmuxSocketCandidatesIncludesLegacyFallbackForDefaultRuntimeSocket(t *testing.T) {
+	projectRoot := t.TempDir()
+	legacy := tmuxLegacySocketPathForProjectRoot(projectRoot)
+	primary := tmuxSocketPathForProjectRoot(projectRoot)
+
+	origRoot, hadRoot := os.LookupEnv(lisaProjectRootEnv)
+	origSocket, hadSocket := os.LookupEnv(lisaTmuxSocketEnv)
+	t.Cleanup(func() {
+		if hadRoot {
+			_ = os.Setenv(lisaProjectRootEnv, origRoot)
+		} else {
+			_ = os.Unsetenv(lisaProjectRootEnv)
+		}
+		if hadSocket {
+			_ = os.Setenv(lisaTmuxSocketEnv, origSocket)
+		} else {
+			_ = os.Unsetenv(lisaTmuxSocketEnv)
+		}
+	})
+
+	restore := withProjectRuntimeEnv(projectRoot)
+	t.Cleanup(restore)
+
+	candidates := currentTmuxSocketCandidates()
+	if len(candidates) == 0 {
+		t.Fatal("expected at least one tmux socket candidate")
+	}
+	if candidates[0] != primary {
+		t.Fatalf("expected primary socket first, got %q (want %q)", candidates[0], primary)
+	}
+	if legacy != primary {
+		foundLegacy := false
+		for _, c := range candidates {
+			if c == legacy {
+				foundLegacy = true
+				break
+			}
+		}
+		if !foundLegacy {
+			t.Fatalf("expected legacy socket fallback %q in %v", legacy, candidates)
+		}
 	}
 }
 

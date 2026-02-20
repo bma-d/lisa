@@ -18,6 +18,7 @@ func cmdSessionStatus(args []string) int {
 	agentHint := "auto"
 	modeHint := "auto"
 	full := false
+	failNotFound := false
 	jsonOut := false
 
 	for i := 0; i < len(args); i++ {
@@ -51,6 +52,8 @@ func cmdSessionStatus(args []string) int {
 			i++
 		case "--full":
 			full = true
+		case "--fail-not-found":
+			failNotFound = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -84,6 +87,9 @@ func cmdSessionStatus(args []string) int {
 
 	if jsonOut {
 		writeJSON(status)
+		if failNotFound && status.SessionState == "not_found" {
+			return 1
+		}
 		return 0
 	}
 
@@ -115,6 +121,9 @@ func cmdSessionStatus(args []string) int {
 			fmt.Fprintf(os.Stderr, "failed to write status output: %v\n", err)
 			return 1
 		}
+		if failNotFound && status.SessionState == "not_found" {
+			return 1
+		}
 		return 0
 	}
 
@@ -127,6 +136,9 @@ func cmdSessionStatus(args []string) int {
 		status.SessionState,
 	); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to write status output: %v\n", err)
+		return 1
+	}
+	if failNotFound && status.SessionState == "not_found" {
 		return 1
 	}
 	return 0

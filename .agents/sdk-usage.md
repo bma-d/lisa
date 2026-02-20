@@ -18,7 +18,9 @@ How to use Lisa as infrastructure from an LLM orchestrator or script.
    - Claude transcript capture now requires session metadata to include prompt + createdAt; promptless/custom-command sessions automatically fall back to raw pane capture
 5. Kill and clean up with `session kill --session NAME`
 
-Nested Codex note: `codex exec --full-auto` runs sandboxed and can block tmux socket creation for child Lisa sessions. For deep nested orchestration (L1->L2->L3), prefer interactive sessions (`--mode interactive` + `session send`). If you pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'`, Lisa omits `--full-auto` automatically because Codex rejects combining both flags.
+Nested Codex note: `codex exec --full-auto` runs sandboxed and can block tmux socket creation for child Lisa sessions. For deep nested orchestration (L1->L2->L3), prefer interactive sessions (`--mode interactive` + `session send`) or bypass mode.
+Lisa now auto-enables Codex bypass (`--dangerously-bypass-approvals-and-sandbox`, no `--full-auto`) when exec prompts suggest nesting (`./lisa`, `lisa session spawn`, `nested lisa`).
+You can still pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'` explicitly; Lisa omits `--full-auto` automatically because Codex rejects combining both flags.
 For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`) instead of highly escaped inline single-quoted chains.
 
 Manual nested smoke command: run `./smoke-nested` from repo root to validate L1->L2->L3 interactive nesting end-to-end with deterministic markers.

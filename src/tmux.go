@@ -281,25 +281,80 @@ func runTmuxCmdInput(input string, args ...string) (string, error) {
 }
 
 func runTmuxCmdWithSocket(socketPath string, args ...string) (string, error) {
-	if socketPath == "" {
-		socketPath = currentTmuxSocketPath()
-	}
-	if err := ensureTmuxSocketDir(socketPath); err != nil {
-		return "", err
-	}
-	prefixed := append([]string{"-S", socketPath}, args...)
-	return runCmd("tmux", prefixed...)
+	return runTmuxWithSocketCandidates("", "", args...)
 }
 
 func runTmuxCmdWithSocketInput(input, socketPath string, args ...string) (string, error) {
-	if socketPath == "" {
-		socketPath = currentTmuxSocketPath()
+	return runTmuxWithSocketCandidates(input, socketPath, args...)
+}
+
+func runTmuxWithSocketCandidates(input, socketPath string, args ...string) (string, error) {
+	var candidates []string
+	if strings.TrimSpace(socketPath) != "" {
+		candidates = []string{filepath.Clean(socketPath)}
+	} else {
+		candidates = currentTmuxSocketCandidates()
 	}
+	if len(candidates) == 0 {
+		candidates = []string{currentTmuxSocketPath()}
+	}
+
+	var (
+		lastOut string
+		lastErr error
+	)
+	for i, candidate := range candidates {
+		out, err := runTmuxWithSocket(input, candidate, args...)
+		if err == nil {
+			return out, nil
+		}
+		lastOut = out
+		lastErr = err
+		if i == len(candidates)-1 || !shouldRetryTmuxOnAlternateSocket(args, out, err) {
+			break
+		}
+	}
+	return lastOut, lastErr
+}
+
+func runTmuxWithSocket(input, socketPath string, args ...string) (string, error) {
 	if err := ensureTmuxSocketDir(socketPath); err != nil {
 		return "", err
 	}
 	prefixed := append([]string{"-S", socketPath}, args...)
-	return runCmdInput(input, "tmux", prefixed...)
+	if input != "" {
+		return runCmdInput(input, "tmux", prefixed...)
+	}
+	return runCmd("tmux", prefixed...)
+}
+
+func shouldRetryTmuxOnAlternateSocket(args []string, output string, err error) bool {
+	if err == nil {
+		return false
+	}
+	cmd := ""
+	if len(args) > 0 {
+		cmd = strings.TrimSpace(args[0])
+	}
+	if cmd == "new-session" {
+		return false
+	}
+
+	msg := strings.ToLower(strings.TrimSpace(output + " " + err.Error()))
+	switch {
+	case strings.Contains(msg, "operation not permitted"),
+		strings.Contains(msg, "permission denied"),
+		strings.Contains(msg, "failed to connect to server"),
+		strings.Contains(msg, "error connecting to"),
+		strings.Contains(msg, "no server running"),
+		strings.Contains(msg, "no such file or directory"),
+		msg == "no sessions",
+		strings.Contains(msg, "can't find session"),
+		strings.Contains(msg, "session not found"):
+		return true
+	default:
+		return false
+	}
 }
 
 func wrapTmuxCommandError(err error, output string) error {

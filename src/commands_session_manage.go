@@ -118,36 +118,73 @@ func cmdSessionKill(args []string) int {
 		AllHashes:  cleanupAllHashes,
 		KeepEvents: true,
 	}
-	if !tmuxHasSessionFn(session) {
-		fmt.Fprintln(os.Stderr, "session not found")
-		if err := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); err != nil {
-			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", err)
+	descendants, descendantsErr := listSessionDescendants(projectRoot, session, cleanupOpts.AllHashes)
+	if descendantsErr != nil {
+		fmt.Fprintf(os.Stderr, "descendant lookup warning: %v\n", descendantsErr)
+	}
+
+	targets := make([]string, 0, len(descendants)+1)
+	targets = append(targets, descendants...)
+	targets = append(targets, session)
+
+	rootFound := false
+	var errs []string
+	for _, target := range targets {
+		isRoot := target == session
+		reasonPrefix := "kill_descendant"
+		if isRoot {
+			reasonPrefix = "kill"
 		}
-		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "not_found", "idle", "kill_not_found"); err != nil {
-			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+
+		if !tmuxHasSessionFn(target) {
+			if isRoot {
+				fmt.Fprintln(os.Stderr, "session not found")
+			}
+			if err := cleanupSessionArtifactsWithOptions(projectRoot, target, cleanupOpts); err != nil {
+				errs = append(errs, fmt.Sprintf("%s cleanup: %v", target, err))
+			}
+			if err := appendLifecycleEvent(projectRoot, target, "lifecycle", "not_found", "idle", reasonPrefix+"_not_found"); err != nil {
+				errs = append(errs, fmt.Sprintf("%s observability: %v", target, err))
+			}
+			continue
 		}
-		return 1
+		if isRoot {
+			rootFound = true
+		}
+
+		killErr := tmuxKillSessionFn(target)
+		cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, target, cleanupOpts)
+		eventState := "terminated"
+		eventReason := reasonPrefix + "_success"
+		if killErr != nil {
+			eventState = "degraded"
+			eventReason = reasonPrefix + "_error"
+		}
+		if err := appendLifecycleEvent(projectRoot, target, "lifecycle", eventState, "idle", eventReason); err != nil {
+			errs = append(errs, fmt.Sprintf("%s observability: %v", target, err))
+		}
+		if killErr != nil {
+			errs = append(errs, fmt.Sprintf("%s kill: %v", target, killErr))
+		}
+		if cleanupErr != nil {
+			errs = append(errs, fmt.Sprintf("%s cleanup: %v", target, cleanupErr))
+		}
 	}
-	killErr := tmuxKillSessionFn(session)
-	cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts)
-	eventState := "terminated"
-	eventReason := "kill_success"
-	if killErr != nil {
-		eventState = "degraded"
-		eventReason = "kill_error"
-	}
-	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", eventState, "idle", eventReason); err != nil {
-		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
-	}
+
 	if err := pruneStaleSessionEventArtifactsFn(); err != nil {
 		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 	}
-	if killErr != nil || cleanupErr != nil {
-		if killErr != nil {
-			fmt.Fprintf(os.Stderr, "failed to kill session: %v\n", killErr)
+
+	if !rootFound {
+		for _, e := range errs {
+			fmt.Fprintln(os.Stderr, e)
 		}
-		if cleanupErr != nil {
-			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
+		return 1
+	}
+
+	if len(errs) > 0 {
+		for _, e := range errs {
+			fmt.Fprintln(os.Stderr, e)
 		}
 		return 1
 	}

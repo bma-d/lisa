@@ -7,6 +7,7 @@ Related Files: `src/tmux.go`
 
 All tmux interactions are wrapped in Go functions. No direct tmux commands elsewhere in codebase.
 External command wrappers are now bounded by `LISA_CMD_TIMEOUT_SECONDS` (default 20s) to prevent hung `tmux`/`ps` calls from stalling status/monitor loops.
+Project socket routing now prefers `/tmp/lisa-tmux-<slug>-<hash>.sock` for nested sandbox compatibility and keeps a legacy fallback candidate based on `os.TempDir()` when probing existing sessions.
 
 ## Session Creation
 
