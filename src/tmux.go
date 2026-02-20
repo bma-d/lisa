@@ -425,7 +425,7 @@ func inspectPaneProcessTree(panePID int) (float64, bool, error) {
 		if execName == "grep" {
 			continue
 		}
-		if isPassiveChildProcess(execName) {
+		if isPassiveChildProcess(execName, proc.Command) {
 			continue
 		}
 		if execName != "" && !isShellCommand(execName) {
@@ -439,13 +439,37 @@ func inspectPaneProcessTree(panePID int) (float64, bool, error) {
 	return paneCPU, false, nil
 }
 
-func isPassiveChildProcess(executable string) bool {
+func isPassiveChildProcess(executable, command string) bool {
 	switch strings.ToLower(strings.TrimSpace(executable)) {
 	case "sleep":
 		return true
+	case "cat":
+		// `cat` without file args is effectively stdin-waiting in interactive panes.
+		return catReadsFromStdinOnly(command)
 	default:
 		return false
 	}
+}
+
+func catReadsFromStdinOnly(command string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return false
+	}
+	if commandExecutableName(strings.ToLower(fields[0])) != "cat" {
+		return false
+	}
+	for _, token := range fields[1:] {
+		token = strings.TrimSpace(token)
+		if token == "" || token == "-" {
+			continue
+		}
+		if strings.HasPrefix(token, "-") {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func listProcessesCached() ([]processInfo, error) {

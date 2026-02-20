@@ -230,6 +230,32 @@ func TestCmdSessionSendValidationAndLifecycle(t *testing.T) {
 	}
 }
 
+func TestCmdSessionSendValidatesArgsBeforeSessionLookup(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+	})
+
+	lookupCalled := false
+	tmuxHasSessionFn = func(session string) bool {
+		lookupCalled = true
+		return false
+	}
+
+	_, stderr := captureOutput(t, func() {
+		code := cmdSessionSend([]string{"--session", "lisa-send", "--text", "a", "--keys", "b"})
+		if code == 0 {
+			t.Fatalf("expected mutually exclusive validation failure")
+		}
+	})
+	if !strings.Contains(stderr, "use either --text or --keys") {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if lookupCalled {
+		t.Fatal("expected argument validation before tmux session lookup")
+	}
+}
+
 func TestCmdSessionExplainRejectsInvalidEventsFlag(t *testing.T) {
 	_, stderr := captureOutput(t, func() {
 		code := cmdSessionExplain([]string{"--session", "lisa-explain", "--events", "0"})

@@ -1,6 +1,6 @@
 # State Machine & Status Classification
 
-Last Updated: 2026-02-19
+Last Updated: 2026-02-20
 Related Files: `src/status.go`, `src/types.go`
 
 ## Overview
@@ -13,7 +13,7 @@ Related Files: `src/status.go`, `src/types.go`
 2. **Agent process** (`detectAgentProcess`): BFS walk from pane PID through process tree, prefers strict executable matches for `claude`/`codex` and uses env custom token matchers only as fallback, returns PID + CPU%; cached between polls via `LISA_PROCESS_SCAN_INTERVAL_SECONDS` (default 8s)
 3. **Output freshness**: MD5 hash of captured pane output compared to last known hash; stale after `LISA_OUTPUT_STALE_SECONDS` (default 240s). Updates are monotonic by nanosecond capture timestamp so older concurrent polls cannot overwrite newer freshness state.
 4. **Interactive shell idle detection** (`inspectPaneProcessTree`): for interactive shell sessions with no detected agent PID, classify `waiting_input` when heartbeat is fresh, pane CPU is below threshold, and no active non-shell descendants are found
-   - Passive `sleep` descendants (heartbeat helper) are ignored
+   - Passive descendants are ignored: heartbeat helper `sleep`, plus stdin-only `cat` processes (no file args) used by local interactive command harnesses
 5. **Session completion** (`readSessionDoneFile` + `parseSessionCompletionForRun`): prefers `/tmp/.lisa-*-done.txt` sidecar (`{runID}:{exit}`) written by wrapper trap, with marker fallback parsing from pane output
 6. **Exec completion** (`parseExecCompletion`): searches for `__LISA_EXEC_DONE__:N` marker
 7. **Heartbeat freshness**: reads `/tmp/.lisa-*-heartbeat.txt` mtime (`LISA_HEARTBEAT_FILE`), stale after `LISA_HEARTBEAT_STALE_SECONDS` (default 8s)

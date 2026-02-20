@@ -2667,6 +2667,50 @@ func TestInspectPaneProcessTreeIgnoresPassiveSleepChild(t *testing.T) {
 	}
 }
 
+func TestInspectPaneProcessTreeTreatsBareCatAsPassiveChild(t *testing.T) {
+	origListCached := listProcessesCachedFn
+	t.Cleanup(func() {
+		listProcessesCachedFn = origListCached
+	})
+
+	listProcessesCachedFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 100, PPID: 1, CPU: 0.02, Command: "/bin/bash /tmp/lisa-cmd.sh"},
+			{PID: 101, PPID: 100, CPU: 0.00, Command: "cat"},
+		}, nil
+	}
+
+	_, hasNonShellDescendant, err := inspectPaneProcessTree(100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if hasNonShellDescendant {
+		t.Fatal("expected stdin-only cat child to be treated as passive")
+	}
+}
+
+func TestInspectPaneProcessTreeTreatsCatWithFileArgAsActiveChild(t *testing.T) {
+	origListCached := listProcessesCachedFn
+	t.Cleanup(func() {
+		listProcessesCachedFn = origListCached
+	})
+
+	listProcessesCachedFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 100, PPID: 1, CPU: 0.02, Command: "/bin/bash /tmp/lisa-cmd.sh"},
+			{PID: 101, PPID: 100, CPU: 0.00, Command: "cat /tmp/input.txt"},
+		}, nil
+	}
+
+	_, hasNonShellDescendant, err := inspectPaneProcessTree(100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasNonShellDescendant {
+		t.Fatal("expected cat with file arg to be treated as active non-shell child")
+	}
+}
+
 func TestInteractiveSessionGracePeriodPreventsWaitingInput(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn

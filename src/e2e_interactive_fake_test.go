@@ -120,6 +120,52 @@ func TestE2EInteractiveLifecycleWithCat(t *testing.T) {
 	}
 }
 
+func TestE2EInteractiveCatMonitorStopsOnWaitingInput(t *testing.T) {
+	requireGoAndTmux(t)
+
+	repoRoot := findRepoRoot(t)
+	binPath := filepath.Join(t.TempDir(), "lisa")
+	runAndRequireSuccess(t, repoRoot, nil, "go", "build", "-o", binPath, ".")
+
+	session := fmt.Sprintf("lisa-e2e-interactive-cat-wait-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = runCommand(repoRoot, nil, binPath, "session", "kill", "--session", session, "--project-root", repoRoot)
+	})
+
+	runAndRequireSuccess(t, repoRoot, nil,
+		binPath, "session", "spawn",
+		"--agent", "codex",
+		"--mode", "interactive",
+		"--project-root", repoRoot,
+		"--session", session,
+		"--command", "cat",
+		"--json",
+	)
+
+	monitorRaw := runAndRequireSuccess(t, repoRoot, nil,
+		binPath, "session", "monitor",
+		"--session", session,
+		"--project-root", repoRoot,
+		"--poll-interval", "1",
+		"--max-polls", "12",
+		"--stop-on-waiting", "true",
+		"--json",
+	)
+	var monitor struct {
+		FinalState string `json:"finalState"`
+		ExitReason string `json:"exitReason"`
+	}
+	if err := json.Unmarshal([]byte(monitorRaw), &monitor); err != nil {
+		t.Fatalf("failed to parse monitor json: %v (%q)", err, monitorRaw)
+	}
+	if monitor.FinalState != "waiting_input" {
+		t.Fatalf("expected waiting_input final state, got %s (%s)", monitor.FinalState, monitorRaw)
+	}
+	if monitor.ExitReason != "waiting_input" {
+		t.Fatalf("expected waiting_input exit reason, got %s (%s)", monitor.ExitReason, monitorRaw)
+	}
+}
+
 func TestE2EInteractiveFinishHookWritesDoneAndRemovesItself(t *testing.T) {
 	requireGoAndTmux(t)
 

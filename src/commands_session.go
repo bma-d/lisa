@@ -384,19 +384,28 @@ func cmdSessionSend(args []string) int {
 		fmt.Fprintln(os.Stderr, "--session is required")
 		return 1
 	}
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
-	restoreRuntime := withProjectRuntimeEnv(projectRoot)
-	defer restoreRuntime()
-	if !tmuxHasSessionFn(session) {
-		fmt.Fprintln(os.Stderr, "session not found")
-		return 1
-	}
 	if text == "" && keys == "" {
 		fmt.Fprintln(os.Stderr, "provide --text or --keys")
 		return 1
 	}
 	if text != "" && keys != "" {
 		fmt.Fprintln(os.Stderr, "use either --text or --keys, not both")
+		return 1
+	}
+	keyList := []string(nil)
+	if keys != "" {
+		keyList = strings.Fields(keys)
+		if len(keyList) == 0 {
+			fmt.Fprintln(os.Stderr, "empty --keys")
+			return 1
+		}
+	}
+
+	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	defer restoreRuntime()
+	if !tmuxHasSessionFn(session) {
+		fmt.Fprintln(os.Stderr, "session not found")
 		return 1
 	}
 
@@ -409,11 +418,6 @@ func cmdSessionSend(args []string) int {
 			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 		}
 	} else {
-		keyList := strings.Fields(keys)
-		if len(keyList) == 0 {
-			fmt.Fprintln(os.Stderr, "empty --keys")
-			return 1
-		}
 		if err := tmuxSendKeysFn(session, keyList, enter); err != nil {
 			fmt.Fprintf(os.Stderr, "failed sending keys: %v\n", err)
 			return 1
