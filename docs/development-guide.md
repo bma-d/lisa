@@ -15,6 +15,14 @@ go build -o lisa .
 ./lisa doctor
 ```
 
+## Pre-Release Gate
+
+Before creating/pushing a release tag, run:
+
+- `docs/pre-release-skills-checklist.md`
+
+This checklist ensures `skills/lisa/SKILL.md` is synced and install propagation is verified.
+
 ## Test Matrix
 
 ```bash

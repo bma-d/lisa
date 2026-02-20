@@ -28,6 +28,9 @@ var helpFuncs = map[string]func(){
 	"session kill-all": helpSessionKillAll,
 	"agent":            helpAgent,
 	"agent build-cmd":  helpAgentBuildCmd,
+	"skills":           helpSkills,
+	"skills sync":      helpSkillsSync,
+	"skills install":   helpSkillsInstall,
 }
 
 func showHelp(cmdPath string) int {
@@ -60,6 +63,8 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session kill          Kill a session and clean artifacts")
 	fmt.Fprintln(os.Stderr, "  session kill-all      Kill all lisa sessions")
 	fmt.Fprintln(os.Stderr, "  agent build-cmd       Build agent CLI command string")
+	fmt.Fprintln(os.Stderr, "  skills sync           Sync lisa skill into repo skills/lisa")
+	fmt.Fprintln(os.Stderr, "  skills install        Install repo lisa skill to codex/claude/project")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Run 'lisa <command> --help' for details on a specific command.")
 }
@@ -294,5 +299,42 @@ func helpAgentBuildCmd() {
 	fmt.Fprintln(os.Stderr, "  --agent-args TEXT      Extra args passed to agent CLI")
 	fmt.Fprintln(os.Stderr, "  --no-dangerously-skip-permissions")
 	fmt.Fprintln(os.Stderr, "                        Don't add --dangerously-skip-permissions to claude")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSkills() {
+	fmt.Fprintln(os.Stderr, "lisa skills — manage lisa skill files")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa skills <subcommand> [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Subcommands:")
+	fmt.Fprintln(os.Stderr, "  sync      Copy skill from codex/claude/path into repo skills/lisa")
+	fmt.Fprintln(os.Stderr, "  install   Copy repo skills/lisa into codex/claude/project path")
+}
+
+func helpSkillsSync() {
+	fmt.Fprintln(os.Stderr, "lisa skills sync — sync external skill into repo skills/lisa")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa skills sync [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --from SOURCE         Source: codex|claude|path (default: codex)")
+	fmt.Fprintln(os.Stderr, "  --path PATH           Source path when --from path")
+	fmt.Fprintln(os.Stderr, "  --repo-root PATH      Repo root that contains skills/ (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSkillsInstall() {
+	fmt.Fprintln(os.Stderr, "lisa skills install — install repo skills/lisa to destination")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa skills install [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --to TARGET           Destination: codex|claude|project (default: codex)")
+	fmt.Fprintln(os.Stderr, "  --project-path PATH   Project root when --to project")
+	fmt.Fprintln(os.Stderr, "  --path PATH           Explicit destination path override")
+	fmt.Fprintln(os.Stderr, "  --repo-root PATH      Repo root that contains skills/ (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  note                  Source is repo skills/lisa for dev builds; tagged")
+	fmt.Fprintln(os.Stderr, "                        release builds fetch skill from GitHub by version")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }

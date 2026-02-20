@@ -27,6 +27,8 @@ func Run(args []string) int {
 		return cmdSession(rest)
 	case "agent":
 		return cmdAgent(rest)
+	case "skills":
+		return cmdSkills(rest)
 	case "help", "--help", "-h":
 		return showHelp(strings.Join(rest, " "))
 	default:

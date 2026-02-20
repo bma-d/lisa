@@ -1,6 +1,6 @@
 # Project Overview
 
-Last Updated: 2026-02-19
+Last Updated: 2026-02-20
 
 ## Technology Stack
 
@@ -28,6 +28,9 @@ lisa/
 ├── smoke-nested           # Repo-local nested tmux smoke command
 ├── scripts/
 │   └── smoke-nested-3level.sh
+├── skills/
+│   └── lisa/
+│       └── SKILL.md        # vendored Lisa skill for Codex/Claude installs
 └── src/
     ├── AGENTS.md
     ├── CLAUDE.md
@@ -41,6 +44,7 @@ lisa/
 - Hand-rolled flag parsing (no flag library)
 - Machine-readable `--json` is available on `doctor`, `agent build-cmd`, and `session spawn|send|status|monitor|capture`; helper commands (`session name|list|exists|kill|kill-all`) are text-first
 - Session artifacts in `/tmp/` keyed by project hash
+- `skills` command manages bidirectional Lisa skill sync/install (`skills sync`, `skills install`)
 - Release artifacts and package-manager distribution are handled via GoReleaser (Homebrew, deb/rpm/apk, archives)
 
 ## Breadcrumb System

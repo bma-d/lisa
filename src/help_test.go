@@ -30,6 +30,9 @@ func TestHelpExitZero(t *testing.T) {
 		{"session name --help", []string{"session", "name", "--help"}},
 		{"agent --help", []string{"agent", "--help"}},
 		{"agent build-cmd --help", []string{"agent", "build-cmd", "--help"}},
+		{"skills --help", []string{"skills", "--help"}},
+		{"skills sync --help", []string{"skills", "sync", "--help"}},
+		{"skills install --help", []string{"skills", "install", "--help"}},
 	}
 
 	for _, tc := range commands {
@@ -53,7 +56,22 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"top-level",
 			[]string{"--help"},
-			[]string{"lisa <command> [args]", "doctor", "cleanup", "session spawn", "session explain", "agent build-cmd"},
+			[]string{"lisa <command> [args]", "doctor", "cleanup", "session spawn", "session explain", "agent build-cmd", "skills sync"},
+		},
+		{
+			"skills",
+			[]string{"skills", "--help"},
+			[]string{"lisa skills", "sync", "install"},
+		},
+		{
+			"skills sync",
+			[]string{"skills", "sync", "--help"},
+			[]string{"lisa skills sync", "--from", "--path", "--repo-root", "--json"},
+		},
+		{
+			"skills install",
+			[]string{"skills", "install", "--help"},
+			[]string{"lisa skills install", "--to", "--project-path", "--path", "--repo-root", "--json"},
 		},
 		{
 			"cleanup",
@@ -123,6 +141,12 @@ func TestHelpRoutingEquivalence(t *testing.T) {
 			[]string{"help", "agent", "build-cmd"},
 			[]string{"agent", "build-cmd", "--help"},
 			[]string{"agent", "help", "build-cmd"},
+		},
+		{
+			"skills sync",
+			[]string{"help", "skills", "sync"},
+			[]string{"skills", "sync", "--help"},
+			[]string{"skills", "help", "sync"},
 		},
 	}
 

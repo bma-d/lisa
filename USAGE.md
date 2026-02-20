@@ -44,6 +44,8 @@ lisa session exists
 lisa session kill
 lisa session kill-all
 lisa agent build-cmd
+lisa skills sync
+lisa skills install
 ```
 
 Per-command help:
@@ -134,6 +136,46 @@ Behavior:
 - Reachable sockets with active clients are kept.
 - `--dry-run` reports `wouldKillServers` / `wouldRemove` without mutation.
 - Any probe/kill/remove failures print per-socket errors to stderr and exit `1`.
+
+### `skills sync`
+
+Sync an external Lisa skill directory into this repo's `skills/lisa`.
+
+```bash
+lisa skills sync --from codex --repo-root /path/to/lisa-repo
+lisa skills sync --from claude --repo-root /path/to/lisa-repo
+lisa skills sync --from path --path /tmp/lisa-skill --repo-root /path/to/lisa-repo
+```
+
+Flags:
+
+- `--from`: `codex|claude|path` (default `codex`)
+- `--path`: required when `--from path`
+- `--repo-root`: repo root containing `skills/` (default cwd)
+- `--json`: JSON summary output
+
+### `skills install`
+
+Install repo `skills/lisa` into Codex, Claude, or a project path.
+
+```bash
+lisa skills install --to codex --repo-root /path/to/lisa-repo
+lisa skills install --to claude --repo-root /path/to/lisa-repo
+lisa skills install --to project --project-path /tmp/target-project --repo-root /path/to/lisa-repo
+```
+
+Flags:
+
+- `--to`: `codex|claude|project` (default `codex`)
+- `--project-path`: required when `--to project` (installs to `<project>/skills/lisa`)
+- `--path`: explicit destination path override
+- `--repo-root`: repo root containing `skills/` (default cwd)
+- `--json`: JSON summary output
+
+Source behavior:
+
+- local/dev builds (`version=dev`) read from repo `skills/lisa`
+- tagged release builds fetch `skills/lisa` from GitHub tag matching the binary version (fallback: `main`)
 
 ### `session name`
 

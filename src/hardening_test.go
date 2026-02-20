@@ -43,6 +43,7 @@ func TestUsageIncludesCoreCommands(t *testing.T) {
 		"session spawn",
 		"session explain",
 		"agent build-cmd",
+		"skills sync",
 	} {
 		if !strings.Contains(stderr, token) {
 			t.Fatalf("usage missing token %q in %q", token, stderr)

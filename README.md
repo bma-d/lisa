@@ -57,6 +57,7 @@ Canonical CLI usage reference lives in [`USAGE.md`](./USAGE.md).
 ```bash
 lisa doctor                # verify setup
 lisa cleanup --dry-run     # inspect stale socket residue
+lisa skills sync --from codex   # sync ~/.codex/skills/lisa into repo skills/lisa
 lisa version               # print version
 ```
 

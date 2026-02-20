@@ -25,6 +25,7 @@
 - [Architecture](./architecture.md) - runtime flow, state classification, artifacts
 - [Source Tree Analysis](./source-tree-analysis.md) - annotated tree and code metrics
 - [Development Guide](./development-guide.md) - build/test/run workflow
+- [Pre-Release Skills Checklist](./pre-release-skills-checklist.md) - release gate for `skills/lisa` sync and install validation
 - [Project Scan Report](./project-scan-report.json) - machine-readable repo snapshot metadata
 
 ## Canonical Runtime Docs
