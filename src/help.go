@@ -21,6 +21,7 @@ var helpFuncs = map[string]func(){
 	"session explain":  helpSessionExplain,
 	"session monitor":  helpSessionMonitor,
 	"session capture":  helpSessionCapture,
+	"session tree":     helpSessionTree,
 	"session list":     helpSessionList,
 	"session exists":   helpSessionExists,
 	"session kill":     helpSessionKill,
@@ -53,6 +54,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session explain       Detailed session diagnostics")
 	fmt.Fprintln(os.Stderr, "  session monitor       Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  session capture       Capture session pane output or transcript")
+	fmt.Fprintln(os.Stderr, "  session tree          Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  session list          List lisa sessions")
 	fmt.Fprintln(os.Stderr, "  session exists        Check if a session exists")
 	fmt.Fprintln(os.Stderr, "  session kill          Kill a session and clean artifacts")
@@ -95,6 +97,7 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  explain    Detailed session diagnostics")
 	fmt.Fprintln(os.Stderr, "  monitor    Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  capture    Capture session pane output or transcript")
+	fmt.Fprintln(os.Stderr, "  tree       Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  list       List lisa sessions")
 	fmt.Fprintln(os.Stderr, "  exists     Check if a session exists")
 	fmt.Fprintln(os.Stderr, "  kill       Kill a session and clean artifacts")
@@ -129,6 +132,7 @@ func helpSessionSpawn() {
 	fmt.Fprintln(os.Stderr, "  --width N             Tmux pane width (default: 220)")
 	fmt.Fprintln(os.Stderr, "  --height N            Tmux pane height (default: 60)")
 	fmt.Fprintln(os.Stderr, "  --cleanup-all-hashes  Clean artifacts across all project hashes")
+	fmt.Fprintln(os.Stderr, "  --dry-run             Print resolved spawn plan without creating session")
 	fmt.Fprintln(os.Stderr, "  --no-dangerously-skip-permissions")
 	fmt.Fprintln(os.Stderr, "                        Don't add --dangerously-skip-permissions to claude")
 	fmt.Fprintln(os.Stderr, "  note                  Nested codex exec prompts (./lisa, lisa session spawn)")
@@ -194,6 +198,7 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --max-polls N         Maximum number of polls (default: 120)")
 	fmt.Fprintln(os.Stderr, "  --stop-on-waiting BOOL  Stop on waiting_input (default: true)")
 	fmt.Fprintln(os.Stderr, "  --waiting-requires-turn-complete BOOL  Require transcript turn-complete before stopping on waiting_input (default: false)")
+	fmt.Fprintln(os.Stderr, "  --until-marker TEXT   Stop when raw pane output contains marker text")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --verbose             Print poll details to stderr")
 }
@@ -219,8 +224,21 @@ func helpSessionList() {
 	fmt.Fprintln(os.Stderr, "Usage: lisa session list [flags]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --all-sockets         Discover active sessions across project sockets")
 	fmt.Fprintln(os.Stderr, "  --project-only        Only show sessions for current project")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+}
+
+func helpSessionTree() {
+	fmt.Fprintln(os.Stderr, "lisa session tree — show parent/child session hierarchy")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session tree [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Root session filter (optional)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --all-hashes          Include metadata from all project hashes")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
 func helpSessionExists() {

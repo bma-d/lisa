@@ -39,6 +39,8 @@ func cmdSession(args []string) int {
 		return cmdSessionMonitor(args[1:])
 	case "capture":
 		return cmdSessionCapture(args[1:])
+	case "tree":
+		return cmdSessionTree(args[1:])
 	case "list":
 		return cmdSessionList(args[1:])
 	case "exists":
@@ -121,6 +123,7 @@ func cmdSessionSpawn(args []string) int {
 	height := defaultTmuxHeight
 	cleanupAllHashes := false
 	skipPermissions := true
+	dryRun := false
 	jsonOut := false
 
 	for i := 0; i < len(args); i++ {
@@ -193,6 +196,8 @@ func cmdSessionSpawn(args []string) int {
 			i++
 		case "--cleanup-all-hashes":
 			cleanupAllHashes = true
+		case "--dry-run":
+			dryRun = true
 		case "--no-dangerously-skip-permissions":
 			skipPermissions = false
 		case "--json":
@@ -231,26 +236,13 @@ func cmdSessionSpawn(args []string) int {
 	}
 	runID := fmt.Sprintf("%d", time.Now().UnixNano())
 	emitSpawnFailureEvent := func(reason string) {
+		if dryRun {
+			return
+		}
 		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "degraded", "idle", reason); err != nil {
 			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 		}
 	}
-	if err := pruneStaleSessionEventArtifactsFn(); err != nil {
-		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
-	}
-
-	cleanupOpts := cleanupOptions{AllHashes: cleanupAllHashes}
-	if err := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to reset previous session artifacts: %v\n", err)
-		emitSpawnFailureEvent("spawn_cleanup_error")
-		return 1
-	}
-	if err := ensureHeartbeatWritableFn(sessionHeartbeatFile(projectRoot, session)); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to prepare heartbeat file: %v\n", err)
-		emitSpawnFailureEvent("spawn_heartbeat_prepare_error")
-		return 1
-	}
-
 	if command == "" {
 		if shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs) {
 			agentArgs = strings.TrimSpace(agentArgs + " --dangerously-bypass-approvals-and-sandbox")
@@ -268,6 +260,57 @@ func cmdSessionSpawn(args []string) int {
 	}
 	if strings.TrimSpace(commandToSend) != "" {
 		commandToSend = wrapSessionCommand(commandToSend, runID)
+	}
+
+	if dryRun {
+		socketPath := tmuxSocketPathForProjectRoot(projectRoot)
+		payload := map[string]any{
+			"dryRun":         true,
+			"session":        session,
+			"agent":          agent,
+			"mode":           mode,
+			"runId":          runID,
+			"projectRoot":    projectRoot,
+			"command":        command,
+			"startupCommand": commandToSend,
+			"socketPath":     socketPath,
+			"width":          width,
+			"height":         height,
+			"env": map[string]string{
+				"LISA_SESSION":        "true",
+				"LISA_SESSION_NAME":   session,
+				"LISA_AGENT":          agent,
+				"LISA_MODE":           mode,
+				"LISA_PROJECT_ROOT":   projectRoot,
+				"LISA_TMUX_SOCKET":    socketPath,
+				"LISA_PROJECT_HASH":   projectHash(projectRoot),
+				"LISA_HEARTBEAT_FILE": sessionHeartbeatFile(projectRoot, session),
+				"LISA_DONE_FILE":      sessionDoneFile(projectRoot, session),
+			},
+		}
+		if jsonOut {
+			writeJSON(payload)
+			return 0
+		}
+		fmt.Println(session)
+		fmt.Printf("dry-run socket: %s\n", socketPath)
+		fmt.Printf("dry-run command: %s\n", command)
+		return 0
+	}
+	if err := pruneStaleSessionEventArtifactsFn(); err != nil {
+		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+	}
+
+	cleanupOpts := cleanupOptions{AllHashes: cleanupAllHashes}
+	if err := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to reset previous session artifacts: %v\n", err)
+		emitSpawnFailureEvent("spawn_cleanup_error")
+		return 1
+	}
+	if err := ensureHeartbeatWritableFn(sessionHeartbeatFile(projectRoot, session)); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to prepare heartbeat file: %v\n", err)
+		emitSpawnFailureEvent("spawn_heartbeat_prepare_error")
+		return 1
 	}
 
 	if err := tmuxNewSessionWithStartupFn(session, projectRoot, agent, mode, width, height, commandToSend); err != nil {

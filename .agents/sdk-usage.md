@@ -14,6 +14,7 @@ How to use Lisa as infrastructure from an LLM orchestrator or script.
    - In `session status` output, `sessionState` is lifecycle truth; `status` is normalized for terminal states (`completed`, `crashed`, `stuck`, `not_found`) to avoid idle-vs-terminal mismatches in JSON/CSV parsing.
    - In `session monitor` output, `finalState` is stop-state truth; `finalStatus` is normalized for terminal states (`completed`, `crashed`, `stuck`, `not_found`) so scripts don't see `finalStatus=idle` for terminal outcomes.
    - For stricter interactive stop semantics, use `session monitor --stop-on-waiting true --waiting-requires-turn-complete true` to stop only after transcript turn completion is detected
+   - For deterministic completion gates, use `session monitor --until-marker "<TOKEN>"` and stop on `exitReason=marker_found` (exit `0`)
 3. If state is `stuck`, send next instruction with `session send --text "..." --enter`; if state is `degraded`, retry polling and inspect `signals.*Error`
 4. Fetch artifacts with `session capture --lines N`
    - Raw capture now suppresses known Codex/MCP startup noise by default (including MCP OAuth refresh/auth-failure startup noise); use `session capture --raw --keep-noise` to keep full raw output
@@ -28,6 +29,9 @@ For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat 
 Manual nested smoke command: run `./smoke-nested` from repo root to validate L1->L2->L3 interactive nesting end-to-end with deterministic markers.
 
 `session exists` now also accepts `--project-root` for explicit socket/project routing.
+`session list --all-sockets` now discovers active sessions across metadata-known project roots/sockets in one call.
+`session spawn --dry-run --json` now emits resolved command/socket/env planning output without creating tmux sessions/artifacts.
+`session tree --json` now returns metadata parent/child hierarchy for nested orchestration introspection.
 
 ## Command Contract Source
 

@@ -38,6 +38,7 @@ lisa session status
 lisa session explain
 lisa session monitor
 lisa session capture
+lisa session tree
 lisa session list
 lisa session exists
 lisa session kill
@@ -177,6 +178,7 @@ Flags:
 - `--width`: tmux width (default `220`)
 - `--height`: tmux height (default `60`)
 - `--cleanup-all-hashes`: clean artifacts across all project hashes
+- `--dry-run`: print resolved spawn plan (command/socket/env) without creating tmux session or artifacts
 - `--no-dangerously-skip-permissions`: disable default Claude permission-skip flag injection
 - `--json`: machine-readable output
 
@@ -191,6 +193,7 @@ Notes:
 - If you pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'`, Lisa omits `--full-auto` automatically (Codex rejects combining both flags).
 - For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`) to avoid shell quoting collisions in inline nested commands.
 - Spawned panes receive `LISA_*` routing env (see Runtime Environment Variables) so nested Lisa commands preserve project/socket isolation.
+- `--dry-run` validates inputs and returns planned spawn payload (`session`, `command`, wrapped `startupCommand`, `socketPath`, injected env vars) without creating a session.
 
 ### `session send`
 
@@ -276,6 +279,7 @@ Flags:
 - `--max-polls N` (default `120`)
 - `--stop-on-waiting true|false` (default `true`)
 - `--waiting-requires-turn-complete true|false` (default `false`)
+- `--until-marker TEXT`: stop successfully when raw pane output contains marker text
 - `--json`
 - `--verbose`
 
@@ -288,6 +292,7 @@ When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
 `waiting_input` after transcript tail inspection confirms an assistant turn is
 complete (Claude/Codex interactive sessions with prompt metadata).
 When this path is taken, `exitReason=waiting_input_turn_complete` (exit `0`) and lifecycle reason is `monitor_waiting_input_turn_complete`.
+When `--until-marker` is set and marker text appears in pane output, monitor exits `0` with `exitReason=marker_found` (and current state/status snapshot).
 
 Exit code behavior:
 
@@ -330,12 +335,35 @@ List tmux sessions with `lisa-` prefix.
 ```bash
 lisa session list
 lisa session list --project-only
+lisa session list --all-sockets
 ```
 
 Flags:
 
+- `--all-sockets`: discover active sessions across project sockets by replaying metadata roots
 - `--project-only`
 - `--project-root`
+
+Behavior note:
+
+- Default `session list` is current-socket scoped.
+- `--all-sockets` expands discovery across metadata-known project roots and includes sessions currently active on those roots.
+
+### `session tree`
+
+Show parent/child hierarchy from session metadata.
+
+```bash
+lisa session tree --json
+lisa session tree --session <ROOT_SESSION> --json
+```
+
+Flags:
+
+- `--session` (optional root filter)
+- `--project-root`
+- `--all-hashes` (scan metadata across all project hashes)
+- `--json`
 
 ### `session exists`
 
@@ -424,6 +452,7 @@ JSON support:
 - `session explain`
 - `session monitor`
 - `session capture`
+- `session tree`
 
 Text/CSV-only commands:
 

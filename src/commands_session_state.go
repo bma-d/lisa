@@ -179,6 +179,8 @@ func cmdSessionMonitor(args []string) int {
 	maxPolls := defaultMaxPolls
 	stopOnWaiting := true
 	waitingRequiresTurnComplete := false
+	untilMarker := ""
+	untilMarkerSet := false
 	jsonOut := false
 	verbose := false
 
@@ -255,6 +257,13 @@ func cmdSessionMonitor(args []string) int {
 			}
 			waitingRequiresTurnComplete = parsed
 			i++
+		case "--until-marker":
+			if i+1 >= len(args) {
+				return flagValueError("--until-marker")
+			}
+			untilMarkerSet = true
+			untilMarker = strings.TrimSpace(args[i+1])
+			i++
 		case "--json":
 			jsonOut = true
 		case "--verbose":
@@ -266,6 +275,10 @@ func cmdSessionMonitor(args []string) int {
 
 	if session == "" {
 		fmt.Fprintln(os.Stderr, "--session is required")
+		return 1
+	}
+	if untilMarkerSet && untilMarker == "" {
+		fmt.Fprintln(os.Stderr, "invalid --until-marker: cannot be empty")
 		return 1
 	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
@@ -302,17 +315,31 @@ func cmdSessionMonitor(args []string) int {
 		}
 
 		reason := ""
+		if untilMarker != "" {
+			capture, captureErr := tmuxCapturePaneFn(session, 320)
+			if captureErr == nil && strings.Contains(capture, untilMarker) {
+				reason = "marker_found"
+			}
+		}
 		switch status.SessionState {
 		case "completed":
-			reason = "completed"
+			if reason == "" {
+				reason = "completed"
+			}
 		case "crashed":
-			reason = "crashed"
+			if reason == "" {
+				reason = "crashed"
+			}
 		case "not_found":
-			reason = "not_found"
+			if reason == "" {
+				reason = "not_found"
+			}
 		case "stuck":
-			reason = "stuck"
+			if reason == "" {
+				reason = "stuck"
+			}
 		case "waiting_input":
-			if stopOnWaiting {
+			if reason == "" && stopOnWaiting {
 				if waitingRequiresTurnComplete {
 					waitingTurn := monitorWaitingTurnCompleteFn(session, projectRoot, status)
 					if waitingTurn.Ready {
@@ -358,7 +385,7 @@ func cmdSessionMonitor(args []string) int {
 			if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+reason); err != nil {
 				fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 			}
-			if reason == "completed" || strings.HasPrefix(reason, "waiting_input") {
+			if reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input") {
 				return 0
 			}
 			return 2

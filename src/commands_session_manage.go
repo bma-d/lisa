@@ -3,11 +3,13 @@ package app
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
 func cmdSessionList(args []string) int {
 	projectOnly := false
+	allSockets := false
 	projectRoot := getPWD()
 
 	for i := 0; i < len(args); i++ {
@@ -16,6 +18,8 @@ func cmdSessionList(args []string) int {
 			return showHelp("session list")
 		case "--project-only":
 			projectOnly = true
+		case "--all-sockets":
+			allSockets = true
 		case "--project-root":
 			if i+1 >= len(args) {
 				return flagValueError("--project-root")
@@ -28,15 +32,69 @@ func cmdSessionList(args []string) int {
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
-	restoreRuntime := withProjectRuntimeEnv(projectRoot)
-	defer restoreRuntime()
-	list, err := tmuxListSessionsFn(projectOnly, projectRoot)
+	list := []string{}
+	var err error
+	if allSockets {
+		list, err = listSessionsAcrossSockets(projectRoot, projectOnly)
+	} else {
+		restoreRuntime := withProjectRuntimeEnv(projectRoot)
+		defer restoreRuntime()
+		list, err = tmuxListSessionsFn(projectOnly, projectRoot)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to list sessions: %v\n", err)
 		return 1
 	}
 	fmt.Println(strings.Join(list, "\n"))
 	return 0
+}
+
+func listSessionsAcrossSockets(projectRoot string, projectOnly bool) ([]string, error) {
+	projectRoot = canonicalProjectRoot(projectRoot)
+	rootHash := projectHash(projectRoot)
+
+	outSet := map[string]struct{}{}
+
+	restoreRuntime := withProjectRuntimeEnv(projectRoot)
+	currentSessions, err := tmuxListSessionsFn(projectOnly, projectRoot)
+	restoreRuntime()
+	if err != nil {
+		return nil, err
+	}
+	for _, session := range currentSessions {
+		outSet[session] = struct{}{}
+	}
+
+	metas, err := loadSessionMetasForProject(projectRoot, true)
+	if err != nil {
+		return nil, err
+	}
+	for _, meta := range metas {
+		session := strings.TrimSpace(meta.Session)
+		if session == "" {
+			continue
+		}
+		metaRoot := canonicalProjectRoot(meta.ProjectRoot)
+		if metaRoot == "" {
+			metaRoot = projectRoot
+		}
+		if projectOnly && projectHash(metaRoot) != rootHash {
+			continue
+		}
+		restore := withProjectRuntimeEnv(metaRoot)
+		active := tmuxHasSessionFn(session)
+		restore()
+		if active {
+			outSet[session] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(outSet))
+	for session := range outSet {
+		out = append(out, session)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func cmdSessionExists(args []string) int {
