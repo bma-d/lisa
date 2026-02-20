@@ -125,6 +125,15 @@ Flags:
 - `--include-tmux-default`: also sweep `/tmp/tmux-*` default sockets
 - `--json`: JSON summary
 
+Behavior:
+
+- Probes each candidate socket for reachability + client count.
+- Unreachable sockets are treated as stale and removed.
+- Reachable sockets with zero clients are treated as detached servers; Lisa runs `kill-server` then removes stale socket files when possible.
+- Reachable sockets with active clients are kept.
+- `--dry-run` reports `wouldKillServers` / `wouldRemove` without mutation.
+- Any probe/kill/remove failures print per-socket errors to stderr and exit `1`.
+
 ### `session name`
 
 Generate a unique session name for project+agent+mode (timestamp-based).
@@ -181,6 +190,7 @@ Notes:
 - For non-nested Codex `exec`, `--full-auto` sandbox can still block tmux socket creation for child Lisa sessions (`Operation not permitted`); use `--mode interactive` + `session send` or pass explicit bypass args.
 - If you pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'`, Lisa omits `--full-auto` automatically (Codex rejects combining both flags).
 - For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`) to avoid shell quoting collisions in inline nested commands.
+- Spawned panes receive `LISA_*` routing env (see Runtime Environment Variables) so nested Lisa commands preserve project/socket isolation.
 
 ### `session send`
 
@@ -244,6 +254,10 @@ Flags:
 - `--events N` (default `10`)
 - `--json`
 
+Output note:
+
+- Embedded `status` payload uses the same terminal normalization as `session status` (`completed`, `crashed`, `stuck`, `not_found`).
+
 ### `session monitor`
 
 Poll status until terminal/stop condition.
@@ -273,6 +287,7 @@ Output note:
 When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
 `waiting_input` after transcript tail inspection confirms an assistant turn is
 complete (Claude/Codex interactive sessions with prompt metadata).
+When this path is taken, `exitReason=waiting_input_turn_complete` (exit `0`) and lifecycle reason is `monitor_waiting_input_turn_complete`.
 
 Exit code behavior:
 
@@ -295,6 +310,7 @@ Flags:
 - `--session` (required)
 - `--raw`: force tmux pane capture
 - `--keep-noise`: keep Codex/MCP startup noise in pane capture
+- `--strip-noise`: compatibility alias to force default noise filtering
 - `--lines N`: pane lines for raw capture (default `200`)
 - `--project-root`
 - `--json`
@@ -305,6 +321,7 @@ Behavior:
 - fallback: raw tmux pane capture if transcript path fails/unavailable
 - raw capture path filters known Codex/MCP startup noise by default
 - `--keep-noise`: disables that filtering
+- `--strip-noise`: compatibility alias for default filtering (legacy scripts)
 
 ### `session list`
 
@@ -357,6 +374,9 @@ Flags:
 Behavior note:
 
 - If metadata links descendants (`parentSession`), `session kill` kills descendants first, then the target session.
+- Artifact cleanup is attempted even if target session is already missing or tmux kill returns an error.
+- `--cleanup-all-hashes` extends artifact cleanup across all project-hash variants.
+- Stale event-artifact retention pruning runs after kill cleanup.
 
 ### `session kill-all`
 
