@@ -1,0 +1,196 @@
+package app
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// commandCapability describes a CLI subcommand and the flags it accepts.
+type commandCapability struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Flags       []string `json:"flags"`
+}
+
+var commandCapabilities = []commandCapability{
+	{
+		Name:        "capabilities",
+		Description: "List lisa commands and flags (use --json for structured data)",
+		Flags:       []string{"--json"},
+	},
+	{
+		Name:        "doctor",
+		Description: "Check tmux + agent prerequisites",
+		Flags:       []string{"--json"},
+	},
+	{
+		Name:        "cleanup",
+		Description: "Sweep stalled tmux sockets",
+		Flags:       []string{"--dry-run", "--include-tmux-default", "--json"},
+	},
+	{
+		Name:        "version",
+		Description: "Print lisa version info",
+		Flags:       []string{"--version", "-version", "-v"},
+	},
+	{
+		Name:  "session name",
+		Flags: []string{"--agent", "--mode", "--project-root", "--tag", "--json"},
+	},
+	{
+		Name: "session spawn",
+		Flags: []string{
+			"--agent",
+			"--mode",
+			"--nested-policy",
+			"--session",
+			"--prompt",
+			"--command",
+			"--agent-args",
+			"--project-root",
+			"--width",
+			"--height",
+			"--cleanup-all-hashes",
+			"--dry-run",
+			"--detect-nested",
+			"--no-dangerously-skip-permissions",
+			"--json",
+		},
+	},
+	{
+		Name:  "session send",
+		Flags: []string{"--session", "--project-root", "--text", "--keys", "--enter", "--json"},
+	},
+	{
+		Name: "session status",
+		Flags: []string{
+			"--session",
+			"--agent",
+			"--mode",
+			"--project-root",
+			"--full",
+			"--fail-not-found",
+			"--json",
+			"--json-min",
+		},
+	},
+	{
+		Name:  "session explain",
+		Flags: []string{"--session", "--agent", "--mode", "--project-root", "--events", "--json"},
+	},
+	{
+		Name: "session monitor",
+		Flags: []string{
+			"--session",
+			"--project-root",
+			"--agent",
+			"--mode",
+			"--poll-interval",
+			"--max-polls",
+			"--stop-on-waiting",
+			"--waiting-requires-turn-complete",
+			"--until-marker",
+			"--expect",
+			"--json",
+			"--json-min",
+			"--stream-json",
+			"--verbose",
+		},
+	},
+	{
+		Name: "session capture",
+		Flags: []string{
+			"--session",
+			"--project-root",
+			"--lines",
+			"--raw",
+			"--delta-from",
+			"--keep-noise",
+			"--strip-noise",
+			"--json",
+			"--json-min",
+		},
+	},
+	{
+		Name:  "session tree",
+		Flags: []string{"--session", "--project-root", "--all-hashes", "--active-only", "--flat", "--json", "--json-min"},
+	},
+	{
+		Name:  "session smoke",
+		Flags: []string{"--project-root", "--levels", "--prompt-style", "--poll-interval", "--max-polls", "--keep-sessions", "--json"},
+	},
+	{
+		Name:  "session preflight",
+		Flags: []string{"--project-root", "--json"},
+	},
+	{
+		Name:  "session list",
+		Flags: []string{"--all-sockets", "--project-only", "--project-root", "--json", "--json-min"},
+	},
+	{
+		Name:  "session exists",
+		Flags: []string{"--session", "--project-root", "--json"},
+	},
+	{
+		Name:  "session kill",
+		Flags: []string{"--session", "--project-root", "--cleanup-all-hashes", "--json"},
+	},
+	{
+		Name:  "session kill-all",
+		Flags: []string{"--project-root", "--cleanup-all-hashes", "--project-only", "--json"},
+	},
+	{
+		Name:  "agent build-cmd",
+		Flags: []string{"--agent", "--mode", "--nested-policy", "--prompt", "--project-root", "--agent-args", "--no-dangerously-skip-permissions", "--json"},
+	},
+	{
+		Name:  "skills sync",
+		Flags: []string{"--from", "--path", "--repo-root", "--json"},
+	},
+	{
+		Name:  "skills install",
+		Flags: []string{"--to", "--path", "--project-path", "--repo-root", "--json"},
+	},
+}
+
+func cmdCapabilities(args []string) int {
+	jsonOut := hasJSONFlag(args)
+	for _, arg := range args {
+		switch arg {
+		case "--help", "-h":
+			return showHelp("capabilities")
+		case "--json":
+			jsonOut = true
+		default:
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", arg)
+		}
+	}
+
+	if jsonOut {
+		payload := map[string]any{
+			"version":     BuildVersion,
+			"commit":      BuildCommit,
+			"date":        BuildDate,
+			"generatedAt": time.Now().UTC().Format(time.RFC3339),
+			"commands":    commandCapabilities,
+		}
+		writeJSON(payload)
+		return 0
+	}
+
+	fmt.Println("lisa CLI capabilities (use --json for structured output):")
+	fmt.Println()
+	for _, entry := range commandCapabilities {
+		if len(entry.Flags) == 0 {
+			fmt.Printf("- %s", entry.Name)
+		} else {
+			fmt.Printf("- %-16s flags: %s", entry.Name, strings.Join(entry.Flags, ", "))
+		}
+		if entry.Description != "" {
+			fmt.Printf("\n    %s", entry.Description)
+		}
+		fmt.Println()
+	}
+	return 0
+}

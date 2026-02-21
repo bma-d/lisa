@@ -24,7 +24,6 @@ var helpFuncs = map[string]func(){
 	"session tree":      helpSessionTree,
 	"session smoke":     helpSessionSmoke,
 	"session preflight": helpSessionPreflight,
-	"session list":      helpSessionList,
 	"session exists":    helpSessionExists,
 	"session kill":      helpSessionKill,
 	"session kill-all":  helpSessionKillAll,
@@ -32,6 +31,8 @@ var helpFuncs = map[string]func(){
 	"agent build-cmd":   helpAgentBuildCmd,
 	"skills":            helpSkills,
 	"skills sync":       helpSkillsSync,
+	"session list":      helpSessionList,
+	"capabilities":      helpCapabilities,
 	"skills install":    helpSkillsInstall,
 }
 
@@ -66,6 +67,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session exists        Check if a session exists")
 	fmt.Fprintln(os.Stderr, "  session kill          Kill a session and clean artifacts")
 	fmt.Fprintln(os.Stderr, "  session kill-all      Kill all lisa sessions")
+	fmt.Fprintln(os.Stderr, "  capabilities          Describe lisa CLI commands and flags")
 	fmt.Fprintln(os.Stderr, "  agent build-cmd       Build agent CLI command string")
 	fmt.Fprintln(os.Stderr, "  skills sync           Sync lisa skill into repo skills/lisa")
 	fmt.Fprintln(os.Stderr, "  skills install        Install repo lisa skill to codex/claude/project")
@@ -323,6 +325,15 @@ func helpSessionKillAll() {
 	fmt.Fprintln(os.Stderr, "  --project-only        Only kill sessions for current project")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --cleanup-all-hashes  Clean artifacts across all project hashes")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpCapabilities() {
+	fmt.Fprintln(os.Stderr, "lisa capabilities — describe lisa CLI commands/flags")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa capabilities [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 

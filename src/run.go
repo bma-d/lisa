@@ -20,6 +20,8 @@ func Run(args []string) int {
 		return cmdDoctor(rest)
 	case "cleanup":
 		return cmdCleanup(rest)
+	case "capabilities":
+		return cmdCapabilities(rest)
 	case "version", "--version", "-version", "-v":
 		fmt.Printf("lisa %s (commit %s, built %s)\n", BuildVersion, BuildCommit, BuildDate)
 		return 0
