@@ -1,6 +1,6 @@
 # Session Lifecycle & File Management
 
-Last Updated: 2026-02-20
+Last Updated: 2026-02-21
 Related Files: `src/session_files.go`, `src/commands_session.go`
 
 ## Overview
@@ -42,9 +42,11 @@ All stored in `/tmp/`:
    - `--dry-run` validates + resolves spawn command/socket/env and exits without tmux/artifact mutation.
 2. **Monitor** (`cmdSessionMonitor`): poll loop calling `computeSessionStatus()` at interval, stops on terminal state
    - Optional `--until-marker` stops with `exitReason=marker_found` when pane output contains a deterministic marker token.
+   - `--expect terminal|marker` adds fail-fast expectation gates for success-path ambiguity.
 3. **Kill** (`cmdSessionKill`): resolve descendants from metadata parent links -> kill descendants first -> kill target session -> cleanup runtime artifacts (preserve event log) -> append lifecycle events
 4. **Kill-all** (`cmdSessionKillAll`): list sessions -> kill each -> cleanup runtime artifacts (preserve event log) -> append lifecycle event. Non-`--project-only` kill-all now cleans artifacts across hashes by default for the listed session IDs.
-5. **Tree** (`cmdSessionTree`): builds metadata graph (`parentSession` links) and returns nested hierarchy (text or JSON).
+5. **Tree** (`cmdSessionTree`): builds metadata graph (`parentSession` links) and returns nested hierarchy (text/JSON) or flat rows (`--flat`).
+6. **Smoke** (`cmdSessionSmoke`): deterministic nested orchestration (`L1->...->LN`, max 4) with marker assertions and optional JSON summary.
 
 Cleanup scope is hash-scoped by default (current project hash only). Cross-hash cleanup for spawn/kill paths requires explicit `--cleanup-all-hashes`, except non-`--project-only` kill-all which now enables cross-hash cleanup automatically.
 

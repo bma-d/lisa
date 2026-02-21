@@ -39,6 +39,7 @@ lisa session explain
 lisa session monitor
 lisa session capture
 lisa session tree
+lisa session smoke
 lisa session list
 lisa session exists
 lisa session kill
@@ -201,6 +202,7 @@ Flags:
 - `--mode`: `interactive|exec` (default `interactive`)
 - `--project-root`: defaults to current directory
 - `--tag`: optional suffix (sanitized)
+- `--json`
 
 ### `session spawn`
 
@@ -328,6 +330,7 @@ Flags:
 - `--stop-on-waiting true|false` (default `true`)
 - `--waiting-requires-turn-complete true|false` (default `false`)
 - `--until-marker TEXT`: stop successfully when raw pane output contains marker text
+- `--expect any|terminal|marker` (default `any`)
 - `--json`
 - `--verbose`
 
@@ -340,7 +343,9 @@ When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
 `waiting_input` after transcript tail inspection confirms an assistant turn is
 complete (Claude/Codex interactive sessions with prompt metadata).
 When this path is taken, `exitReason=waiting_input_turn_complete` (exit `0`) and lifecycle reason is `monitor_waiting_input_turn_complete`.
-When `--until-marker` is set and marker text appears in pane output, monitor exits `0` with `exitReason=marker_found` (and current state/status snapshot).
+When `--until-marker` is set and marker text appears in pane output, monitor exits `0` with `exitReason=marker_found`, often while `finalState=in_progress`.
+`--expect terminal` fails fast on `marker_found`/`waiting_input` success cases (`exitReason=expected_terminal_got_*`, exit `2`).
+`--expect marker` fails fast if a terminal/waiting reason occurs before marker match (`exitReason=expected_marker_got_*`, exit `2`).
 
 Exit code behavior:
 
@@ -391,6 +396,7 @@ Flags:
 - `--all-sockets`: discover active sessions across project sockets by replaying metadata roots
 - `--project-only`
 - `--project-root`
+- `--json`
 
 Behavior note:
 
@@ -404,6 +410,7 @@ Show parent/child hierarchy from session metadata.
 ```bash
 lisa session tree --json
 lisa session tree --session <ROOT_SESSION> --json
+lisa session tree --flat
 ```
 
 Flags:
@@ -411,7 +418,32 @@ Flags:
 - `--session` (optional root filter)
 - `--project-root`
 - `--all-hashes` (scan metadata across all project hashes)
+- `--flat` (machine-friendly parent/child rows)
 - `--json`
+
+### `session smoke`
+
+Deterministic nested Lisa smoke test (`L1 -> ... -> LN`) with marker assertions.
+
+```bash
+lisa session smoke --levels 3
+lisa session smoke --levels 4 --json
+```
+
+Flags:
+
+- `--project-root`
+- `--levels N` (1-4, default `3`)
+- `--poll-interval N` (default `1`)
+- `--max-polls N` (default `180`)
+- `--keep-sessions`
+- `--json`
+
+Behavior:
+
+- Creates nested interactive sessions using `session spawn/monitor/capture`.
+- Asserts deterministic markers from every level in `L1` capture.
+- Returns non-zero on any missing marker, spawn/monitor failure, or timeout.
 
 ### `session exists`
 
@@ -425,6 +457,7 @@ Flags:
 
 - `--session` (required)
 - `--project-root` (default cwd)
+- `--json`
 
 Output: `true` or `false`.
 
@@ -446,6 +479,7 @@ Flags:
 - `--session` (required)
 - `--project-root`
 - `--cleanup-all-hashes`
+- `--json`
 
 Behavior note:
 
@@ -468,6 +502,7 @@ Flags:
 - `--project-only`
 - `--project-root`
 - `--cleanup-all-hashes`
+- `--json`
 
 ### `agent build-cmd`
 
@@ -501,14 +536,15 @@ JSON support:
 - `session monitor`
 - `session capture`
 - `session tree`
-
-Text/CSV-only commands:
-
+- `session smoke`
 - `session name`
 - `session list`
 - `session exists`
 - `session kill`
 - `session kill-all`
+
+Text/CSV-only commands:
+
 - `version`
 
 ## Runtime Environment Variables

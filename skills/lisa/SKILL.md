@@ -9,7 +9,7 @@ description: |
   Requires: tmux, claude or codex on PATH. Install: brew install bma-d/tap/lisa.
   Examples assume repo-local `./lisa`; only switch to global `lisa` intentionally.
 author: Claude Code
-version: 2.6.0
+version: 2.6.1
 date: 2026-02-20
 tags: [lisa, tmux, orchestration, claude, codex, agents]
 ---
@@ -34,6 +34,32 @@ brew install bma-d/tap/lisa   # or: go install github.com/bma-d/lisa@latest
 LISA_BIN=./lisa                # keep repo-local binary pinned for deterministic behavior
 $LISA_BIN doctor               # verify: tmux + at least one of claude/codex on PATH
 ```
+
+## LLM Fast Path (Use First)
+
+```bash
+ROOT=/path/to/project
+LISA_BIN=./lisa
+# 1) Spawn with explicit routing
+SESSION=$($LISA_BIN session spawn \
+  --agent codex --mode interactive \
+  --project-root "$ROOT" \
+  --prompt "Do X, then wait." \
+  --json | jq -r .session)
+
+# 2) Pick one stop strategy
+$LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --json
+$LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --stop-on-waiting true --json
+$LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --until-marker "TASK_DONE" --json
+
+# 3) Capture, then cleanup
+$LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --lines 300
+$LISA_BIN session kill --session "$SESSION" --project-root "$ROOT"
+```
+Observed behavior (validated 2026-02-20):
+- `--until-marker` returns `exitReason:"marker_found"` with `finalState:"in_progress"` / `finalStatus:"active"` (success, not terminal completion).
+- `--waiting-requires-turn-complete true` can timeout (`max_polls_exceeded`) for custom-command sessions without transcript turn boundaries.
+- `session exists` prints `false` and exits `1` when missing.
 
 ## Core Pattern: Spawn -> Monitor -> Capture -> Cleanup
 
@@ -148,6 +174,7 @@ Block until terminal state.
 | `--stop-on-waiting` | `true` | Stop on `waiting_input` (takes bool value: `true`/`false`) |
 | `--waiting-requires-turn-complete` | `false` | With `--stop-on-waiting true`, stop only after transcript turn-complete |
 | `--until-marker` | `""` | Stop successfully when raw pane output contains marker text |
+| `--expect` | `any` | Success expectation: `any`, `terminal`, `marker` |
 | `--verbose` | false | Print poll details to stderr |
 | `--json` | false | JSON output |
 
@@ -157,7 +184,13 @@ Exit reasons: `completed`, `crashed`, `not_found`, `stuck`, `waiting_input`, `wa
 
 Timeout nuance: JSON commonly returns `finalState:"timeout"` with `exitReason:"max_polls_exceeded"` and `finalStatus:"active"`.
 
-Exit codes: 0 = completed/waiting_input/waiting_input_turn_complete, 2 = crashed/stuck/not_found/timeout.
+Marker nuance: when `exitReason:"marker_found"`, monitor succeeds but state commonly remains `finalState:"in_progress"`/`finalStatus:"active"` (marker reached before terminal completion).
+
+Turn-complete nuance: `--waiting-requires-turn-complete true` is strict; with non-transcript/custom-command flows it may never emit `waiting_input_turn_complete` and can timeout.
+
+Expectation nuance: `--expect terminal` fails fast on marker/waiting success paths (`expected_terminal_got_*`, exit `2`). `--expect marker` fails fast when marker is not first success condition (`expected_marker_got_*`, exit `2`).
+
+Exit codes: 0 = completed/waiting_input/waiting_input_turn_complete/marker_found, 2 = crashed/stuck/not_found/timeout/expectation-mismatch.
 
 ### session capture
 
@@ -200,13 +233,13 @@ JSON output: `{"status":{...},"eventFile","events":[...],"droppedEventLines"}`.
 
 | Command | Key Flags | Output |
 |---------|-----------|--------|
-| `session list` | `--all-sockets`, `--project-only`, `--project-root` | Newline-separated names |
-| `session exists` | `--session`, `--project-root` | `true`/`false` (exit 0=yes, 1=no) |
-| `session kill` | `--session`, `--project-root`, `--cleanup-all-hashes` | `ok` |
-| `session kill-all` | `--project-only`, `--project-root`, `--cleanup-all-hashes` | `killed N sessions` |
-| `session name` | `--agent`, `--mode`, `--project-root`, `--tag` | Session name string |
+| `session list` | `--all-sockets`, `--project-only`, `--project-root`, `--json` | names (text) or JSON payload |
+| `session exists` | `--session`, `--project-root`, `--json` | `true`/`false` or JSON payload (exit 0=yes, 1=no) |
+| `session kill` | `--session`, `--project-root`, `--cleanup-all-hashes`, `--json` | `ok` or JSON payload |
+| `session kill-all` | `--project-only`, `--project-root`, `--cleanup-all-hashes`, `--json` | `killed N sessions` or JSON payload |
+| `session name` | `--agent`, `--mode`, `--project-root`, `--tag`, `--json` | name string or JSON payload |
 
-These commands are text-only (no `--json` support). Kill preserves event files for post-mortem.
+Kill preserves event files for post-mortem.
 `session list` scope is socket-bound: each project root uses its own Lisa tmux socket; pass the intended `--project-root` explicitly.
 `session list --all-sockets` expands discovery across metadata-known project roots and only returns sessions still active on those roots.
 
@@ -219,9 +252,17 @@ Inspect metadata parent/child relationships for nested orchestration.
 | `--session` | `""` | Optional root session filter |
 | `--project-root` | cwd | Project directory |
 | `--all-hashes` | false | Include metadata from all project hashes |
+| `--flat` | false | Emit machine-friendly parent/child rows |
 | `--json` | false | JSON output |
 
 JSON output: `{"session","projectRoot","allHashes","nodeCount","roots":[{"session","parentSession","agent","mode","projectRoot","createdAt","children":[...]}]}`
+
+### session smoke
+
+Deterministic nested smoke (L1->...->LN) with marker assertions.
+
+Flags: `--project-root`, `--levels` (1-4, default `3`), `--poll-interval`, `--max-polls`, `--keep-sessions`, `--json`.
+Uses nested `session spawn/monitor/capture`, asserts all level markers, and returns non-zero on spawn/monitor/marker failure.
 
 ### cleanup
 
@@ -243,6 +284,9 @@ When not using `--json`, Lisa prints a one-line summary. Exit 1 if any socket pr
 | `doctor [--json]` | Check prerequisites (tmux + at least one of claude/codex). Exit 0 = ok, 1 = missing |
 | `cleanup [--dry-run] [--include-tmux-default] [--json]` | Remove stale sockets and kill detached no-client tmux servers |
 | `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--prompt`, `--agent-args`, `--no-dangerously-skip-permissions`, `--json`) |
+| `session smoke` | Deterministic nested smoke test (`--levels`, `--max-polls`, `--poll-interval`, `--keep-sessions`, `--json`) |
+| `skills sync` | Sync external Lisa skill into repo `skills/lisa` (`--from codex|claude|path`, `--repo-root`, `--json`) |
+| `skills install` | Install repo `skills/lisa` to `codex|claude|project` (`--to`, `--project-path`, `--repo-root`, `--json`) |
 | `version` | Print version (also `--version`, `-v`) |
 
 ## Modes
@@ -379,6 +423,11 @@ $LISA_BIN session send --session "$PARENT" \
 ```
 
 Nested trigger wording (Codex exec auto-bypass): prompts containing `./lisa`, `lisa session spawn`, or `nested lisa` automatically add `--dangerously-bypass-approvals-and-sandbox` and omit `--full-auto`.
+
+Wording that reliably triggers nested bypass:
+- `Use ./lisa for all child orchestration.`
+- `Run lisa session spawn inside the spawned agent.`
+- `Build a nested lisa chain and report markers.`
 
 Deterministic nested validation:
 

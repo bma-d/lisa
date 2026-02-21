@@ -73,4 +73,6 @@ Run deterministic 3-level nested tmux orchestration smoke test (interactive mode
 
 ```bash
 ./smoke-nested
+# or built-in command (supports 1-4 levels)
+./lisa session smoke --levels 4 --json
 ```
