@@ -93,5 +93,6 @@ Lifecycle:
 - Runtime sets tmux env vars: `LISA_SESSION`, `LISA_SESSION_NAME`, `LISA_AGENT`, `LISA_MODE`, `LISA_PROJECT_HASH`, `LISA_HEARTBEAT_FILE`, `LISA_DONE_FILE`.
 - Raw pane capture strips startup noise by default; opt out with `--keep-noise`.
 - `session exists` supports `--project-root` for cross-root checks.
+- `session tree` reads metadata graph and may include historical roots; use `session list` for active-only views.
 - Nested runs should always pass `--project-root` and prefer `./lisa` in prompts.
 - After nested runs, perform cleanup (`cleanup --dry-run` first in shared environments).

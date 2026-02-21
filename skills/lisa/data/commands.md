@@ -20,6 +20,7 @@ Create/start an agent session.
 | `--no-dangerously-skip-permissions` | false | Disable Claude default skip-permissions flag |
 | `--cleanup-all-hashes` | false | Clean artifacts across all project hashes |
 | `--dry-run` | false | Print plan only; do not create session/artifacts |
+| `--detect-nested` | false | Include nested bypass decision diagnostics in JSON output |
 | `--json` | false | JSON output |
 
 JSON: `{"session","agent","mode","runId","projectRoot","command"}`
@@ -33,6 +34,7 @@ Spawn notes:
 - Non-nested Codex `exec` with `--full-auto` can block child Lisa tmux sockets (`Operation not permitted`); prefer interactive + `session send` or explicit bypass args.
 - For deeply nested prompts, prefer heredoc injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`).
 - `--dry-run` returns resolved `command`, wrapped `startupCommand`, `socketPath`, and injected `env` keys.
+- `--detect-nested --json` adds `nestedDetection` (`autoBypass`, `reason`, `matchedHint`, arg/full-auto signals, effective command flags).
 
 ## session send
 
@@ -85,7 +87,8 @@ Block until success/terminal condition per flags.
 | `--stop-on-waiting` | `true` | Stop on `waiting_input` |
 | `--waiting-requires-turn-complete` | `false` | Require transcript turn-complete before waiting stop |
 | `--until-marker` | `""` | Stop on marker text in raw pane output |
-| `--expect` | `any` | `any`, `terminal`, `marker` |
+| `--expect` | `any` | `any`, `terminal`, `marker` (`marker` requires `--until-marker`) |
+| `--json-min` | false | Minimal JSON output (`session`,`finalState`,`exitReason`,`polls`) |
 | `--verbose` | false | Progress details to stderr |
 | `--json` | false | JSON output |
 
@@ -97,9 +100,10 @@ Exit reasons:
 Monitor nuance:
 - Timeout often returns `finalState:"timeout"`, `exitReason:"max_polls_exceeded"`, `finalStatus:"active"`.
 - `marker_found` is success, often before terminal completion (`in_progress`/`active`).
-- `--waiting-requires-turn-complete true` can timeout in custom-command/non-transcript flows.
+- `--waiting-requires-turn-complete true` can timeout whenever turn-complete cannot be inferred (common in Codex/non-transcript flows).
 - `--expect terminal` on marker/waiting success returns `expected_terminal_got_*` (exit `2`).
 - `--expect marker` when marker is not first success returns `expected_marker_got_*` (exit `2`).
+- `--expect marker` without `--until-marker` is a usage error (exit `1`).
 
 Monitor exits:
 - exit `0`: `completed`, `waiting_input`, `waiting_input_turn_complete`, `marker_found`
@@ -150,7 +154,7 @@ JSON: `{"status":{...},"eventFile","events":[...],"droppedEventLines"}`
 |---|---|---|
 | `session list` | `--all-sockets`, `--project-only`, `--project-root`, `--json` | names (text) or JSON |
 | `session exists` | `--session`, `--project-root`, `--json` | `true`/`false` (exit 0/1) or JSON |
-| `session kill` | `--session`, `--project-root`, `--cleanup-all-hashes`, `--json` | `ok` or JSON |
+| `session kill` | `--session`, `--project-root`, `--cleanup-all-hashes`, `--json` | `ok` or JSON (`found:false` + exit `1` when missing) |
 | `session kill-all` | `--project-only`, `--project-root`, `--cleanup-all-hashes`, `--json` | `killed N sessions` or JSON |
 | `session name` | `--agent`, `--mode`, `--project-root`, `--tag`, `--json` | name string or JSON |
 
@@ -168,16 +172,21 @@ Inspect metadata parent/child links for nested orchestration.
 | `--session` | `""` | Optional root-session filter |
 | `--project-root` | cwd | Project directory |
 | `--all-hashes` | false | Include metadata from all project hashes |
+| `--active-only` | false | Include only sessions currently active in tmux |
 | `--flat` | false | Machine-friendly parent/child rows |
 | `--json` | false | JSON output |
 
 JSON: `{"session","projectRoot","allHashes","nodeCount","roots":[{"session","parentSession","agent","mode","projectRoot","createdAt","children":[...]}]}`
 
+Tree semantics:
+- `session tree` is metadata-first and can show historical roots even when no active session exists.
+- For active-only checks, use `--active-only` (or pair with `session list` / `session exists`).
+
 ## session smoke
 
 Deterministic nested smoke (`L1 -> ... -> LN`) with marker assertions.
 
-Flags: `--project-root`, `--levels` (1-4, default `3`), `--poll-interval`, `--max-polls`, `--keep-sessions`, `--json`.
+Flags: `--project-root`, `--levels` (1-4, default `3`), `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--json`.
 
 Behavior: uses nested `session spawn/monitor/capture`, asserts all level markers, non-zero exit on spawn/monitor/marker failure.
 
@@ -201,8 +210,8 @@ Non-JSON output: one-line summary. Exit `1` if any probe/kill/remove errors occu
 |---|---|
 | `doctor [--json]` | Check prerequisites (tmux + at least one of claude/codex). Exit 0=ok, 1=missing |
 | `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--prompt`, `--agent-args`, `--no-dangerously-skip-permissions`, `--json`) |
-| `skills sync` | Sync external skill into repo `skills/lisa` |
-| `skills install` | Install repo `skills/lisa` to `codex`, `claude`, or `project` |
+| `skills sync` | Sync external skill into repo `skills/lisa` (`--json`: `{"source","destination","files","directories","symlinks"}`) |
+| `skills install` | Install repo `skills/lisa` to `codex`, `claude`, or `project` (`--json`: `{"source","destination","files","directories","symlinks"}`) |
 | `version` | Print build version (`version`, `--version`, `-v`) |
 
 ## Modes
@@ -217,3 +226,7 @@ Aliases `execution` and `non-interactive` map to `exec`.
 ## JSON Surface
 
 `--json` exists on: `doctor`, `cleanup`, `agent build-cmd`, `skills sync`, `skills install`, `session name|spawn|send|status|explain|monitor|capture|tree|smoke|list|exists|kill|kill-all`.
+
+JSON error contract:
+- command/runtime failures emit `{"ok":false,"errorCode":"...","error":"..."}` when `--json` is enabled.
+- state/result payload failures also include `errorCode` on non-success paths.

@@ -24,6 +24,7 @@ type cleanupSummary struct {
 	WouldKill    int      `json:"wouldKillServers"`
 	KeptActive   int      `json:"keptActive"`
 	SocketErrors []string `json:"errors,omitempty"`
+	ErrorCode    string   `json:"errorCode,omitempty"`
 }
 
 var cleanupSocketCandidatesFn = cleanupSocketCandidates
@@ -35,7 +36,7 @@ var listTmuxSocketPathsFromProcessTableFn = listTmuxSocketPathsFromProcessTable
 func cmdCleanup(args []string) int {
 	includeTmuxDefault := false
 	dryRun := false
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -48,14 +49,13 @@ func cmdCleanup(args []string) int {
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	socketPaths, err := cleanupSocketCandidatesFn(includeTmuxDefault)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cleanup failed: %v\n", err)
-		return 1
+		return commandErrorf(jsonOut, "cleanup_probe_failed", "cleanup failed: %v", err)
 	}
 
 	summary := cleanupSummary{
@@ -116,6 +116,17 @@ func cmdCleanup(args []string) int {
 		summary.KeptActive++
 	}
 
+	if len(summary.SocketErrors) > 0 {
+		summary.ErrorCode = "cleanup_socket_errors"
+		if jsonOut {
+			writeJSON(summary)
+			return 1
+		}
+		for _, e := range summary.SocketErrors {
+			fmt.Fprintln(os.Stderr, e)
+		}
+		return 1
+	}
 	if jsonOut {
 		writeJSON(summary)
 	} else if dryRun {
@@ -124,13 +135,6 @@ func cmdCleanup(args []string) int {
 	} else {
 		fmt.Printf("cleanup: scanned %d sockets, removed %d stale sockets, killed %d detached servers, kept %d active\n",
 			summary.Scanned, summary.Removed, summary.Killed, summary.KeptActive)
-	}
-
-	if len(summary.SocketErrors) > 0 {
-		for _, e := range summary.SocketErrors {
-			fmt.Fprintln(os.Stderr, e)
-		}
-		return 1
 	}
 	return 0
 }

@@ -26,6 +26,7 @@ type sessionSmokeSummary struct {
 	Monitor        monitorResult      `json:"monitor"`
 	Tree           *sessionTreeResult `json:"tree,omitempty"`
 	Error          string             `json:"error,omitempty"`
+	ErrorCode      string             `json:"errorCode,omitempty"`
 	CleanupErrors  []string           `json:"cleanupErrors,omitempty"`
 }
 
@@ -35,7 +36,7 @@ func cmdSessionSmoke(args []string) int {
 	maxPolls := 180
 	pollInterval := 1
 	keepSessions := false
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -43,40 +44,37 @@ func cmdSessionSmoke(args []string) int {
 			return showHelp("session smoke")
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			i++
 		case "--levels":
 			if i+1 >= len(args) {
-				return flagValueError("--levels")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --levels")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil || n <= 0 {
-				fmt.Fprintln(os.Stderr, "invalid --levels")
-				return 1
+				return commandError(jsonOut, "invalid_levels", "invalid --levels")
 			}
 			levels = n
 			i++
 		case "--max-polls":
 			if i+1 >= len(args) {
-				return flagValueError("--max-polls")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --max-polls")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil || n <= 0 {
-				fmt.Fprintln(os.Stderr, "invalid --max-polls")
-				return 1
+				return commandError(jsonOut, "invalid_max_polls", "invalid --max-polls")
 			}
 			maxPolls = n
 			i++
 		case "--poll-interval":
 			if i+1 >= len(args) {
-				return flagValueError("--poll-interval")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --poll-interval")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil || n <= 0 {
-				fmt.Fprintln(os.Stderr, "invalid --poll-interval")
-				return 1
+				return commandError(jsonOut, "invalid_poll_interval", "invalid --poll-interval")
 			}
 			pollInterval = n
 			i++
@@ -85,13 +83,12 @@ func cmdSessionSmoke(args []string) int {
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	if levels > 4 {
-		fmt.Fprintln(os.Stderr, "invalid --levels: max supported is 4")
-		return 1
+		return commandError(jsonOut, "invalid_levels_max", "invalid --levels: max supported is 4")
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
@@ -99,26 +96,22 @@ func cmdSessionSmoke(args []string) int {
 	defer restoreRuntime()
 
 	if _, err := exec.LookPath("bash"); err != nil {
-		fmt.Fprintf(os.Stderr, "error: required command not found: bash (%v)\n", err)
-		return 1
+		return commandErrorf(jsonOut, "missing_bash", "error: required command not found: bash (%v)", err)
 	}
 
 	binPath, err := osExecutableFn()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to resolve lisa binary path: %v\n", err)
-		return 1
+		return commandErrorf(jsonOut, "binary_path_resolve_failed", "failed to resolve lisa binary path: %v", err)
 	}
 	binPath = strings.TrimSpace(binPath)
 	if binPath == "" {
-		fmt.Fprintln(os.Stderr, "failed to resolve lisa binary path")
-		return 1
+		return commandError(jsonOut, "binary_path_empty", "failed to resolve lisa binary path")
 	}
 
 	runID := fmt.Sprintf("%s-%d", time.Now().Format("20060102_150405"), os.Getpid())
 	workDir := filepath.Join(os.TempDir(), "lisa-smoke-"+runID)
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create smoke workdir: %v\n", err)
-		return 1
+		return commandErrorf(jsonOut, "smoke_workdir_create_failed", "failed to create smoke workdir: %v", err)
 	}
 
 	sessions := make([]string, levels)
@@ -177,7 +170,7 @@ func cmdSessionSmoke(args []string) int {
 
 		body := strings.Join(lines, "\n") + "\n"
 		if err := os.WriteFile(scripts[idx], []byte(body), 0o700); err != nil {
-			return emitSmokeFailure(jsonOut, &summary, fmt.Sprintf("failed to write smoke script %s: %v", scripts[idx], err))
+			return emitSmokeFailure(jsonOut, &summary, "smoke_script_write_failed", fmt.Sprintf("failed to write smoke script %s: %v", scripts[idx], err))
 		}
 	}
 
@@ -191,7 +184,7 @@ func cmdSessionSmoke(args []string) int {
 		"--command", "/bin/bash "+scripts[0],
 		"--json",
 	); err != nil {
-		return emitSmokeFailure(jsonOut, &summary, fmt.Sprintf("failed to spawn L1 smoke session: %v", err))
+		return emitSmokeFailure(jsonOut, &summary, "smoke_spawn_failed", fmt.Sprintf("failed to spawn L1 smoke session: %v", err))
 	}
 
 	monitorOut, err := runLisaSubcommandFn(binPath,
@@ -204,13 +197,13 @@ func cmdSessionSmoke(args []string) int {
 		"--json",
 	)
 	if err != nil {
-		return emitSmokeFailure(jsonOut, &summary, fmt.Sprintf("failed to monitor L1 smoke session: %v", err))
+		return emitSmokeFailure(jsonOut, &summary, "smoke_monitor_failed", fmt.Sprintf("failed to monitor L1 smoke session: %v", err))
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(monitorOut)), &summary.Monitor); err != nil {
-		return emitSmokeFailure(jsonOut, &summary, fmt.Sprintf("failed to parse monitor output: %v", err))
+		return emitSmokeFailure(jsonOut, &summary, "smoke_monitor_parse_failed", fmt.Sprintf("failed to parse monitor output: %v", err))
 	}
 	if summary.Monitor.FinalState != "completed" {
-		return emitSmokeFailure(jsonOut, &summary, fmt.Sprintf("unexpected smoke final state: %s", summary.Monitor.FinalState))
+		return emitSmokeFailure(jsonOut, &summary, "smoke_unexpected_final_state", fmt.Sprintf("unexpected smoke final state: %s", summary.Monitor.FinalState))
 	}
 
 	captureOut, err := runLisaSubcommandFn(binPath,
@@ -222,13 +215,13 @@ func cmdSessionSmoke(args []string) int {
 		"--json",
 	)
 	if err != nil {
-		return emitSmokeFailure(jsonOut, &summary, fmt.Sprintf("failed to capture smoke output: %v", err))
+		return emitSmokeFailure(jsonOut, &summary, "smoke_capture_failed", fmt.Sprintf("failed to capture smoke output: %v", err))
 	}
 	var capturePayload struct {
 		Capture string `json:"capture"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(captureOut)), &capturePayload); err != nil {
-		return emitSmokeFailure(jsonOut, &summary, fmt.Sprintf("failed to parse capture output: %v", err))
+		return emitSmokeFailure(jsonOut, &summary, "smoke_capture_parse_failed", fmt.Sprintf("failed to parse capture output: %v", err))
 	}
 	for _, marker := range markers {
 		if !strings.Contains(capturePayload.Capture, marker) {
@@ -236,7 +229,7 @@ func cmdSessionSmoke(args []string) int {
 		}
 	}
 	if len(summary.MissingMarkers) > 0 {
-		return emitSmokeFailure(jsonOut, &summary, "smoke marker assertions failed")
+		return emitSmokeFailure(jsonOut, &summary, "smoke_marker_assertion_failed", "smoke marker assertions failed")
 	}
 
 	treeOut, err := runLisaSubcommandFn(binPath,
@@ -265,8 +258,9 @@ func cmdSessionSmoke(args []string) int {
 	return 0
 }
 
-func emitSmokeFailure(jsonOut bool, summary *sessionSmokeSummary, message string) int {
+func emitSmokeFailure(jsonOut bool, summary *sessionSmokeSummary, errorCode, message string) int {
 	summary.OK = false
+	summary.ErrorCode = errorCode
 	summary.Error = message
 	if jsonOut {
 		writeJSON(summary)

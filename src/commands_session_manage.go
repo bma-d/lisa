@@ -11,7 +11,7 @@ func cmdSessionList(args []string) int {
 	projectOnly := false
 	allSockets := false
 	projectRoot := getPWD()
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -23,14 +23,14 @@ func cmdSessionList(args []string) int {
 			allSockets = true
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			i++
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
@@ -45,8 +45,7 @@ func cmdSessionList(args []string) int {
 		list, err = tmuxListSessionsFn(projectOnly, projectRoot)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to list sessions: %v\n", err)
-		return 1
+		return commandErrorf(jsonOut, "session_list_failed", "failed to list sessions: %v", err)
 	}
 	if jsonOut {
 		writeJSON(map[string]any{
@@ -114,20 +113,20 @@ func cmdSessionExists(args []string) int {
 	session := ""
 	projectRoot := getPWD()
 	projectRootExplicit := false
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
 			return showHelp("session exists")
 		case "--session":
 			if i+1 >= len(args) {
-				return flagValueError("--session")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --session")
 			}
 			session = args[i+1]
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			projectRootExplicit = true
@@ -135,23 +134,26 @@ func cmdSessionExists(args []string) int {
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 	if session == "" {
-		fmt.Fprintln(os.Stderr, "--session is required")
-		return 1
+		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	exists := tmuxHasSessionFn(session)
 	if jsonOut {
-		writeJSON(map[string]any{
+		payload := map[string]any{
 			"session":     session,
 			"exists":      exists,
 			"projectRoot": projectRoot,
-		})
+		}
+		if !exists {
+			payload["errorCode"] = "session_not_found"
+		}
+		writeJSON(payload)
 		if exists {
 			return 0
 		}
@@ -170,20 +172,20 @@ func cmdSessionKill(args []string) int {
 	projectRoot := getPWD()
 	projectRootExplicit := false
 	cleanupAllHashes := false
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
 			return showHelp("session kill")
 		case "--session":
 			if i+1 >= len(args) {
-				return flagValueError("--session")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --session")
 			}
 			session = args[i+1]
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			projectRootExplicit = true
@@ -193,12 +195,11 @@ func cmdSessionKill(args []string) int {
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 	if session == "" {
-		fmt.Fprintln(os.Stderr, "--session is required")
-		return 1
+		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
@@ -271,6 +272,7 @@ func cmdSessionKill(args []string) int {
 				"ok":          false,
 				"found":       false,
 				"errors":      errs,
+				"errorCode":   "session_not_found",
 				"projectRoot": projectRoot,
 			})
 		}
@@ -287,6 +289,7 @@ func cmdSessionKill(args []string) int {
 				"ok":          false,
 				"found":       true,
 				"errors":      errs,
+				"errorCode":   "session_kill_failed",
 				"projectRoot": projectRoot,
 			})
 		}
@@ -312,7 +315,7 @@ func cmdSessionKillAll(args []string) int {
 	projectOnly := false
 	projectRoot := getPWD()
 	cleanupAllHashes := false
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
@@ -321,7 +324,7 @@ func cmdSessionKillAll(args []string) int {
 			projectOnly = true
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			i++
@@ -330,7 +333,7 @@ func cmdSessionKillAll(args []string) int {
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
@@ -344,8 +347,7 @@ func cmdSessionKillAll(args []string) int {
 	}
 	sessions, err := tmuxListSessionsFn(projectOnly, projectRoot)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to list sessions: %v\n", err)
-		return 1
+		return commandErrorf(jsonOut, "session_list_failed", "failed to list sessions: %v", err)
 	}
 	var errs []string
 	killed := 0
@@ -382,6 +384,7 @@ func cmdSessionKillAll(args []string) int {
 				"projectOnly": projectOnly,
 				"projectRoot": projectRoot,
 				"errors":      errs,
+				"errorCode":   "session_kill_all_failed",
 			})
 		}
 		fmt.Fprintf(os.Stderr, "killed %d/%d sessions\n", killed, len(sessions))

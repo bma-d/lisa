@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 )
@@ -21,6 +20,7 @@ type sessionTreeResult struct {
 	Session     string            `json:"session,omitempty"`
 	ProjectRoot string            `json:"projectRoot"`
 	AllHashes   bool              `json:"allHashes"`
+	ActiveOnly  bool              `json:"activeOnly,omitempty"`
 	Flat        bool              `json:"flat,omitempty"`
 	NodeCount   int               `json:"nodeCount"`
 	Rows        []sessionTreeRow  `json:"rows,omitempty"`
@@ -40,8 +40,9 @@ func cmdSessionTree(args []string) int {
 	projectRoot := getPWD()
 	sessionFilter := ""
 	allHashes := false
+	activeOnly := false
 	flat := false
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -49,32 +50,36 @@ func cmdSessionTree(args []string) int {
 			return showHelp("session tree")
 		case "--session":
 			if i+1 >= len(args) {
-				return flagValueError("--session")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --session")
 			}
 			sessionFilter = strings.TrimSpace(args[i+1])
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			i++
 		case "--all-hashes":
 			allHashes = true
+		case "--active-only":
+			activeOnly = true
 		case "--flat":
 			flat = true
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
 	metas, err := loadSessionMetasForProject(projectRoot, allHashes)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build session tree: %v\n", err)
-		return 1
+		return commandErrorf(jsonOut, "session_tree_build_failed", "failed to build session tree: %v", err)
+	}
+	if activeOnly {
+		metas = filterActiveTreeMetas(projectRoot, metas)
 	}
 
 	nodesBySession := make(map[string]*sessionTreeNode, len(metas))
@@ -105,8 +110,7 @@ func cmdSessionTree(args []string) int {
 	var rootSessions []string
 	if sessionFilter != "" {
 		if _, ok := nodesBySession[sessionFilter]; !ok {
-			fmt.Fprintf(os.Stderr, "session not found in metadata: %s\n", sessionFilter)
-			return 1
+			return commandErrorf(jsonOut, "session_not_found_in_tree", "session not found in metadata: %s", sessionFilter)
 		}
 		rootSessions = []string{sessionFilter}
 	} else {
@@ -122,6 +126,7 @@ func cmdSessionTree(args []string) int {
 		Session:     sessionFilter,
 		ProjectRoot: projectRoot,
 		AllHashes:   allHashes,
+		ActiveOnly:  activeOnly,
 		Flat:        flat,
 		NodeCount:   len(nodesBySession),
 		Roots:       roots,
@@ -153,6 +158,34 @@ func cmdSessionTree(args []string) int {
 		printSessionTreeNode(root, "")
 	}
 	return 0
+}
+
+func filterActiveTreeMetas(defaultProjectRoot string, metas []sessionMeta) []sessionMeta {
+	filtered := make([]sessionMeta, 0, len(metas))
+	cache := make(map[string]bool, len(metas))
+	for _, meta := range metas {
+		session := strings.TrimSpace(meta.Session)
+		if session == "" {
+			continue
+		}
+		root := strings.TrimSpace(meta.ProjectRoot)
+		if root == "" {
+			root = defaultProjectRoot
+		}
+		root = canonicalProjectRoot(root)
+		cacheKey := root + "|" + session
+		active, ok := cache[cacheKey]
+		if !ok {
+			restoreRuntime := withProjectRuntimeEnv(root)
+			active = tmuxHasSessionFn(session)
+			restoreRuntime()
+			cache[cacheKey] = active
+		}
+		if active {
+			filtered = append(filtered, meta)
+		}
+	}
+	return filtered
 }
 
 func findTreeRoots(nodesBySession map[string]*sessionTreeNode) []string {

@@ -17,6 +17,13 @@ type waitingTurnCompleteResult struct {
 	FileAge      int
 }
 
+type monitorResultMin struct {
+	Session    string `json:"session"`
+	FinalState string `json:"finalState"`
+	ExitReason string `json:"exitReason"`
+	Polls      int    `json:"polls"`
+}
+
 func normalizeStatusForSessionStatusOutput(status sessionStatus) sessionStatus {
 	normalized := status
 	switch normalized.SessionState {
@@ -24,6 +31,76 @@ func normalizeStatusForSessionStatusOutput(status sessionStatus) sessionStatus {
 		normalized.Status = normalized.SessionState
 	}
 	return normalized
+}
+
+func writeSessionStatusJSON(status sessionStatus, errorCode string) {
+	payload := map[string]any{
+		"session":               status.Session,
+		"agent":                 status.Agent,
+		"mode":                  status.Mode,
+		"status":                status.Status,
+		"todosDone":             status.TodosDone,
+		"todosTotal":            status.TodosTotal,
+		"activeTask":            status.ActiveTask,
+		"waitEstimate":          status.WaitEstimate,
+		"sessionState":          status.SessionState,
+		"paneStatus":            status.PaneStatus,
+		"paneCommand":           status.PaneCommand,
+		"agentPid":              status.AgentPID,
+		"agentCpu":              status.AgentCPU,
+		"outputAgeSeconds":      status.OutputAgeSeconds,
+		"outputFreshSeconds":    status.OutputFreshSeconds,
+		"heartbeatAgeSeconds":   status.HeartbeatAge,
+		"heartbeatFreshSeconds": status.HeartbeatFreshSecs,
+		"classificationReason":  status.ClassificationReason,
+		"signals":               status.Signals,
+	}
+	if status.OutputFile != "" {
+		payload["outputFile"] = status.OutputFile
+	}
+	if errorCode != "" {
+		payload["errorCode"] = errorCode
+	}
+	writeJSON(payload)
+}
+
+func writeMonitorJSON(result monitorResult, jsonMin bool, errorCode string) {
+	if jsonMin {
+		minPayload := monitorResultMin{
+			Session:    result.Session,
+			FinalState: result.FinalState,
+			ExitReason: result.ExitReason,
+			Polls:      result.Polls,
+		}
+		payload := map[string]any{
+			"session":    minPayload.Session,
+			"finalState": minPayload.FinalState,
+			"exitReason": minPayload.ExitReason,
+			"polls":      minPayload.Polls,
+		}
+		if errorCode != "" {
+			payload["errorCode"] = errorCode
+		}
+		writeJSON(payload)
+		return
+	}
+	payload := map[string]any{
+		"finalState":  result.FinalState,
+		"session":     result.Session,
+		"todosDone":   result.TodosDone,
+		"todosTotal":  result.TodosTotal,
+		"outputFile":  result.OutputFile,
+		"exitReason":  result.ExitReason,
+		"polls":       result.Polls,
+		"finalStatus": result.FinalStatus,
+	}
+	if result.OutputFile == "" {
+		delete(payload, "outputFile")
+	}
+	if errorCode != "" {
+		payload["errorCode"] = errorCode
+	}
+	writeJSON(payload)
 }
 
 func normalizeMonitorFinalStatus(finalState, finalStatus string) string {
@@ -43,7 +120,7 @@ func cmdSessionStatus(args []string) int {
 	modeHint := "auto"
 	full := false
 	failNotFound := false
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -51,26 +128,26 @@ func cmdSessionStatus(args []string) int {
 			return showHelp("session status")
 		case "--session":
 			if i+1 >= len(args) {
-				return flagValueError("--session")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --session")
 			}
 			session = args[i+1]
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			projectRootExplicit = true
 			i++
 		case "--agent":
 			if i+1 >= len(args) {
-				return flagValueError("--agent")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
 			}
 			agentHint = args[i+1]
 			i++
 		case "--mode":
 			if i+1 >= len(args) {
-				return flagValueError("--mode")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --mode")
 			}
 			modeHint = args[i+1]
 			i++
@@ -81,37 +158,37 @@ func cmdSessionStatus(args []string) int {
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	if session == "" {
-		fmt.Fprintln(os.Stderr, "--session is required")
-		return 1
+		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	agentHint, err := parseAgentHint(agentHint)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "invalid_agent_hint", err.Error())
 	}
 	modeHint, err = parseModeHint(modeHint)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "invalid_mode_hint", err.Error())
 	}
 
 	status, err := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, full, 0)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "status_compute_failed", err.Error())
 	}
 	status = normalizeStatusForSessionStatusOutput(status)
 
 	if jsonOut {
-		writeJSON(status)
+		errorCode := ""
+		if failNotFound && status.SessionState == "not_found" {
+			errorCode = "session_not_found"
+		}
+		writeSessionStatusJSON(status, errorCode)
 		if failNotFound && status.SessionState == "not_found" {
 			return 1
 		}
@@ -182,7 +259,8 @@ func cmdSessionMonitor(args []string) int {
 	waitingRequiresTurnComplete := false
 	untilMarker := ""
 	untilMarkerSet := false
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
+	jsonMin := false
 	verbose := false
 
 	for i := 0; i < len(args); i++ {
@@ -191,124 +269,117 @@ func cmdSessionMonitor(args []string) int {
 			return showHelp("session monitor")
 		case "--session":
 			if i+1 >= len(args) {
-				return flagValueError("--session")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --session")
 			}
 			session = args[i+1]
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			projectRootExplicit = true
 			i++
 		case "--agent":
 			if i+1 >= len(args) {
-				return flagValueError("--agent")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
 			}
 			agentHint = args[i+1]
 			i++
 		case "--mode":
 			if i+1 >= len(args) {
-				return flagValueError("--mode")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --mode")
 			}
 			modeHint = args[i+1]
 			i++
 		case "--expect":
 			if i+1 >= len(args) {
-				return flagValueError("--expect")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --expect")
 			}
 			parsedExpect, err := parseMonitorExpect(args[i+1])
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err.Error())
-				return 1
+				return commandError(jsonOut, "invalid_expect", err.Error())
 			}
 			expect = parsedExpect
 			i++
 		case "--poll-interval":
 			if i+1 >= len(args) {
-				return flagValueError("--poll-interval")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --poll-interval")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil || n <= 0 {
-				fmt.Fprintln(os.Stderr, "invalid --poll-interval")
-				return 1
+				return commandError(jsonOut, "invalid_poll_interval", "invalid --poll-interval")
 			}
 			pollInterval = n
 			i++
 		case "--max-polls":
 			if i+1 >= len(args) {
-				return flagValueError("--max-polls")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --max-polls")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil || n <= 0 {
-				fmt.Fprintln(os.Stderr, "invalid --max-polls")
-				return 1
+				return commandError(jsonOut, "invalid_max_polls", "invalid --max-polls")
 			}
 			maxPolls = n
 			i++
 		case "--stop-on-waiting":
 			if i+1 >= len(args) {
-				return flagValueError("--stop-on-waiting")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --stop-on-waiting")
 			}
 			parsed, err := parseBoolFlag(args[i+1])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "invalid --stop-on-waiting: %s (expected true|false)\n", args[i+1])
-				return 1
+				return commandErrorf(jsonOut, "invalid_stop_on_waiting", "invalid --stop-on-waiting: %s (expected true|false)", args[i+1])
 			}
 			stopOnWaiting = parsed
 			i++
 		case "--waiting-requires-turn-complete":
 			if i+1 >= len(args) {
-				return flagValueError("--waiting-requires-turn-complete")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --waiting-requires-turn-complete")
 			}
 			parsed, err := parseBoolFlag(args[i+1])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "invalid --waiting-requires-turn-complete: %s (expected true|false)\n", args[i+1])
-				return 1
+				return commandErrorf(jsonOut, "invalid_waiting_requires_turn_complete", "invalid --waiting-requires-turn-complete: %s (expected true|false)", args[i+1])
 			}
 			waitingRequiresTurnComplete = parsed
 			i++
 		case "--until-marker":
 			if i+1 >= len(args) {
-				return flagValueError("--until-marker")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --until-marker")
 			}
 			untilMarkerSet = true
 			untilMarker = strings.TrimSpace(args[i+1])
 			i++
 		case "--json":
 			jsonOut = true
+		case "--json-min":
+			jsonMin = true
+			jsonOut = true
 		case "--verbose":
 			verbose = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	if session == "" {
-		fmt.Fprintln(os.Stderr, "--session is required")
-		return 1
+		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
 	if untilMarkerSet && untilMarker == "" {
-		fmt.Fprintln(os.Stderr, "invalid --until-marker: cannot be empty")
-		return 1
+		return commandError(jsonOut, "invalid_until_marker", "invalid --until-marker: cannot be empty")
 	}
 	if expect == "marker" && untilMarker == "" {
-		fmt.Fprintln(os.Stderr, "--expect marker requires --until-marker")
-		return 1
+		return commandError(jsonOut, "expect_marker_requires_until_marker", "--expect marker requires --until-marker")
 	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	agentHint, err := parseAgentHint(agentHint)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "invalid_agent_hint", err.Error())
 	}
 	modeHint, err = parseModeHint(modeHint)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "invalid_mode_hint", err.Error())
 	}
 
 	last := sessionStatus{}
@@ -316,8 +387,7 @@ func cmdSessionMonitor(args []string) int {
 	for poll := 1; poll <= maxPolls; poll++ {
 		status, err := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, true, poll)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			return 1
+			return commandError(jsonOut, "status_compute_failed", err.Error())
 		}
 		last = status
 		if status.SessionState == "degraded" {
@@ -388,7 +458,13 @@ func cmdSessionMonitor(args []string) int {
 				FinalStatus: normalizeMonitorFinalStatus(status.SessionState, status.Status),
 			}
 			if jsonOut {
-				writeJSON(result)
+				errorCode := ""
+				if !expectationMet {
+					errorCode = "monitor_expectation_mismatch"
+				} else if !(reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input")) {
+					errorCode = "monitor_" + reason
+				}
+				writeMonitorJSON(result, jsonMin, errorCode)
 			} else {
 				if err := writeCSVRecord(
 					result.FinalState,
@@ -434,7 +510,7 @@ func cmdSessionMonitor(args []string) int {
 		result.ExitReason = "degraded_max_polls_exceeded"
 	}
 	if jsonOut {
-		writeJSON(result)
+		writeMonitorJSON(result, jsonMin, "monitor_timeout")
 	} else {
 		if err := writeCSVRecord(
 			result.FinalState,
@@ -596,7 +672,7 @@ func recordSessionTurnComplete(projectRoot, session string, inputAtNanos int64, 
 func cmdSessionCapture(args []string) int {
 	session := ""
 	lines := 200
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 	raw := false
 	stripNoise := true
 	projectRoot := getPWD()
@@ -607,18 +683,17 @@ func cmdSessionCapture(args []string) int {
 			return showHelp("session capture")
 		case "--session":
 			if i+1 >= len(args) {
-				return flagValueError("--session")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --session")
 			}
 			session = args[i+1]
 			i++
 		case "--lines":
 			if i+1 >= len(args) {
-				return flagValueError("--lines")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --lines")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil || n <= 0 {
-				fmt.Fprintln(os.Stderr, "invalid --lines")
-				return 1
+				return commandError(jsonOut, "invalid_lines", "invalid --lines")
 			}
 			lines = n
 			i++
@@ -630,7 +705,7 @@ func cmdSessionCapture(args []string) int {
 			stripNoise = true
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			projectRootExplicit = true
@@ -638,12 +713,11 @@ func cmdSessionCapture(args []string) int {
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 	if session == "" {
-		fmt.Fprintln(os.Stderr, "--session is required")
-		return 1
+		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
 
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
@@ -666,13 +740,19 @@ func cmdSessionCapture(args []string) int {
 	}
 
 	if !tmuxHasSessionFn(session) {
+		if jsonOut {
+			writeJSONError("session_not_found", "session not found", map[string]any{
+				"session":     session,
+				"projectRoot": projectRoot,
+			})
+			return 1
+		}
 		fmt.Fprintln(os.Stderr, "session not found")
 		return 1
 	}
 	capture, err := tmuxCapturePaneFn(session, lines)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to capture pane: %v\n", err)
-		return 1
+		return commandErrorf(jsonOut, "capture_failed", "failed to capture pane: %v", err)
 	}
 	capture = strings.Join(trimLines(capture), "\n")
 	if stripNoise {

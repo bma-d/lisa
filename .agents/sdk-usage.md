@@ -33,9 +33,13 @@ Built-in nested smoke command: run `./lisa session smoke --levels 4 --json` for 
 `session exists` now also accepts `--project-root` for explicit socket/project routing.
 `session list --all-sockets` now discovers active sessions across metadata-known project roots/sockets in one call.
 `session spawn --dry-run --json` now emits resolved command/socket/env planning output without creating tmux sessions/artifacts.
+`session spawn --detect-nested --json` now emits `nestedDetection` diagnostics explaining bypass/full-auto decisions.
 `session tree --json` now returns metadata parent/child hierarchy for nested orchestration introspection.
+`session tree --active-only` now filters to sessions currently active in tmux.
 `session tree --flat` now emits low-token machine-friendly parent/child rows.
+`session monitor --json-min` now emits low-token machine-readable fields (`session`,`finalState`,`exitReason`,`polls`).
 Session manage/name helpers now support `--json` (`session name|list|exists|kill|kill-all`).
+JSON failure paths now include machine-readable `errorCode` fields across JSON-enabled commands.
 
 ## Command Contract Source
 

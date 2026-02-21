@@ -62,52 +62,50 @@ func cmdSessionName(args []string) int {
 	mode := "interactive"
 	projectRoot := getPWD()
 	tag := ""
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
 			return showHelp("session name")
 		case "--agent":
 			if i+1 >= len(args) {
-				return flagValueError("--agent")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
 			}
 			agent = args[i+1]
 			i++
 		case "--mode":
 			if i+1 >= len(args) {
-				return flagValueError("--mode")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --mode")
 			}
 			mode = args[i+1]
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			i++
 		case "--tag":
 			if i+1 >= len(args) {
-				return flagValueError("--tag")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --tag")
 			}
 			tag = args[i+1]
 			i++
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	var err error
 	agent, err = parseAgent(agent)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "invalid_agent", err.Error())
 	}
 	mode, err = parseMode(mode)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "invalid_mode", err.Error())
 	}
 	projectRoot = canonicalProjectRoot(projectRoot)
 
@@ -139,7 +137,8 @@ func cmdSessionSpawn(args []string) int {
 	cleanupAllHashes := false
 	skipPermissions := true
 	dryRun := false
-	jsonOut := false
+	detectNested := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -147,65 +146,63 @@ func cmdSessionSpawn(args []string) int {
 			return showHelp("session spawn")
 		case "--agent":
 			if i+1 >= len(args) {
-				return flagValueError("--agent")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
 			}
 			agent = args[i+1]
 			i++
 		case "--mode":
 			if i+1 >= len(args) {
-				return flagValueError("--mode")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --mode")
 			}
 			mode = args[i+1]
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			i++
 		case "--session":
 			if i+1 >= len(args) {
-				return flagValueError("--session")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --session")
 			}
 			session = args[i+1]
 			i++
 		case "--prompt":
 			if i+1 >= len(args) {
-				return flagValueError("--prompt")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --prompt")
 			}
 			prompt = args[i+1]
 			i++
 		case "--command":
 			if i+1 >= len(args) {
-				return flagValueError("--command")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --command")
 			}
 			command = args[i+1]
 			i++
 		case "--agent-args":
 			if i+1 >= len(args) {
-				return flagValueError("--agent-args")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent-args")
 			}
 			agentArgs = args[i+1]
 			i++
 		case "--width":
 			if i+1 >= len(args) {
-				return flagValueError("--width")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --width")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil || n <= 0 {
-				fmt.Fprintln(os.Stderr, "invalid --width")
-				return 1
+				return commandError(jsonOut, "invalid_width", "invalid --width")
 			}
 			width = n
 			i++
 		case "--height":
 			if i+1 >= len(args) {
-				return flagValueError("--height")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --height")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil || n <= 0 {
-				fmt.Fprintln(os.Stderr, "invalid --height")
-				return 1
+				return commandError(jsonOut, "invalid_height", "invalid --height")
 			}
 			height = n
 			i++
@@ -213,41 +210,39 @@ func cmdSessionSpawn(args []string) int {
 			cleanupAllHashes = true
 		case "--dry-run":
 			dryRun = true
+		case "--detect-nested":
+			detectNested = true
 		case "--no-dangerously-skip-permissions":
 			skipPermissions = false
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	var err error
 	agent, err = parseAgent(agent)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "invalid_agent", err.Error())
 	}
 	mode, err = parseMode(mode)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "invalid_mode", err.Error())
 	}
 	projectRoot = canonicalProjectRoot(projectRoot)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	session = strings.TrimSpace(session)
 	if session != "" && !strings.HasPrefix(session, "lisa-") {
-		fmt.Fprintln(os.Stderr, `invalid --session: must start with "lisa-"`)
-		return 1
+		return commandError(jsonOut, "invalid_session_name", `invalid --session: must start with "lisa-"`)
 	}
 
 	if session == "" {
 		session = generateSessionName(projectRoot, agent, mode, "")
 	}
 	if tmuxHasSessionFn(session) {
-		fmt.Fprintf(os.Stderr, "session already exists: %s\n", session)
-		return 1
+		return commandErrorf(jsonOut, "session_already_exists", "session already exists: %s", session)
 	}
 	runID := fmt.Sprintf("%d", time.Now().UnixNano())
 	emitSpawnFailureEvent := func(reason string) {
@@ -258,17 +253,21 @@ func cmdSessionSpawn(args []string) int {
 			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 		}
 	}
+	nestedDetection := detectNestedCodexBypass(agent, mode, prompt, agentArgs)
 	if command == "" {
-		if shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs) {
+		if nestedDetection.AutoBypass {
 			agentArgs = strings.TrimSpace(agentArgs + " --dangerously-bypass-approvals-and-sandbox")
 		}
 		command, err = buildAgentCommandWithOptions(agent, mode, prompt, agentArgs, skipPermissions)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
 			emitSpawnFailureEvent("spawn_command_build_error")
-			return 1
+			return commandError(jsonOut, "agent_command_build_failed", err.Error())
 		}
+	} else {
+		nestedDetection.Reason = "custom_command_override"
 	}
+	nestedDetection.EffectiveBypass = hasFlagToken(command, "--dangerously-bypass-approvals-and-sandbox")
+	nestedDetection.EffectiveFullAuto = hasFlagToken(command, "--full-auto")
 	commandToSend := command
 	if mode == "exec" && command != "" {
 		commandToSend = wrapExecCommand(command)
@@ -303,6 +302,9 @@ func cmdSessionSpawn(args []string) int {
 				"LISA_DONE_FILE":      sessionDoneFile(projectRoot, session),
 			},
 		}
+		if detectNested {
+			payload["nestedDetection"] = nestedDetection
+		}
 		if jsonOut {
 			writeJSON(payload)
 			return 0
@@ -318,26 +320,24 @@ func cmdSessionSpawn(args []string) int {
 
 	cleanupOpts := cleanupOptions{AllHashes: cleanupAllHashes}
 	if err := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to reset previous session artifacts: %v\n", err)
 		emitSpawnFailureEvent("spawn_cleanup_error")
-		return 1
+		return commandErrorf(jsonOut, "spawn_cleanup_failed", "failed to reset previous session artifacts: %v", err)
 	}
 	if err := ensureHeartbeatWritableFn(sessionHeartbeatFile(projectRoot, session)); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to prepare heartbeat file: %v\n", err)
 		emitSpawnFailureEvent("spawn_heartbeat_prepare_error")
-		return 1
+		return commandErrorf(jsonOut, "spawn_heartbeat_prepare_failed", "failed to prepare heartbeat file: %v", err)
 	}
 
 	if err := tmuxNewSessionWithStartupFn(session, projectRoot, agent, mode, width, height, commandToSend); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create tmux session: %v\n", err)
+		msg := fmt.Sprintf("failed to create tmux session: %v", err)
 		if shouldPrintCodexExecNestedTmuxHint(agent, mode, err) {
-			fmt.Fprintln(os.Stderr, "hint: codex exec --full-auto sandbox can block nested tmux sockets; use --mode interactive (then session send) or pass --agent-args '--dangerously-bypass-approvals-and-sandbox' (lisa omits --full-auto for that spawn)")
+			msg += "; hint: codex exec --full-auto sandbox can block nested tmux sockets; use --mode interactive (then session send) or pass --agent-args '--dangerously-bypass-approvals-and-sandbox' (lisa omits --full-auto for that spawn)"
 		}
 		if cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts); cleanupErr != nil {
 			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
 		}
 		emitSpawnFailureEvent("spawn_tmux_new_error")
-		return 1
+		return commandError(jsonOut, "spawn_tmux_new_failed", msg)
 	}
 
 	meta := sessionMeta{
@@ -354,15 +354,15 @@ func cmdSessionSpawn(args []string) int {
 	if err := saveSessionMetaFn(projectRoot, session, meta); err != nil {
 		killErr := tmuxKillSessionFn(session)
 		cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts)
-		fmt.Fprintf(os.Stderr, "failed to persist metadata: %v\n", err)
+		msg := fmt.Sprintf("failed to persist metadata: %v", err)
 		if killErr != nil {
-			fmt.Fprintf(os.Stderr, "failed to kill session after metadata error: %v\n", killErr)
+			msg += fmt.Sprintf("; failed to kill session after metadata error: %v", killErr)
 		}
 		if cleanupErr != nil {
 			fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
 		}
 		emitSpawnFailureEvent("spawn_meta_persist_error")
-		return 1
+		return commandError(jsonOut, "spawn_meta_persist_failed", msg)
 	}
 	_ = os.Remove(sessionStateFile(projectRoot, session))
 	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "spawned", "active", "spawn_success"); err != nil {
@@ -370,14 +370,18 @@ func cmdSessionSpawn(args []string) int {
 	}
 
 	if jsonOut {
-		writeJSON(map[string]any{
+		payload := map[string]any{
 			"session":     session,
 			"agent":       agent,
 			"mode":        mode,
 			"runId":       runID,
 			"projectRoot": projectRoot,
 			"command":     command,
-		})
+		}
+		if detectNested {
+			payload["nestedDetection"] = nestedDetection
+		}
+		writeJSON(payload)
 		return 0
 	}
 	fmt.Println(session)
@@ -407,21 +411,56 @@ func parentSessionFromEnv(currentSession string) string {
 	return parent
 }
 
-func shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs string) bool {
-	if normalizeAgent(agent) != "codex" || normalizeMode(mode) != "exec" {
-		return false
+type nestedCodexDetection struct {
+	Eligible          bool   `json:"eligible"`
+	AutoBypass        bool   `json:"autoBypass"`
+	Reason            string `json:"reason"`
+	MatchedHint       string `json:"matchedHint,omitempty"`
+	HasBypassArg      bool   `json:"hasBypassArg"`
+	HasFullAutoArg    bool   `json:"hasFullAutoArg"`
+	EffectiveBypass   bool   `json:"effectiveBypass,omitempty"`
+	EffectiveFullAuto bool   `json:"effectiveFullAuto,omitempty"`
+}
+
+func detectNestedCodexBypass(agent, mode, prompt, agentArgs string) nestedCodexDetection {
+	detection := nestedCodexDetection{
+		Eligible:       normalizeAgent(agent) == "codex" && normalizeMode(mode) == "exec",
+		HasBypassArg:   hasFlagToken(agentArgs, "--dangerously-bypass-approvals-and-sandbox"),
+		HasFullAutoArg: hasFlagToken(agentArgs, "--full-auto"),
+		Reason:         "no_nested_hint",
 	}
-	if hasFlagToken(agentArgs, "--dangerously-bypass-approvals-and-sandbox") || hasFlagToken(agentArgs, "--full-auto") {
-		return false
+	if !detection.Eligible {
+		detection.Reason = "not_codex_exec"
+		return detection
+	}
+	if detection.HasBypassArg {
+		detection.Reason = "agent_args_has_bypass"
+		return detection
+	}
+	if detection.HasFullAutoArg {
+		detection.Reason = "agent_args_has_full_auto"
+		return detection
 	}
 	lowerPrompt := strings.ToLower(prompt)
-	if strings.Contains(lowerPrompt, "./lisa") {
-		return true
+	switch {
+	case strings.Contains(lowerPrompt, "./lisa"):
+		detection.AutoBypass = true
+		detection.MatchedHint = "./lisa"
+		detection.Reason = "prompt_contains_dot_slash_lisa"
+	case strings.Contains(lowerPrompt, "lisa session spawn"):
+		detection.AutoBypass = true
+		detection.MatchedHint = "lisa session spawn"
+		detection.Reason = "prompt_contains_lisa_session_spawn"
+	case strings.Contains(lowerPrompt, "nested lisa"):
+		detection.AutoBypass = true
+		detection.MatchedHint = "nested lisa"
+		detection.Reason = "prompt_contains_nested_lisa"
 	}
-	if strings.Contains(lowerPrompt, "lisa session spawn") || strings.Contains(lowerPrompt, "nested lisa") {
-		return true
-	}
-	return false
+	return detection
+}
+
+func shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs string) bool {
+	return detectNestedCodexBypass(agent, mode, prompt, agentArgs).AutoBypass
 }
 
 func shouldRecordInputTimestamp(text string, keyList []string, enter bool) bool {
@@ -461,7 +500,7 @@ func cmdSessionSend(args []string) int {
 	text := ""
 	keys := ""
 	enter := false
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -469,26 +508,26 @@ func cmdSessionSend(args []string) int {
 			return showHelp("session send")
 		case "--session":
 			if i+1 >= len(args) {
-				return flagValueError("--session")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --session")
 			}
 			session = args[i+1]
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			projectRootExplicit = true
 			i++
 		case "--text":
 			if i+1 >= len(args) {
-				return flagValueError("--text")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --text")
 			}
 			text = args[i+1]
 			i++
 		case "--keys":
 			if i+1 >= len(args) {
-				return flagValueError("--keys")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --keys")
 			}
 			keys = args[i+1]
 			i++
@@ -497,28 +536,24 @@ func cmdSessionSend(args []string) int {
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	if session == "" {
-		fmt.Fprintln(os.Stderr, "--session is required")
-		return 1
+		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
 	if text == "" && keys == "" {
-		fmt.Fprintln(os.Stderr, "provide --text or --keys")
-		return 1
+		return commandError(jsonOut, "missing_send_payload", "provide --text or --keys")
 	}
 	if text != "" && keys != "" {
-		fmt.Fprintln(os.Stderr, "use either --text or --keys, not both")
-		return 1
+		return commandError(jsonOut, "send_payload_conflict", "use either --text or --keys, not both")
 	}
 	keyList := []string(nil)
 	if keys != "" {
 		keyList = strings.Fields(keys)
 		if len(keyList) == 0 {
-			fmt.Fprintln(os.Stderr, "empty --keys")
-			return 1
+			return commandError(jsonOut, "empty_keys", "empty --keys")
 		}
 	}
 
@@ -526,7 +561,14 @@ func cmdSessionSend(args []string) int {
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	if !tmuxHasSessionFn(session) {
-		fmt.Fprintln(os.Stderr, "session not found")
+		if jsonOut {
+			writeJSONError("session_not_found", "session not found", map[string]any{
+				"session":     session,
+				"projectRoot": projectRoot,
+			})
+		} else {
+			fmt.Fprintln(os.Stderr, "session not found")
+		}
 		return 1
 	}
 	recordInputAt := shouldRecordInputTimestamp(text, keyList, enter)
@@ -534,16 +576,14 @@ func cmdSessionSend(args []string) int {
 
 	if text != "" {
 		if err := tmuxSendTextFn(session, text, enter); err != nil {
-			fmt.Fprintf(os.Stderr, "failed sending text: %v\n", err)
-			return 1
+			return commandErrorf(jsonOut, "send_text_failed", "failed sending text: %v", err)
 		}
 		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "in_progress", "active", "send_text"); err != nil {
 			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 		}
 	} else {
 		if err := tmuxSendKeysFn(session, keyList, enter); err != nil {
-			fmt.Fprintf(os.Stderr, "failed sending keys: %v\n", err)
-			return 1
+			return commandErrorf(jsonOut, "send_keys_failed", "failed sending keys: %v", err)
 		}
 		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "in_progress", "active", "send_keys"); err != nil {
 			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)

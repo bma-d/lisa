@@ -61,7 +61,7 @@ func cmdSkillsSync(args []string) int {
 	from := "codex"
 	fromPath := ""
 	repoRoot := getPWD()
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -69,44 +69,41 @@ func cmdSkillsSync(args []string) int {
 			return showHelp("skills sync")
 		case "--from":
 			if i+1 >= len(args) {
-				return flagValueError("--from")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --from")
 			}
 			from = args[i+1]
 			i++
 		case "--path":
 			if i+1 >= len(args) {
-				return flagValueError("--path")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --path")
 			}
 			fromPath = args[i+1]
 			i++
 		case "--repo-root":
 			if i+1 >= len(args) {
-				return flagValueError("--repo-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --repo-root")
 			}
 			repoRoot = args[i+1]
 			i++
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	sourcePath, err := resolveSkillsSourcePath(from, fromPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "skills_source_resolve_failed", err.Error())
 	}
 	destinationPath, err := repoSkillPath(repoRoot)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "skills_destination_resolve_failed", err.Error())
 	}
 
 	summary, err := copyDirReplace(sourcePath, destinationPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "skills sync failed: %v\n", err)
-		return 1
+		return commandErrorf(jsonOut, "skills_sync_failed", "skills sync failed: %v", err)
 	}
 
 	if jsonOut {
@@ -123,7 +120,7 @@ func cmdSkillsInstall(args []string) int {
 	installPath := ""
 	projectPath := ""
 	repoRoot := getPWD()
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -131,54 +128,51 @@ func cmdSkillsInstall(args []string) int {
 			return showHelp("skills install")
 		case "--to":
 			if i+1 >= len(args) {
-				return flagValueError("--to")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --to")
 			}
 			to = args[i+1]
 			toExplicit = true
 			i++
 		case "--path":
 			if i+1 >= len(args) {
-				return flagValueError("--path")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --path")
 			}
 			installPath = args[i+1]
 			i++
 		case "--project-path":
 			if i+1 >= len(args) {
-				return flagValueError("--project-path")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-path")
 			}
 			projectPath = args[i+1]
 			i++
 		case "--repo-root":
 			if i+1 >= len(args) {
-				return flagValueError("--repo-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --repo-root")
 			}
 			repoRoot = args[i+1]
 			i++
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	sourcePath, cleanupSource, err := resolveSkillsInstallSource(repoRoot)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "skills_source_resolve_failed", err.Error())
 	}
 	defer cleanupSource()
 	destinationPaths, err := resolveSkillsInstallDestinations(to, toExplicit, projectPath, installPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "skills_destination_resolve_failed", err.Error())
 	}
 
 	summaries := make([]skillsCopySummary, 0, len(destinationPaths))
 	for _, destinationPath := range destinationPaths {
 		summary, err := copyDirReplace(sourcePath, destinationPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "skills install failed: %v\n", err)
-			return 1
+			return commandErrorf(jsonOut, "skills_install_failed", "skills install failed: %v", err)
 		}
 		summaries = append(summaries, summary)
 	}

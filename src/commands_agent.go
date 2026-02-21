@@ -39,7 +39,7 @@ func doctorReady(results []doctorCheck) bool {
 }
 
 func cmdDoctor(args []string) int {
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 	for _, arg := range args {
 		switch arg {
 		case "--help", "-h":
@@ -47,7 +47,7 @@ func cmdDoctor(args []string) int {
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(arg)
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", arg)
 		}
 	}
 
@@ -64,7 +64,11 @@ func cmdDoctor(args []string) int {
 	allOK := doctorReady(results)
 
 	if jsonOut {
-		writeJSON(doctorJSONPayload(allOK, results))
+		payload := doctorJSONPayload(allOK, results)
+		if !allOK {
+			payload["errorCode"] = "doctor_missing_prerequisites"
+		}
+		writeJSON(payload)
 		return boolExit(allOK)
 	}
 
@@ -112,7 +116,7 @@ func cmdAgentBuildCmd(args []string) int {
 	prompt := ""
 	agentArgs := ""
 	skipPermissions := true
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -120,25 +124,25 @@ func cmdAgentBuildCmd(args []string) int {
 			return showHelp("agent build-cmd")
 		case "--agent":
 			if i+1 >= len(args) {
-				return flagValueError("--agent")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
 			}
 			agent = args[i+1]
 			i++
 		case "--mode":
 			if i+1 >= len(args) {
-				return flagValueError("--mode")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --mode")
 			}
 			mode = args[i+1]
 			i++
 		case "--prompt":
 			if i+1 >= len(args) {
-				return flagValueError("--prompt")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --prompt")
 			}
 			prompt = args[i+1]
 			i++
 		case "--agent-args":
 			if i+1 >= len(args) {
-				return flagValueError("--agent-args")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent-args")
 			}
 			agentArgs = args[i+1]
 			i++
@@ -147,7 +151,7 @@ func cmdAgentBuildCmd(args []string) int {
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 	if shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs) {
@@ -156,8 +160,7 @@ func cmdAgentBuildCmd(args []string) int {
 
 	cmd, err := buildAgentCommandWithOptions(agent, mode, prompt, agentArgs, skipPermissions)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "agent_command_build_failed", err.Error())
 	}
 
 	agent, _ = parseAgent(agent)

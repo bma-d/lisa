@@ -142,6 +142,7 @@ func helpSessionSpawn() {
 	fmt.Fprintln(os.Stderr, "  --height N            Tmux pane height (default: 60)")
 	fmt.Fprintln(os.Stderr, "  --cleanup-all-hashes  Clean artifacts across all project hashes")
 	fmt.Fprintln(os.Stderr, "  --dry-run             Print resolved spawn plan without creating session")
+	fmt.Fprintln(os.Stderr, "  --detect-nested       Include nested-bypass detection diagnostics in JSON output")
 	fmt.Fprintln(os.Stderr, "  --no-dangerously-skip-permissions")
 	fmt.Fprintln(os.Stderr, "                        Don't add --dangerously-skip-permissions to claude")
 	fmt.Fprintln(os.Stderr, "  note                  Nested codex exec prompts (./lisa, lisa session spawn)")
@@ -210,6 +211,7 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --until-marker TEXT   Stop when raw pane output contains marker text")
 	fmt.Fprintln(os.Stderr, "  --expect MODE         Success expectation: any|terminal|marker (default: any)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: session/finalState/exitReason/polls")
 	fmt.Fprintln(os.Stderr, "  --verbose             Print poll details to stderr")
 }
 
@@ -249,6 +251,7 @@ func helpSessionTree() {
 	fmt.Fprintln(os.Stderr, "  --session NAME        Root session filter (optional)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --all-hashes          Include metadata from all project hashes")
+	fmt.Fprintln(os.Stderr, "  --active-only         Include only sessions currently active in tmux")
 	fmt.Fprintln(os.Stderr, "  --flat                Print machine-friendly parent/child rows")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }

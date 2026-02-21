@@ -229,6 +229,7 @@ Flags:
 - `--height`: tmux height (default `60`)
 - `--cleanup-all-hashes`: clean artifacts across all project hashes
 - `--dry-run`: print resolved spawn plan (command/socket/env) without creating tmux session or artifacts
+- `--detect-nested`: include nested bypass detection diagnostics in JSON output
 - `--no-dangerously-skip-permissions`: disable default Claude permission-skip flag injection
 - `--json`: machine-readable output
 
@@ -244,6 +245,7 @@ Notes:
 - For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`) to avoid shell quoting collisions in inline nested commands.
 - Spawned panes receive `LISA_*` routing env (see Runtime Environment Variables) so nested Lisa commands preserve project/socket isolation.
 - `--dry-run` validates inputs and returns planned spawn payload (`session`, `command`, wrapped `startupCommand`, `socketPath`, injected env vars) without creating a session.
+- `--detect-nested --json` adds `nestedDetection` with decision fields (`autoBypass`, `reason`, `matchedHint`, arg/full-auto signals, effective command flags).
 
 ### `session send`
 
@@ -332,6 +334,7 @@ Flags:
 - `--until-marker TEXT`: stop successfully when raw pane output contains marker text
 - `--expect any|terminal|marker` (default `any`)
 - `--json`
+- `--json-min` (minimal JSON: `session`, `finalState`, `exitReason`, `polls`)
 - `--verbose`
 
 Output note:
@@ -418,8 +421,14 @@ Flags:
 - `--session` (optional root filter)
 - `--project-root`
 - `--all-hashes` (scan metadata across all project hashes)
+- `--active-only` (include only sessions currently active in tmux)
 - `--flat` (machine-friendly parent/child rows)
 - `--json`
+
+Behavior note:
+
+- `session tree` is metadata-first and can show historical sessions.
+- Use `--active-only` (or pair with `session list`) for active-only topology.
 
 ### `session smoke`
 
@@ -542,6 +551,11 @@ JSON support:
 - `session exists`
 - `session kill`
 - `session kill-all`
+
+JSON failure contract:
+
+- With `--json`, command/runtime failures emit `{"ok":false,"errorCode":"...","error":"..."}`.
+- Stateful JSON failures (for example `session kill`, `session exists`, `session monitor`, `session smoke`) also include command-specific payload fields plus `errorCode`.
 
 Text/CSV-only commands:
 

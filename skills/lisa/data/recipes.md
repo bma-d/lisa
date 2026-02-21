@@ -31,6 +31,17 @@ $LISA_BIN cleanup --dry-run
 $LISA_BIN cleanup
 ```
 
+## Preflight Contract Check (Fast)
+
+Use before complex orchestration to lock command assumptions:
+
+```bash
+$LISA_BIN doctor --json
+$LISA_BIN session spawn --help
+$LISA_BIN session monitor --help
+$LISA_BIN session tree --help
+```
+
 ## Parallel Workers
 
 ```bash
@@ -90,6 +101,17 @@ $LISA_BIN session explain --session "$S" --project-root . --events 20
 $LISA_BIN session monitor --session "$S" --project-root . --verbose --json
 ```
 
+Expectation patterns:
+
+```bash
+# strict terminal completion (fails on waiting/marker)
+$LISA_BIN session monitor --session "$S" --project-root . --expect terminal --json
+
+# marker-gated success (requires --until-marker)
+$LISA_BIN session monitor --session "$S" --project-root . \
+  --until-marker "DONE_MARKER" --expect marker --json
+```
+
 ## Cleanup Patterns
 
 ```bash
@@ -110,9 +132,11 @@ Safety: prefer `cleanup --dry-run` first in shared tmux environments.
 PARENT=$($LISA_BIN session spawn --agent codex --mode interactive \
   --project-root . \
   --prompt "Use ./lisa only. Spawn 2 exec workers, monitor both, then summarize findings." \
+  --detect-nested \
   --json | jq -r .session)
 
 $LISA_BIN session monitor --session "$PARENT" --project-root . --stop-on-waiting true --json
+$LISA_BIN session monitor --session "$PARENT" --project-root . --stop-on-waiting true --json-min
 
 $LISA_BIN session monitor --session "$PARENT" --project-root . \
   --stop-on-waiting true --waiting-requires-turn-complete true --json
@@ -127,9 +151,30 @@ Nested Codex exec trigger wording (auto-bypass + omit `--full-auto`):
 - `Run lisa session spawn inside the spawned agent.`
 - `Build a nested lisa chain and report markers.`
 
+Wording that does not trigger nested bypass:
+- `No nesting requested here.`
+
+Tip: validate trigger intent with `session spawn --dry-run --json` and inspect `command` for
+`--dangerously-bypass-approvals-and-sandbox` vs `--full-auto`.
+
 Deterministic nested validation:
 
 ```bash
 ./lisa session smoke --project-root "$(pwd)" --levels 4 --json
 ./smoke-nested --project-root "$(pwd)" --max-polls 120
+```
+
+## Creative Nested Chain (Parent -> Child -> Grandchild)
+
+```bash
+ROOT="$(pwd)"
+PARENT=$($LISA_BIN session spawn --agent codex --mode exec --project-root "$ROOT" \
+  --prompt "Use ./lisa only. Spawn one child codex exec session that asks that child to spawn one grandchild codex exec session. In each level emit markers N1_OK, N2_OK, N3_OK into output and finish." \
+  --json | jq -r .session)
+
+$LISA_BIN session monitor --session "$PARENT" --project-root "$ROOT" \
+  --poll-interval 2 --max-polls 120 --expect terminal --json
+
+$LISA_BIN session capture --session "$PARENT" --project-root "$ROOT" --raw --lines 260 --json
+$LISA_BIN session tree --project-root "$ROOT" --active-only --json
 ```

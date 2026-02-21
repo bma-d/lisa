@@ -14,7 +14,7 @@ func cmdSessionExplain(args []string) int {
 	agentHint := "auto"
 	modeHint := "auto"
 	eventLimit := 10
-	jsonOut := false
+	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -22,86 +22,84 @@ func cmdSessionExplain(args []string) int {
 			return showHelp("session explain")
 		case "--session":
 			if i+1 >= len(args) {
-				return flagValueError("--session")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --session")
 			}
 			session = args[i+1]
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
-				return flagValueError("--project-root")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
 			}
 			projectRoot = args[i+1]
 			projectRootExplicit = true
 			i++
 		case "--agent":
 			if i+1 >= len(args) {
-				return flagValueError("--agent")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
 			}
 			agentHint = args[i+1]
 			i++
 		case "--mode":
 			if i+1 >= len(args) {
-				return flagValueError("--mode")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --mode")
 			}
 			modeHint = args[i+1]
 			i++
 		case "--events":
 			if i+1 >= len(args) {
-				return flagValueError("--events")
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --events")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil || n <= 0 {
-				fmt.Fprintln(os.Stderr, "invalid --events")
-				return 1
+				return commandError(jsonOut, "invalid_events", "invalid --events")
 			}
 			eventLimit = n
 			i++
 		case "--json":
 			jsonOut = true
 		default:
-			return unknownFlagError(args[i])
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
 
 	if session == "" {
-		fmt.Fprintln(os.Stderr, "--session is required")
-		return 1
+		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	agentHint, err := parseAgentHint(agentHint)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "invalid_agent_hint", err.Error())
 	}
 	modeHint, err = parseModeHint(modeHint)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "invalid_mode_hint", err.Error())
 	}
 
 	status, err := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, true, 0)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
+		return commandError(jsonOut, "status_compute_failed", err.Error())
 	}
 	status = normalizeStatusForSessionStatusOutput(status)
 
 	eventTail, err := readSessionEventTailFn(projectRoot, session, eventLimit)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(os.Stderr, "failed reading session events: %v\n", err)
-		return 1
+		return commandErrorf(jsonOut, "event_tail_read_failed", "failed reading session events: %v", err)
 	}
 	events := eventTail.Events
 
 	if jsonOut {
-		writeJSON(map[string]any{
+		payload := map[string]any{
 			"status":            status,
 			"eventFile":         sessionEventsFile(projectRoot, session),
 			"events":            events,
 			"droppedEventLines": eventTail.DroppedLines,
-		})
+		}
+		if status.SessionState == "not_found" {
+			payload["errorCode"] = "session_not_found"
+		}
+		writeJSON(payload)
 		return 0
 	}
 
