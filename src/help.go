@@ -22,6 +22,7 @@ var helpFuncs = map[string]func(){
 	"session monitor":  helpSessionMonitor,
 	"session capture":  helpSessionCapture,
 	"session tree":     helpSessionTree,
+	"session smoke":    helpSessionSmoke,
 	"session list":     helpSessionList,
 	"session exists":   helpSessionExists,
 	"session kill":     helpSessionKill,
@@ -58,6 +59,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session monitor       Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  session capture       Capture session pane output or transcript")
 	fmt.Fprintln(os.Stderr, "  session tree          Show parent/child session tree")
+	fmt.Fprintln(os.Stderr, "  session smoke         Run deterministic nested smoke test")
 	fmt.Fprintln(os.Stderr, "  session list          List lisa sessions")
 	fmt.Fprintln(os.Stderr, "  session exists        Check if a session exists")
 	fmt.Fprintln(os.Stderr, "  session kill          Kill a session and clean artifacts")
@@ -103,6 +105,7 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  monitor    Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  capture    Capture session pane output or transcript")
 	fmt.Fprintln(os.Stderr, "  tree       Show parent/child session tree")
+	fmt.Fprintln(os.Stderr, "  smoke      Run deterministic nested smoke test")
 	fmt.Fprintln(os.Stderr, "  list       List lisa sessions")
 	fmt.Fprintln(os.Stderr, "  exists     Check if a session exists")
 	fmt.Fprintln(os.Stderr, "  kill       Kill a session and clean artifacts")
@@ -119,6 +122,7 @@ func helpSessionName() {
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Session mode: interactive|exec (default: interactive)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --tag TEXT            Tag to include in name")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
 func helpSessionSpawn() {
@@ -204,6 +208,7 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --stop-on-waiting BOOL  Stop on waiting_input (default: true)")
 	fmt.Fprintln(os.Stderr, "  --waiting-requires-turn-complete BOOL  Require transcript turn-complete before stopping on waiting_input (default: false)")
 	fmt.Fprintln(os.Stderr, "  --until-marker TEXT   Stop when raw pane output contains marker text")
+	fmt.Fprintln(os.Stderr, "  --expect MODE         Success expectation: any|terminal|marker (default: any)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --verbose             Print poll details to stderr")
 }
@@ -232,6 +237,7 @@ func helpSessionList() {
 	fmt.Fprintln(os.Stderr, "  --all-sockets         Discover active sessions across project sockets")
 	fmt.Fprintln(os.Stderr, "  --project-only        Only show sessions for current project")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
 func helpSessionTree() {
@@ -243,7 +249,22 @@ func helpSessionTree() {
 	fmt.Fprintln(os.Stderr, "  --session NAME        Root session filter (optional)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --all-hashes          Include metadata from all project hashes")
+	fmt.Fprintln(os.Stderr, "  --flat                Print machine-friendly parent/child rows")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSessionSmoke() {
+	fmt.Fprintln(os.Stderr, "lisa session smoke — deterministic nested lisa smoke test")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session smoke [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --levels N            Nested depth (1-4, default: 3)")
+	fmt.Fprintln(os.Stderr, "  --poll-interval N     Seconds between monitor polls (default: 1)")
+	fmt.Fprintln(os.Stderr, "  --max-polls N         Maximum polls per nested monitor (default: 180)")
+	fmt.Fprintln(os.Stderr, "  --keep-sessions       Keep spawned smoke sessions for inspection")
+	fmt.Fprintln(os.Stderr, "  --json                JSON summary output")
 }
 
 func helpSessionExists() {
@@ -254,6 +275,7 @@ func helpSessionExists() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
 func helpSessionKill() {
@@ -265,6 +287,7 @@ func helpSessionKill() {
 	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --cleanup-all-hashes  Clean artifacts across all project hashes")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
 func helpSessionKillAll() {
@@ -276,6 +299,7 @@ func helpSessionKillAll() {
 	fmt.Fprintln(os.Stderr, "  --project-only        Only kill sessions for current project")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --cleanup-all-hashes  Clean artifacts across all project hashes")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
 func helpAgent() {

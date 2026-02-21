@@ -23,6 +23,7 @@ func TestHelpExitZero(t *testing.T) {
 		{"session explain --help", []string{"session", "explain", "--help"}},
 		{"session monitor --help", []string{"session", "monitor", "--help"}},
 		{"session capture --help", []string{"session", "capture", "--help"}},
+		{"session smoke --help", []string{"session", "smoke", "--help"}},
 		{"session list --help", []string{"session", "list", "--help"}},
 		{"session exists --help", []string{"session", "exists", "--help"}},
 		{"session kill --help", []string{"session", "kill", "--help"}},
@@ -56,7 +57,7 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"top-level",
 			[]string{"--help"},
-			[]string{"lisa <command> [args]", "doctor", "cleanup", "session spawn", "session explain", "agent build-cmd", "skills sync"},
+			[]string{"lisa <command> [args]", "doctor", "cleanup", "session spawn", "session explain", "session smoke", "agent build-cmd", "skills sync"},
 		},
 		{
 			"skills",
@@ -81,12 +82,17 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session",
 			[]string{"session", "--help"},
-			[]string{"lisa session", "spawn", "send", "status", "kill"},
+			[]string{"lisa session", "spawn", "send", "status", "smoke", "kill"},
 		},
 		{
 			"session spawn",
 			[]string{"session", "spawn", "--help"},
 			[]string{"lisa session spawn", "--agent", "--mode", "--session", "--prompt", "--width", "--height", "--json"},
+		},
+		{
+			"session smoke",
+			[]string{"session", "smoke", "--help"},
+			[]string{"lisa session smoke", "--levels", "--poll-interval", "--max-polls", "--json"},
 		},
 		{
 			"doctor",

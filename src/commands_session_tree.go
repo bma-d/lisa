@@ -21,14 +21,26 @@ type sessionTreeResult struct {
 	Session     string            `json:"session,omitempty"`
 	ProjectRoot string            `json:"projectRoot"`
 	AllHashes   bool              `json:"allHashes"`
+	Flat        bool              `json:"flat,omitempty"`
 	NodeCount   int               `json:"nodeCount"`
+	Rows        []sessionTreeRow  `json:"rows,omitempty"`
 	Roots       []sessionTreeNode `json:"roots"`
+}
+
+type sessionTreeRow struct {
+	Session       string `json:"session"`
+	ParentSession string `json:"parentSession,omitempty"`
+	Agent         string `json:"agent,omitempty"`
+	Mode          string `json:"mode,omitempty"`
+	ProjectRoot   string `json:"projectRoot,omitempty"`
+	CreatedAt     string `json:"createdAt,omitempty"`
 }
 
 func cmdSessionTree(args []string) int {
 	projectRoot := getPWD()
 	sessionFilter := ""
 	allHashes := false
+	flat := false
 	jsonOut := false
 
 	for i := 0; i < len(args); i++ {
@@ -49,6 +61,8 @@ func cmdSessionTree(args []string) int {
 			i++
 		case "--all-hashes":
 			allHashes = true
+		case "--flat":
+			flat = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -108,12 +122,30 @@ func cmdSessionTree(args []string) int {
 		Session:     sessionFilter,
 		ProjectRoot: projectRoot,
 		AllHashes:   allHashes,
+		Flat:        flat,
 		NodeCount:   len(nodesBySession),
 		Roots:       roots,
+	}
+	if flat {
+		result.Rows = flattenSessionTreeRows(roots)
 	}
 
 	if jsonOut {
 		writeJSON(result)
+		return 0
+	}
+	if flat {
+		fmt.Println("session\tparentSession\tagent\tmode\tprojectRoot\tcreatedAt")
+		for _, row := range result.Rows {
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n",
+				row.Session,
+				row.ParentSession,
+				row.Agent,
+				row.Mode,
+				row.ProjectRoot,
+				row.CreatedAt,
+			)
+		}
 		return 0
 	}
 
@@ -174,4 +206,26 @@ func printSessionTreeNode(node sessionTreeNode, indent string) {
 	for _, child := range node.Children {
 		printSessionTreeNode(child, indent+"  ")
 	}
+}
+
+func flattenSessionTreeRows(roots []sessionTreeNode) []sessionTreeRow {
+	rows := make([]sessionTreeRow, 0)
+	var walk func(node sessionTreeNode)
+	walk = func(node sessionTreeNode) {
+		rows = append(rows, sessionTreeRow{
+			Session:       node.Session,
+			ParentSession: node.ParentSession,
+			Agent:         node.Agent,
+			Mode:          node.Mode,
+			ProjectRoot:   node.ProjectRoot,
+			CreatedAt:     node.CreatedAt,
+		})
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	for _, root := range roots {
+		walk(root)
+	}
+	return rows
 }

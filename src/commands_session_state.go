@@ -175,6 +175,7 @@ func cmdSessionMonitor(args []string) int {
 	projectRootExplicit := false
 	agentHint := "auto"
 	modeHint := "auto"
+	expect := "any"
 	pollInterval := defaultPollIntervalSeconds
 	maxPolls := defaultMaxPolls
 	stopOnWaiting := true
@@ -212,6 +213,17 @@ func cmdSessionMonitor(args []string) int {
 				return flagValueError("--mode")
 			}
 			modeHint = args[i+1]
+			i++
+		case "--expect":
+			if i+1 >= len(args) {
+				return flagValueError("--expect")
+			}
+			parsedExpect, err := parseMonitorExpect(args[i+1])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err.Error())
+				return 1
+			}
+			expect = parsedExpect
 			i++
 		case "--poll-interval":
 			if i+1 >= len(args) {
@@ -279,6 +291,10 @@ func cmdSessionMonitor(args []string) int {
 	}
 	if untilMarkerSet && untilMarker == "" {
 		fmt.Fprintln(os.Stderr, "invalid --until-marker: cannot be empty")
+		return 1
+	}
+	if expect == "marker" && untilMarker == "" {
+		fmt.Fprintln(os.Stderr, "--expect marker requires --until-marker")
 		return 1
 	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
@@ -356,13 +372,18 @@ func cmdSessionMonitor(args []string) int {
 			}
 		}
 		if reason != "" {
+			expectationMet := monitorExpectationSatisfied(expect, reason)
+			finalReason := reason
+			if !expectationMet {
+				finalReason = monitorExpectationMismatchReason(expect, reason)
+			}
 			result := monitorResult{
 				FinalState:  status.SessionState,
 				Session:     status.Session,
 				TodosDone:   status.TodosDone,
 				TodosTotal:  status.TodosTotal,
 				OutputFile:  status.OutputFile,
-				ExitReason:  reason,
+				ExitReason:  finalReason,
 				Polls:       poll,
 				FinalStatus: normalizeMonitorFinalStatus(status.SessionState, status.Status),
 			}
@@ -382,8 +403,11 @@ func cmdSessionMonitor(args []string) int {
 					return 1
 				}
 			}
-			if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+reason); err != nil {
+			if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+finalReason); err != nil {
 				fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+			}
+			if !expectationMet {
+				return 2
 			}
 			if reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input") {
 				return 0
@@ -704,4 +728,38 @@ func parseModeHint(mode string) (string, error) {
 		return "", fmt.Errorf("invalid --mode: %s (expected auto|interactive|exec)", mode)
 	}
 	return parsed, nil
+}
+
+func parseMonitorExpect(expect string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(expect))
+	switch value {
+	case "", "any":
+		return "any", nil
+	case "terminal", "marker":
+		return value, nil
+	default:
+		return "", fmt.Errorf("invalid --expect: %s (expected any|terminal|marker)", expect)
+	}
+}
+
+func monitorExpectationSatisfied(expect, reason string) bool {
+	switch expect {
+	case "marker":
+		return reason == "marker_found"
+	case "terminal":
+		return reason == "completed" || reason == "crashed" || reason == "stuck" || reason == "not_found"
+	default:
+		return true
+	}
+}
+
+func monitorExpectationMismatchReason(expect, reason string) string {
+	switch expect {
+	case "marker":
+		return "expected_marker_got_" + reason
+	case "terminal":
+		return "expected_terminal_got_" + reason
+	default:
+		return reason
+	}
 }

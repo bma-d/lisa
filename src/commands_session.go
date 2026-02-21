@@ -41,6 +41,8 @@ func cmdSession(args []string) int {
 		return cmdSessionCapture(args[1:])
 	case "tree":
 		return cmdSessionTree(args[1:])
+	case "smoke":
+		return cmdSessionSmoke(args[1:])
 	case "list":
 		return cmdSessionList(args[1:])
 	case "exists":
@@ -60,6 +62,7 @@ func cmdSessionName(args []string) int {
 	mode := "interactive"
 	projectRoot := getPWD()
 	tag := ""
+	jsonOut := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
@@ -88,6 +91,8 @@ func cmdSessionName(args []string) int {
 			}
 			tag = args[i+1]
 			i++
+		case "--json":
+			jsonOut = true
 		default:
 			return unknownFlagError(args[i])
 		}
@@ -107,6 +112,16 @@ func cmdSessionName(args []string) int {
 	projectRoot = canonicalProjectRoot(projectRoot)
 
 	name := generateSessionName(projectRoot, agent, mode, tag)
+	if jsonOut {
+		writeJSON(map[string]any{
+			"session":     name,
+			"agent":       agent,
+			"mode":        mode,
+			"projectRoot": projectRoot,
+			"tag":         tag,
+		})
+		return 0
+	}
 	fmt.Println(name)
 	return 0
 }

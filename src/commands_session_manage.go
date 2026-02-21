@@ -11,6 +11,7 @@ func cmdSessionList(args []string) int {
 	projectOnly := false
 	allSockets := false
 	projectRoot := getPWD()
+	jsonOut := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -26,6 +27,8 @@ func cmdSessionList(args []string) int {
 			}
 			projectRoot = args[i+1]
 			i++
+		case "--json":
+			jsonOut = true
 		default:
 			return unknownFlagError(args[i])
 		}
@@ -44,6 +47,16 @@ func cmdSessionList(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to list sessions: %v\n", err)
 		return 1
+	}
+	if jsonOut {
+		writeJSON(map[string]any{
+			"sessions":    list,
+			"count":       len(list),
+			"projectOnly": projectOnly,
+			"allSockets":  allSockets,
+			"projectRoot": projectRoot,
+		})
+		return 0
 	}
 	fmt.Println(strings.Join(list, "\n"))
 	return 0
@@ -101,6 +114,7 @@ func cmdSessionExists(args []string) int {
 	session := ""
 	projectRoot := getPWD()
 	projectRootExplicit := false
+	jsonOut := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
@@ -118,6 +132,8 @@ func cmdSessionExists(args []string) int {
 			projectRoot = args[i+1]
 			projectRootExplicit = true
 			i++
+		case "--json":
+			jsonOut = true
 		default:
 			return unknownFlagError(args[i])
 		}
@@ -129,7 +145,19 @@ func cmdSessionExists(args []string) int {
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
-	if tmuxHasSessionFn(session) {
+	exists := tmuxHasSessionFn(session)
+	if jsonOut {
+		writeJSON(map[string]any{
+			"session":     session,
+			"exists":      exists,
+			"projectRoot": projectRoot,
+		})
+		if exists {
+			return 0
+		}
+		return 1
+	}
+	if exists {
 		fmt.Println("true")
 		return 0
 	}
@@ -142,6 +170,7 @@ func cmdSessionKill(args []string) int {
 	projectRoot := getPWD()
 	projectRootExplicit := false
 	cleanupAllHashes := false
+	jsonOut := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
@@ -161,6 +190,8 @@ func cmdSessionKill(args []string) int {
 			i++
 		case "--cleanup-all-hashes":
 			cleanupAllHashes = true
+		case "--json":
+			jsonOut = true
 		default:
 			return unknownFlagError(args[i])
 		}
@@ -234,6 +265,15 @@ func cmdSessionKill(args []string) int {
 	}
 
 	if !rootFound {
+		if jsonOut {
+			writeJSON(map[string]any{
+				"session":     session,
+				"ok":          false,
+				"found":       false,
+				"errors":      errs,
+				"projectRoot": projectRoot,
+			})
+		}
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, e)
 		}
@@ -241,10 +281,28 @@ func cmdSessionKill(args []string) int {
 	}
 
 	if len(errs) > 0 {
+		if jsonOut {
+			writeJSON(map[string]any{
+				"session":     session,
+				"ok":          false,
+				"found":       true,
+				"errors":      errs,
+				"projectRoot": projectRoot,
+			})
+		}
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, e)
 		}
 		return 1
+	}
+	if jsonOut {
+		writeJSON(map[string]any{
+			"session":     session,
+			"ok":          true,
+			"found":       true,
+			"projectRoot": projectRoot,
+		})
+		return 0
 	}
 	fmt.Println("ok")
 	return 0
@@ -254,6 +312,7 @@ func cmdSessionKillAll(args []string) int {
 	projectOnly := false
 	projectRoot := getPWD()
 	cleanupAllHashes := false
+	jsonOut := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help", "-h":
@@ -268,6 +327,8 @@ func cmdSessionKillAll(args []string) int {
 			i++
 		case "--cleanup-all-hashes":
 			cleanupAllHashes = true
+		case "--json":
+			jsonOut = true
 		default:
 			return unknownFlagError(args[i])
 		}
@@ -313,11 +374,31 @@ func cmdSessionKillAll(args []string) int {
 		errs = append(errs, fmt.Sprintf("event retention cleanup: %v", pruneErr))
 	}
 	if len(errs) > 0 {
+		if jsonOut {
+			writeJSON(map[string]any{
+				"ok":          false,
+				"killed":      killed,
+				"total":       len(sessions),
+				"projectOnly": projectOnly,
+				"projectRoot": projectRoot,
+				"errors":      errs,
+			})
+		}
 		fmt.Fprintf(os.Stderr, "killed %d/%d sessions\n", killed, len(sessions))
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, e)
 		}
 		return 1
+	}
+	if jsonOut {
+		writeJSON(map[string]any{
+			"ok":          true,
+			"killed":      killed,
+			"total":       len(sessions),
+			"projectOnly": projectOnly,
+			"projectRoot": projectRoot,
+		})
+		return 0
 	}
 	fmt.Printf("killed %d sessions\n", killed)
 	return 0
