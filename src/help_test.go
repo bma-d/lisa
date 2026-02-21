@@ -24,6 +24,7 @@ func TestHelpExitZero(t *testing.T) {
 		{"session monitor --help", []string{"session", "monitor", "--help"}},
 		{"session capture --help", []string{"session", "capture", "--help"}},
 		{"session smoke --help", []string{"session", "smoke", "--help"}},
+		{"session preflight --help", []string{"session", "preflight", "--help"}},
 		{"session list --help", []string{"session", "list", "--help"}},
 		{"session exists --help", []string{"session", "exists", "--help"}},
 		{"session kill --help", []string{"session", "kill", "--help"}},
@@ -57,7 +58,7 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"top-level",
 			[]string{"--help"},
-			[]string{"lisa <command> [args]", "doctor", "cleanup", "session spawn", "session explain", "session smoke", "agent build-cmd", "skills sync"},
+			[]string{"lisa <command> [args]", "doctor", "cleanup", "session spawn", "session explain", "session smoke", "session preflight", "agent build-cmd", "skills sync"},
 		},
 		{
 			"skills",
@@ -82,7 +83,7 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session",
 			[]string{"session", "--help"},
-			[]string{"lisa session", "spawn", "send", "status", "smoke", "kill"},
+			[]string{"lisa session", "spawn", "send", "status", "smoke", "preflight", "kill"},
 		},
 		{
 			"session spawn",
@@ -93,6 +94,11 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 			"session smoke",
 			[]string{"session", "smoke", "--help"},
 			[]string{"lisa session smoke", "--levels", "--poll-interval", "--max-polls", "--json"},
+		},
+		{
+			"session preflight",
+			[]string{"session", "preflight", "--help"},
+			[]string{"lisa session preflight", "--project-root", "--json"},
 		},
 		{
 			"doctor",
@@ -141,6 +147,12 @@ func TestHelpRoutingEquivalence(t *testing.T) {
 			[]string{"help", "session", "status"},
 			[]string{"session", "status", "-h"},
 			[]string{"session", "help", "status"},
+		},
+		{
+			"session preflight",
+			[]string{"help", "session", "preflight"},
+			[]string{"session", "preflight", "-h"},
+			[]string{"session", "help", "preflight"},
 		},
 		{
 			"agent build-cmd",

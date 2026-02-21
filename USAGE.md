@@ -40,6 +40,7 @@ lisa session monitor
 lisa session capture
 lisa session tree
 lisa session smoke
+lisa session preflight
 lisa session list
 lisa session exists
 lisa session kill
@@ -339,6 +340,7 @@ Flags:
 - `--expect any|terminal|marker` (default `any`)
 - `--json`
 - `--json-min` (minimal JSON: `session`, `finalState`, `exitReason`, `polls`)
+- `--stream-json` (line-delimited JSON poll events before final result)
 - `--verbose`
 
 Output note:
@@ -346,6 +348,7 @@ Output note:
 - `finalState` is the terminal/stop-state from monitor.
 - `finalStatus` is normalized for terminal monitor states (`completed`, `crashed`, `stuck`, `not_found`) so it aligns with `finalState` in JSON/CSV output.
 - Timeout exits use `finalState=timeout` and `finalStatus=timeout`.
+- `--stream-json` emits one JSON object per poll (`type=poll`), then emits the standard final monitor JSON payload.
 
 When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
 `waiting_input` after transcript tail inspection confirms an assistant turn is
@@ -381,6 +384,7 @@ Flags:
 - `--lines N`: pane lines for raw capture (default `200`)
 - `--project-root`
 - `--json`
+- `--json-min` (compact JSON payloads for polling workflows)
 
 Behavior:
 
@@ -393,6 +397,27 @@ Behavior:
   - offset mode (`--delta-from 1200`): returns capture bytes after offset
   - timestamp mode (`--delta-from @1700000000` or RFC3339): returns full capture only if output changed after timestamp
   - JSON capture includes `deltaMode` and `nextOffset` for subsequent polls
+- `--json-min` keeps compact capture payloads (and includes `nextOffset` for delta polling).
+
+### `session preflight`
+
+Validate environment and key command contracts in one call.
+
+```bash
+lisa session preflight
+lisa session preflight --json
+```
+
+Flags:
+
+- `--project-root`
+- `--json`
+
+Behavior:
+
+- Runs doctor-equivalent environment checks (`tmux`, `claude`, `codex`).
+- Validates critical parser/contract assumptions (mode aliases, monitor marker guard, capture delta parsing, nested codex hint routing).
+- Returns exit `0` when both environment and contract checks pass; else exit `1`.
 
 ### `session list`
 
@@ -541,6 +566,7 @@ Flags:
 - `--agent`: `claude|codex`
 - `--mode`: `interactive|exec`
 - `--nested-policy`: `auto|force|off` (default `auto`)
+- `--project-root` (context only; included in JSON payload)
 - `--prompt`
 - `--agent-args`
 - `--no-dangerously-skip-permissions`
@@ -561,6 +587,7 @@ JSON support:
 - `session capture`
 - `session tree`
 - `session smoke`
+- `session preflight`
 - `session name`
 - `session list`
 - `session exists`

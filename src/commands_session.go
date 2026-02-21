@@ -43,6 +43,8 @@ func cmdSession(args []string) int {
 		return cmdSessionTree(args[1:])
 	case "smoke":
 		return cmdSessionSmoke(args[1:])
+	case "preflight":
+		return cmdSessionPreflight(args[1:])
 	case "list":
 		return cmdSessionList(args[1:])
 	case "exists":

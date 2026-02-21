@@ -6,6 +6,8 @@ import (
 	"os/exec"
 )
 
+var lookPathFn = exec.LookPath
+
 type doctorCheck struct {
 	Name      string `json:"name"`
 	Available bool   `json:"available"`
@@ -37,6 +39,19 @@ func doctorReady(results []doctorCheck) bool {
 	return tmuxOK && agentOK
 }
 
+func collectDoctorChecks() []doctorCheck {
+	results := []doctorCheck{}
+	for _, bin := range []string{"tmux", "claude", "codex"} {
+		path, err := lookPathFn(bin)
+		if err != nil {
+			results = append(results, doctorCheck{Name: bin, Available: false, Error: err.Error()})
+			continue
+		}
+		results = append(results, doctorCheck{Name: bin, Available: true, Path: path})
+	}
+	return results
+}
+
 func cmdDoctor(args []string) int {
 	jsonOut := hasJSONFlag(args)
 	for _, arg := range args {
@@ -50,15 +65,7 @@ func cmdDoctor(args []string) int {
 		}
 	}
 
-	results := []doctorCheck{}
-	for _, bin := range []string{"tmux", "claude", "codex"} {
-		path, err := exec.LookPath(bin)
-		if err != nil {
-			results = append(results, doctorCheck{Name: bin, Available: false, Error: err.Error()})
-			continue
-		}
-		results = append(results, doctorCheck{Name: bin, Available: true, Path: path})
-	}
+	results := collectDoctorChecks()
 
 	allOK := doctorReady(results)
 
@@ -113,6 +120,7 @@ func cmdAgentBuildCmd(args []string) int {
 	agent := "claude"
 	mode := "interactive"
 	nestedPolicy := "auto"
+	projectRoot := getPWD()
 	prompt := ""
 	agentArgs := ""
 	skipPermissions := true
@@ -145,6 +153,12 @@ func cmdAgentBuildCmd(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --prompt")
 			}
 			prompt = args[i+1]
+			i++
+		case "--project-root":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
+			}
+			projectRoot = args[i+1]
 			i++
 		case "--agent-args":
 			if i+1 >= len(args) {
@@ -179,11 +193,13 @@ func cmdAgentBuildCmd(args []string) int {
 
 	agent, _ = parseAgent(agent)
 	mode, _ = parseMode(mode)
+	projectRoot = canonicalProjectRoot(projectRoot)
 
 	if jsonOut {
 		writeJSON(map[string]any{
 			"agent":           agent,
 			"mode":            mode,
+			"projectRoot":     projectRoot,
 			"prompt":          prompt,
 			"nestedPolicy":    nestedPolicy,
 			"nestedDetection": nestedDetection,

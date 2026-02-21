@@ -2,7 +2,7 @@
 name: lisa
 description: lisa, tmux, orchestration, claude, codex, spawn, monitor, capture, nested, smoke, skills
 author: Claude Code
-version: 3.4.0
+version: 3.5.0
 date: 2026-02-21
 tags: [lisa, tmux, orchestration, claude, codex, agents]
 ---
@@ -15,7 +15,7 @@ Axiom: load minimal context first, then route to one targeted data file.
 
 1. In this repo, run `./lisa` (not `lisa`) to avoid PATH/version drift.
 2. Use real subcommands: `./lisa session spawn ...` (not `"session spawn"` as one token).
-3. In multi-step or nested flows, always pass `--project-root` so socket/hash routing stays consistent.
+3. In multi-step or nested flows, always pass `--project-root` on `session *` and `cleanup` commands so socket/hash routing stays consistent.
 4. Use `./lisa cleanup --include-tmux-default` only when explicitly requested.
 5. In `--json` mode, parse `stdout`; use `stderrPolicy` in payload to classify stderr as diagnostic stream.
 
@@ -27,12 +27,15 @@ Axiom: load minimal context first, then route to one targeted data file.
 - `session kill --json` for missing session exits `1` and emits JSON with `found:false` (no human stderr line).
 - `--waiting-requires-turn-complete true` can timeout (`max_polls_exceeded`) when turn-complete cannot be inferred (common in Codex flows).
 - Timeout payloads use `finalState:"timeout"` and `finalStatus:"timeout"`.
-- For low-token polling, use `session monitor --json-min`.
+- For low-token polling, use `session monitor --json-min` or `session monitor --json-min --stream-json`.
 - For low-token snapshots, use `session status --json-min`, `session list --json-min`, `session tree --json-min`.
+- `session status` returns exit `0` on `not_found` unless `--fail-not-found` is set.
 - For nested Codex diagnostics, use `session spawn --detect-nested --json` and inspect `nestedDetection`.
 - For deterministic nested policy, use `session spawn --nested-policy auto|force|off`.
-- For low-token capture polling, use `session capture --raw --delta-from <offset|@unix|rfc3339> --json` and reuse `nextOffset`.
+- For low-token capture polling, use `session capture --raw --delta-from <offset|@unix|rfc3339> --json-min` and reuse `nextOffset` (emitted when `--delta-from` is set).
 - Raw capture default filters MCP startup/auth noise; use `--keep-noise` for full startup logs.
+- Use `session preflight --json` before complex orchestration to validate environment + command contracts in one call.
+- `agent build-cmd` accepts `--project-root` for context parity with session commands.
 
 ## Prerequisites
 
@@ -65,7 +68,9 @@ SESSION=$($LISA_BIN session spawn \
   --json | jq -r .session)
 
 $LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --json
+$LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --json-min --stream-json
 $LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --lines 300
+$LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --delta-from 0 --json-min
 $LISA_BIN session kill --session "$SESSION" --project-root "$ROOT"
 ```
 
@@ -86,6 +91,33 @@ if finishing_runbook: cleanup --dry-run, then cleanup
 - `session exists` prints `false` and exits `1` when missing.
 - `session smoke --levels 1..4 --json` passed in this repo (nested markers validated at each level).
 - `session smoke --prompt-style dot-slash|spawn|nested|neutral` now validates nested wording triggers via dry-run probe.
+- Nested wording detection is case-insensitive (`./LISA` still matches `./lisa` hint).
+
+## Quick Verification Loop
+
+```bash
+ROOT="$(pwd)"
+LISA_BIN=./lisa
+
+# Fast contract checks
+$LISA_BIN session preflight --json
+$LISA_BIN session monitor --help
+$LISA_BIN session smoke --help
+
+# Nested wording probes (dry-run, no sessions created)
+for p in \
+  "Use ./lisa session spawn for child workers" \
+  "Create nested lisa inside lisa inside lisa and report" \
+  "Run ./LISA for children" \
+  "No nesting requested here."
+do
+  $LISA_BIN session spawn --agent codex --mode exec --project-root "$ROOT" \
+    --prompt "$p" --dry-run --detect-nested --json | jq '{command,nestedDetection}'
+done
+
+# Deterministic nested validation
+$LISA_BIN session smoke --project-root "$ROOT" --levels 4 --json
+```
 
 ## Data File Map
 

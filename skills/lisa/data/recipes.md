@@ -37,6 +37,7 @@ Use before complex orchestration to lock command assumptions:
 
 ```bash
 $LISA_BIN doctor --json
+$LISA_BIN session preflight --json
 $LISA_BIN session spawn --help
 $LISA_BIN session monitor --help
 $LISA_BIN session tree --help
@@ -77,6 +78,10 @@ $LISA_BIN session capture --session "$S" --raw --keep-noise --lines 200 --json
 $LISA_BIN session capture --session "$S" --raw --delta-from 0 --json
 # use returned nextOffset for subsequent polls
 $LISA_BIN session capture --session "$S" --raw --delta-from "$NEXT_OFFSET" --json
+
+# Compact JSON payload variants
+$LISA_BIN session capture --session "$S" --json-min
+$LISA_BIN session capture --session "$S" --raw --delta-from "$NEXT_OFFSET" --json-min
 ```
 
 Transcript resolution path:
@@ -107,6 +112,9 @@ $LISA_BIN session explain --session "$S" --project-root . --events 20
 
 # monitor with progress logs to stderr
 $LISA_BIN session monitor --session "$S" --project-root . --verbose --json
+
+# line-delimited low-token poll stream + final result
+$LISA_BIN session monitor --session "$S" --project-root . --json-min --stream-json
 ```
 
 Expectation patterns:
@@ -157,14 +165,16 @@ $LISA_BIN session send --session "$PARENT" \
 
 Nested Codex exec trigger wording (auto-bypass + omit `--full-auto`):
 - `Use ./lisa for all child orchestration.`
-- `Run lisa session spawn inside the spawned agent.`
+- `Run ./lisa session spawn inside the spawned agent.`
 - `Build a nested lisa chain and report markers.`
+- `Create nested lisa inside lisa inside lisa and report.`
 
 Wording that does not trigger nested bypass:
 - `No nesting requested here.`
 
 Tip: validate trigger intent with `session spawn --dry-run --json` and inspect `command` for
 `--dangerously-bypass-approvals-and-sandbox` vs `--full-auto`.
+Matcher notes: matching is case-insensitive, and bare `lisa session spawn` still matches, but prefer `./lisa` phrasing in prompts.
 
 Explicit nested policy controls:
 
@@ -183,8 +193,10 @@ Trigger calibration sweep:
 ```bash
 for p in \
   "Use ./lisa for all child orchestration." \
-  "Run lisa session spawn inside the spawned agent." \
+  "Run ./lisa session spawn inside the spawned agent." \
   "Build a nested lisa chain and report markers." \
+  "Create nested lisa inside lisa inside lisa and report." \
+  "Run ./LISA for children." \
   "No nesting requested here."
 do
   $LISA_BIN session spawn --agent codex --mode exec --project-root . \

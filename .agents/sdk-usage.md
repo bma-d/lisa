@@ -17,10 +17,12 @@ How to use Lisa as infrastructure from an LLM orchestrator or script.
    - For deterministic completion gates, use `session monitor --until-marker "<TOKEN>"` and stop on `exitReason=marker_found` (exit `0`)
    - To avoid ambiguous success semantics, add `session monitor --expect terminal` (or `--expect marker`) so monitor fails fast when a different success condition is hit first
    - For low-token one-shot snapshots, use `session status --json-min`
+   - For low-token continuous polling, use `session monitor --json-min --stream-json` (line-delimited poll updates + final result)
 3. If state is `stuck`, send next instruction with `session send --text "..." --enter`; if state is `degraded`, retry polling and inspect `signals.*Error`
 4. Fetch artifacts with `session capture --lines N`
    - Raw capture now suppresses known Codex/MCP startup noise by default (including MCP OAuth refresh/auth-failure startup noise); use `session capture --raw --keep-noise` to keep full raw output
    - For incremental polling, use `session capture --raw --delta-from <offset|@unix|rfc3339> --json` and reuse returned `nextOffset`
+   - For compact polling payloads, use `session capture --json-min` (or `--raw --delta-from ... --json-min`)
    - Claude transcript capture now requires session metadata to include prompt + createdAt; promptless/custom-command sessions automatically fall back to raw pane capture
 5. Kill and clean up with `session kill --session NAME`
 
@@ -44,6 +46,9 @@ To validate nested wording detectors before smoke execution, use `./lisa session
 `session tree --json-min` now emits low-token machine-readable graph payloads.
 `session list --json-min` now emits low-token machine-readable list payloads.
 `session monitor --json-min` now emits low-token machine-readable fields (`session`,`finalState`,`exitReason`,`polls`).
+`session monitor --stream-json` now emits line-delimited poll events before the final monitor payload.
+`session capture --json-min` now emits compact JSON payloads for transcript/raw capture paths.
+`session preflight --json` now validates environment + parser/contract assumptions in one call.
 JSON outputs now include `stderrPolicy` so orchestrators can classify stderr as diagnostics channel.
 Session manage/name helpers now support `--json` (`session name|list|exists|kill|kill-all`).
 JSON failure paths now include machine-readable `errorCode` fields across JSON-enabled commands.

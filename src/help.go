@@ -10,28 +10,29 @@ func isHelpFlag(arg string) bool {
 }
 
 var helpFuncs = map[string]func(){
-	"":                 helpTop,
-	"doctor":           helpDoctor,
-	"cleanup":          helpCleanup,
-	"session":          helpSession,
-	"session name":     helpSessionName,
-	"session spawn":    helpSessionSpawn,
-	"session send":     helpSessionSend,
-	"session status":   helpSessionStatus,
-	"session explain":  helpSessionExplain,
-	"session monitor":  helpSessionMonitor,
-	"session capture":  helpSessionCapture,
-	"session tree":     helpSessionTree,
-	"session smoke":    helpSessionSmoke,
-	"session list":     helpSessionList,
-	"session exists":   helpSessionExists,
-	"session kill":     helpSessionKill,
-	"session kill-all": helpSessionKillAll,
-	"agent":            helpAgent,
-	"agent build-cmd":  helpAgentBuildCmd,
-	"skills":           helpSkills,
-	"skills sync":      helpSkillsSync,
-	"skills install":   helpSkillsInstall,
+	"":                  helpTop,
+	"doctor":            helpDoctor,
+	"cleanup":           helpCleanup,
+	"session":           helpSession,
+	"session name":      helpSessionName,
+	"session spawn":     helpSessionSpawn,
+	"session send":      helpSessionSend,
+	"session status":    helpSessionStatus,
+	"session explain":   helpSessionExplain,
+	"session monitor":   helpSessionMonitor,
+	"session capture":   helpSessionCapture,
+	"session tree":      helpSessionTree,
+	"session smoke":     helpSessionSmoke,
+	"session preflight": helpSessionPreflight,
+	"session list":      helpSessionList,
+	"session exists":    helpSessionExists,
+	"session kill":      helpSessionKill,
+	"session kill-all":  helpSessionKillAll,
+	"agent":             helpAgent,
+	"agent build-cmd":   helpAgentBuildCmd,
+	"skills":            helpSkills,
+	"skills sync":       helpSkillsSync,
+	"skills install":    helpSkillsInstall,
 }
 
 func showHelp(cmdPath string) int {
@@ -60,6 +61,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session capture       Capture session pane output or transcript")
 	fmt.Fprintln(os.Stderr, "  session tree          Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  session smoke         Run deterministic nested smoke test")
+	fmt.Fprintln(os.Stderr, "  session preflight     Validate env + contract assumptions")
 	fmt.Fprintln(os.Stderr, "  session list          List lisa sessions")
 	fmt.Fprintln(os.Stderr, "  session exists        Check if a session exists")
 	fmt.Fprintln(os.Stderr, "  session kill          Kill a session and clean artifacts")
@@ -106,6 +108,7 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  capture    Capture session pane output or transcript")
 	fmt.Fprintln(os.Stderr, "  tree       Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  smoke      Run deterministic nested smoke test")
+	fmt.Fprintln(os.Stderr, "  preflight  Validate env + contract assumptions")
 	fmt.Fprintln(os.Stderr, "  list       List lisa sessions")
 	fmt.Fprintln(os.Stderr, "  exists     Check if a session exists")
 	fmt.Fprintln(os.Stderr, "  kill       Kill a session and clean artifacts")
@@ -214,6 +217,7 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --expect MODE         Success expectation: any|terminal|marker (default: any)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: session/finalState/exitReason/polls")
+	fmt.Fprintln(os.Stderr, "  --stream-json         Emit line-delimited JSON poll events before final result")
 	fmt.Fprintln(os.Stderr, "  --verbose             Print poll details to stderr")
 }
 
@@ -229,6 +233,17 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "  --keep-noise          Keep Codex/MCP startup noise in pane capture")
 	fmt.Fprintln(os.Stderr, "  --strip-noise         Compatibility alias for default noise filtering")
 	fmt.Fprintln(os.Stderr, "  --lines N             Number of pane lines for raw capture (default: 200)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output for compact polling workflows")
+}
+
+func helpSessionPreflight() {
+	fmt.Fprintln(os.Stderr, "lisa session preflight — validate environment and command contracts")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session preflight [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
@@ -329,6 +344,7 @@ func helpAgentBuildCmd() {
 	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: claude)")
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Session mode: interactive|exec (default: interactive)")
 	fmt.Fprintln(os.Stderr, "  --nested-policy MODE  Nested codex bypass policy: auto|force|off (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --prompt TEXT          Prompt for the agent")
 	fmt.Fprintln(os.Stderr, "  --agent-args TEXT      Extra args passed to agent CLI")
 	fmt.Fprintln(os.Stderr, "  --no-dangerously-skip-permissions")

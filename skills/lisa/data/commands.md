@@ -3,6 +3,7 @@
 Use with `LISA_BIN=./lisa` in this repo.
 Subcommands are separate argv tokens: `./lisa session spawn ...` (not `./lisa "session spawn" ...`).
 For `--json` workflows, parse `stdout` as contract data and treat `stderr` as advisory/logging.
+Use `--project-root` across session flows (and optionally `agent build-cmd`) for deterministic root context.
 
 ## session spawn
 
@@ -33,6 +34,7 @@ Spawn notes:
 - If `--session` absent, Lisa auto-generates one.
 - Codex `exec` defaults: `--full-auto --skip-git-repo-check`.
 - Nested Codex hints (`./lisa`, `lisa session spawn`, `nested lisa`) auto-enable `--dangerously-bypass-approvals-and-sandbox` and omit `--full-auto`.
+- Nested hint matching is case-insensitive (`./LISA` still matches `./lisa`).
 - `--nested-policy force` enables nested bypass without prompt hints (omits `--full-auto`).
 - `--nested-policy off` disables prompt-based nested bypass heuristics.
 - If `--agent-args '--dangerously-bypass-approvals-and-sandbox'` is passed, Lisa omits `--full-auto` automatically.
@@ -96,6 +98,7 @@ Block until success/terminal condition per flags.
 | `--until-marker` | `""` | Stop on marker text in raw pane output |
 | `--expect` | `any` | `any`, `terminal`, `marker` (`marker` requires `--until-marker`) |
 | `--json-min` | false | Minimal JSON output (`session`,`finalState`,`exitReason`,`polls`) |
+| `--stream-json` | false | Emit line-delimited JSON poll events before final payload |
 | `--verbose` | false | Progress details to stderr |
 | `--json` | false | JSON output |
 
@@ -108,6 +111,7 @@ Monitor nuance:
 - Timeout returns `finalState:"timeout"`, `exitReason:"max_polls_exceeded"`, `finalStatus:"timeout"`.
 - `marker_found` is success, often before terminal completion (`in_progress`/`active`).
 - `--waiting-requires-turn-complete true` can timeout whenever turn-complete cannot be inferred (common in Codex/non-transcript flows).
+- `--stream-json` emits one JSON poll object per loop (`type:"poll"`), then emits the standard final monitor payload.
 - `--expect terminal` on marker/waiting success returns `expected_terminal_got_*` (exit `2`).
 - `--expect marker` when marker is not first success returns `expected_marker_got_*` (exit `2`).
 - `--expect marker` without `--until-marker` is a usage error (exit `1`).
@@ -129,6 +133,7 @@ Capture transcript (default for Claude) or raw pane output.
 | `--keep-noise` | false | Keep Codex/MCP startup noise |
 | `--strip-noise` | n/a | Compatibility alias for default filtering |
 | `--project-root` | cwd | Project directory |
+| `--json-min` | false | Minimal JSON output for compact polling workflows |
 | `--json` | false | JSON output |
 
 Capture behavior:
@@ -139,11 +144,13 @@ Capture behavior:
 - Delta capture (`--delta-from`) supports:
   - offset mode: integer byte offset into current capture
   - timestamp mode: `@unix` or RFC3339; returns full capture only if output changed after timestamp
-  - JSON includes `deltaMode` + `nextOffset` for iterative polling
+  - JSON includes `deltaMode` + `nextOffset` for iterative polling (fields appear when `--delta-from` is provided)
 
 JSON:
 - transcript: `{"session","claudeSession","messages":[{"role","text","timestamp"}]}`
 - raw: `{"session","capture"}`
+- transcript `--json-min`: `{"session","claudeSession","messageCount","capture"}`
+- raw `--json-min`: `{"session","capture"}` (+`nextOffset` when `--delta-from` is set)
 
 ## session explain
 
@@ -204,6 +211,17 @@ Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|
 Behavior: uses nested `session spawn/monitor/capture`, asserts all level markers, non-zero exit on spawn/monitor/marker failure.
 `--prompt-style` adds a pre-smoke dry-run probe that validates nested wording detection.
 
+## session preflight
+
+Validate environment + contract assumptions in one command.
+
+Flags: `--project-root`, `--json`.
+
+Behavior:
+- Runs doctor-equivalent environment checks (`tmux`, `claude`, `codex`).
+- Validates parser/contract assumptions (mode aliases, monitor marker guard, capture delta parsing, nested codex hint routing).
+- Exit `0` when both environment + contracts are ready; otherwise exit `1`.
+
 ## cleanup
 
 Clean detached tmux servers and stale socket files from Lisa runs.
@@ -223,7 +241,7 @@ Non-JSON output: one-line summary. Exit `1` if any probe/kill/remove errors occu
 | Command | Purpose |
 |---|---|
 | `doctor [--json]` | Check prerequisites (tmux + at least one of claude/codex). Exit 0=ok, 1=missing |
-| `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--nested-policy`, `--prompt`, `--agent-args`, `--no-dangerously-skip-permissions`, `--json`) |
+| `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--nested-policy`, `--project-root`, `--prompt`, `--agent-args`, `--no-dangerously-skip-permissions`, `--json`) |
 | `skills sync` | Sync external skill into repo `skills/lisa` (`--json`: `{"source","destination","files","directories","symlinks"}`) |
 | `skills install` | Install repo `skills/lisa` to `codex`, `claude`, or `project` (`--json`: `{"source","destination","files","directories","symlinks"}`) |
 | `version` | Print build version (`version`, `--version`, `-v`) |
@@ -239,9 +257,11 @@ Aliases `execution` and `non-interactive` map to `exec`.
 
 ## JSON Surface
 
-`--json` exists on: `doctor`, `cleanup`, `agent build-cmd`, `skills sync`, `skills install`, `session name|spawn|send|status|explain|monitor|capture|tree|smoke|list|exists|kill|kill-all`.
+`--json` exists on: `doctor`, `cleanup`, `agent build-cmd`, `skills sync`, `skills install`, `session name|spawn|send|status|explain|monitor|capture|tree|smoke|preflight|list|exists|kill|kill-all`.
 
 JSON error contract:
 - command/runtime failures emit `{"ok":false,"errorCode":"...","error":"..."}` when `--json` is enabled.
 - state/result payload failures also include `errorCode` on non-success paths.
 - JSON payloads include `stderrPolicy` so callers can treat stderr as diagnostics channel.
+
+`agent build-cmd --json` also returns `nestedDetection` for Codex nesting diagnostics.

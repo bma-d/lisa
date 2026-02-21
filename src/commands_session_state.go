@@ -11,6 +11,8 @@ import (
 
 var computeSessionStatusFn = computeSessionStatus
 var monitorWaitingTurnCompleteFn = monitorWaitingTurnComplete
+var captureSessionTranscriptFn = captureSessionTranscript
+var shouldUseTranscriptCaptureFn = shouldUseTranscriptCapture
 
 type waitingTurnCompleteResult struct {
 	Ready        bool
@@ -23,6 +25,17 @@ type monitorResultMin struct {
 	FinalState string `json:"finalState"`
 	ExitReason string `json:"exitReason"`
 	Polls      int    `json:"polls"`
+}
+
+type monitorStreamPollMin struct {
+	Type         string `json:"type"`
+	Poll         int    `json:"poll"`
+	Session      string `json:"session"`
+	Status       string `json:"status"`
+	SessionState string `json:"sessionState"`
+	TodosDone    int    `json:"todosDone"`
+	TodosTotal   int    `json:"todosTotal"`
+	WaitEstimate int    `json:"waitEstimate"`
 }
 
 type sessionStatusMin struct {
@@ -137,6 +150,35 @@ func writeMonitorJSON(result monitorResult, jsonMin bool, errorCode string) {
 	writeJSON(payload)
 }
 
+func writeMonitorStreamPoll(status sessionStatus, poll int, jsonMin bool) {
+	if jsonMin {
+		minPayload := monitorStreamPollMin{
+			Type:         "poll",
+			Poll:         poll,
+			Session:      status.Session,
+			Status:       normalizeMonitorFinalStatus(status.SessionState, status.Status),
+			SessionState: status.SessionState,
+			TodosDone:    status.TodosDone,
+			TodosTotal:   status.TodosTotal,
+			WaitEstimate: status.WaitEstimate,
+		}
+		writeJSON(minPayload)
+		return
+	}
+	writeJSON(map[string]any{
+		"type":                 "poll",
+		"poll":                 poll,
+		"session":              status.Session,
+		"status":               normalizeMonitorFinalStatus(status.SessionState, status.Status),
+		"sessionState":         status.SessionState,
+		"activeTask":           status.ActiveTask,
+		"waitEstimate":         status.WaitEstimate,
+		"todosDone":            status.TodosDone,
+		"todosTotal":           status.TodosTotal,
+		"classificationReason": status.ClassificationReason,
+	})
+}
+
 func normalizeMonitorFinalStatus(finalState, finalStatus string) string {
 	switch finalState {
 	case "completed", "crashed", "stuck", "not_found":
@@ -144,6 +186,13 @@ func normalizeMonitorFinalStatus(finalState, finalStatus string) string {
 	default:
 		return finalStatus
 	}
+}
+
+func validateMonitorExpectationConfig(expect, untilMarker string) error {
+	if expect == "marker" && strings.TrimSpace(untilMarker) == "" {
+		return fmt.Errorf("--expect marker requires --until-marker")
+	}
+	return nil
 }
 
 func cmdSessionStatus(args []string) int {
@@ -299,6 +348,7 @@ func cmdSessionMonitor(args []string) int {
 	untilMarkerSet := false
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
+	streamJSON := false
 	verbose := false
 
 	for i := 0; i < len(args); i++ {
@@ -392,6 +442,9 @@ func cmdSessionMonitor(args []string) int {
 		case "--json-min":
 			jsonMin = true
 			jsonOut = true
+		case "--stream-json":
+			streamJSON = true
+			jsonOut = true
 		case "--verbose":
 			verbose = true
 		default:
@@ -405,8 +458,8 @@ func cmdSessionMonitor(args []string) int {
 	if untilMarkerSet && untilMarker == "" {
 		return commandError(jsonOut, "invalid_until_marker", "invalid --until-marker: cannot be empty")
 	}
-	if expect == "marker" && untilMarker == "" {
-		return commandError(jsonOut, "expect_marker_requires_until_marker", "--expect marker requires --until-marker")
+	if err := validateMonitorExpectationConfig(expect, untilMarker); err != nil {
+		return commandError(jsonOut, "expect_marker_requires_until_marker", err.Error())
 	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
@@ -436,6 +489,9 @@ func cmdSessionMonitor(args []string) int {
 			displayStatus := normalizeMonitorFinalStatus(status.SessionState, status.Status)
 			fmt.Fprintf(os.Stderr, "[%s] poll=%d state=%s status=%s active=%q wait=%ds\n",
 				time.Now().Format("15:04:05"), poll, status.SessionState, displayStatus, status.ActiveTask, status.WaitEstimate)
+		}
+		if streamJSON {
+			writeMonitorStreamPoll(status, poll, jsonMin)
 		}
 
 		reason := ""
@@ -711,6 +767,7 @@ func cmdSessionCapture(args []string) int {
 	session := ""
 	lines := 200
 	jsonOut := hasJSONFlag(args)
+	jsonMin := false
 	raw := false
 	deltaFrom := ""
 	stripNoise := true
@@ -757,6 +814,9 @@ func cmdSessionCapture(args []string) int {
 			i++
 		case "--json":
 			jsonOut = true
+		case "--json-min":
+			jsonMin = true
+			jsonOut = true
 		default:
 			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
@@ -780,10 +840,10 @@ func cmdSessionCapture(args []string) int {
 		}
 	}
 
-	if !raw && shouldUseTranscriptCapture(session, transcriptProjectRoot) {
-		sessionID, messages, err := captureSessionTranscript(session, transcriptProjectRoot)
+	if !raw && shouldUseTranscriptCaptureFn(session, transcriptProjectRoot) {
+		sessionID, messages, err := captureSessionTranscriptFn(session, transcriptProjectRoot)
 		if err == nil {
-			return writeTranscriptCapture(session, sessionID, messages, jsonOut)
+			return writeTranscriptCapture(session, sessionID, messages, jsonOut, jsonMin)
 		}
 	}
 
@@ -820,13 +880,12 @@ func cmdSessionCapture(args []string) int {
 	}
 
 	if jsonOut {
-		payload := map[string]any{
-			"session": session,
-			"capture": capture,
-		}
+		payload := map[string]any{"session": session, "capture": capture}
 		if deltaFrom != "" {
-			payload["deltaFrom"] = deltaFrom
-			payload["deltaMode"] = deltaMode
+			if !jsonMin {
+				payload["deltaFrom"] = deltaFrom
+				payload["deltaMode"] = deltaMode
+			}
 			payload["nextOffset"] = nextOffset
 		}
 		writeJSON(payload)

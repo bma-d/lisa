@@ -373,8 +373,17 @@ func formatTranscriptPlain(messages []transcriptMessage) string {
 	return sb.String()
 }
 
-func writeTranscriptCapture(session, sessionID string, messages []transcriptMessage, jsonOut bool) int {
+func writeTranscriptCapture(session, sessionID string, messages []transcriptMessage, jsonOut, jsonMin bool) int {
 	if jsonOut {
+		if jsonMin {
+			writeJSON(map[string]any{
+				"session":       session,
+				"claudeSession": sessionID,
+				"messageCount":  len(messages),
+				"capture":       formatTranscriptPlain(messages),
+			})
+			return 0
+		}
 		writeJSON(map[string]any{
 			"session":       session,
 			"claudeSession": sessionID,
@@ -429,5 +438,5 @@ func cmdSessionCaptureTranscript(session, projectRoot string, jsonOut bool) int 
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
-	return writeTranscriptCapture(session, sessionID, messages, jsonOut)
+	return writeTranscriptCapture(session, sessionID, messages, jsonOut, false)
 }

@@ -56,6 +56,7 @@ Canonical CLI usage reference lives in [`USAGE.md`](./USAGE.md).
 
 ```bash
 lisa doctor                # verify setup
+lisa session preflight --json  # verify env + core command contracts
 lisa cleanup --dry-run     # inspect stale socket residue
 lisa skills sync --from codex   # sync ~/.codex/skills/lisa into repo skills/lisa
 lisa version               # print version
@@ -75,4 +76,6 @@ Run deterministic 3-level nested tmux orchestration smoke test (interactive mode
 ./smoke-nested
 # or built-in command (supports 1-4 levels)
 ./lisa session smoke --levels 4 --json
+# include nested wording probe:
+./lisa session smoke --levels 4 --prompt-style dot-slash --json
 ```
