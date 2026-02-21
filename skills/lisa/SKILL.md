@@ -13,10 +13,10 @@ Axiom: load minimal context first, then route to one targeted data file.
 
 ## Always-Load Rules
 
-1. In this repo, run `./lisa` (not `lisa`) to avoid PATH/version drift.
-2. Use real subcommands: `./lisa session spawn ...` (not `"session spawn"` as one token).
+1. Resolve binary once per run: use `./lisa` if present/executable; otherwise use `lisa` from `PATH`.
+2. Use real subcommands: `$LISA_BIN session spawn ...` (not `"session spawn"` as one token).
 3. In multi-step or nested flows, always pass `--project-root` on `session *` and `cleanup` commands so socket/hash routing stays consistent.
-4. Use `./lisa cleanup --include-tmux-default` only when explicitly requested.
+4. Use `$LISA_BIN cleanup --include-tmux-default` only when explicitly requested.
 5. In `--json` mode, parse `stdout`; use `stderrPolicy` in payload to classify stderr as diagnostic stream.
 
 ## LLM Guardrails (Validated 2026-02-21)
@@ -41,7 +41,7 @@ Axiom: load minimal context first, then route to one targeted data file.
 
 ```bash
 brew install bma-d/tap/lisa   # or: go install github.com/bma-d/lisa@latest
-LISA_BIN=./lisa
+[ -x ./lisa ] && LISA_BIN=./lisa || LISA_BIN=lisa
 $LISA_BIN doctor
 ```
 
@@ -59,7 +59,7 @@ Load only the referenced file(s); do not bulk-load all `data/*.md` unless task s
 
 ```bash
 ROOT=/path/to/project
-LISA_BIN=./lisa
+[ -x ./lisa ] && LISA_BIN=./lisa || LISA_BIN=lisa
 
 SESSION=$($LISA_BIN session spawn \
   --agent codex --mode interactive \
@@ -97,7 +97,7 @@ if finishing_runbook: cleanup --dry-run, then cleanup
 
 ```bash
 ROOT="$(pwd)"
-LISA_BIN=./lisa
+[ -x ./lisa ] && LISA_BIN=./lisa || LISA_BIN=lisa
 
 # Fast contract checks
 $LISA_BIN session preflight --json
@@ -106,7 +106,7 @@ $LISA_BIN session smoke --help
 
 # Nested wording probes (dry-run, no sessions created)
 for p in \
-  "Use ./lisa session spawn for child workers" \
+  "Use lisa session spawn for child workers" \
   "Create nested lisa inside lisa inside lisa and report" \
   "Run ./LISA for children" \
   "No nesting requested here."

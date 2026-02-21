@@ -1,6 +1,6 @@
 # Lisa Recipes
 
-Use `LISA_BIN=./lisa` in this repo.
+Resolve binary first: `[ -x ./lisa ] && LISA_BIN=./lisa || LISA_BIN=lisa`.
 
 ## Core Pattern
 
@@ -148,7 +148,7 @@ Safety: prefer `cleanup --dry-run` first in shared tmux environments.
 PARENT=$($LISA_BIN session spawn --agent codex --mode interactive \
   --project-root . \
   --nested-policy auto \
-  --prompt "Use ./lisa only. Spawn 2 exec workers, monitor both, then summarize findings." \
+  --prompt "Use lisa only. Spawn 2 exec workers, monitor both, then summarize findings." \
   --detect-nested \
   --json | jq -r .session)
 
@@ -159,13 +159,13 @@ $LISA_BIN session monitor --session "$PARENT" --project-root . \
   --stop-on-waiting true --waiting-requires-turn-complete true --json
 
 $LISA_BIN session send --session "$PARENT" \
-  --text "If incomplete, run ./lisa session list --project-root . and continue." \
+  --text "If incomplete, run lisa session list --project-root . and continue." \
   --enter
 ```
 
 Nested Codex exec trigger wording (auto-bypass + omit `--full-auto`):
-- `Use ./lisa for all child orchestration.`
-- `Run ./lisa session spawn inside the spawned agent.`
+- `Use lisa for all child orchestration.`
+- `Run lisa session spawn inside the spawned agent.`
 - `Build a nested lisa chain and report markers.`
 - `Create nested lisa inside lisa inside lisa and report.`
 
@@ -174,7 +174,7 @@ Wording that does not trigger nested bypass:
 
 Tip: validate trigger intent with `session spawn --dry-run --json` and inspect `command` for
 `--dangerously-bypass-approvals-and-sandbox` vs `--full-auto`.
-Matcher notes: matching is case-insensitive, and bare `lisa session spawn` still matches, but prefer `./lisa` phrasing in prompts.
+Matcher notes: matching is case-insensitive; both `lisa session spawn` and `./lisa` hints match.
 
 Explicit nested policy controls:
 
@@ -185,15 +185,15 @@ $LISA_BIN session spawn --agent codex --mode exec --nested-policy force \
 
 # disable prompt-triggered bypass
 $LISA_BIN session spawn --agent codex --mode exec --nested-policy off \
-  --prompt "Use ./lisa for child orchestration." --dry-run --detect-nested --json
+  --prompt "Use lisa for child orchestration." --dry-run --detect-nested --json
 ```
 
 Trigger calibration sweep:
 
 ```bash
 for p in \
-  "Use ./lisa for all child orchestration." \
-  "Run ./lisa session spawn inside the spawned agent." \
+  "Use lisa for all child orchestration." \
+  "Run lisa session spawn inside the spawned agent." \
   "Build a nested lisa chain and report markers." \
   "Create nested lisa inside lisa inside lisa and report." \
   "Run ./LISA for children." \
@@ -207,18 +207,18 @@ done
 Deterministic nested validation:
 
 ```bash
-./lisa session smoke --project-root "$(pwd)" --levels 4 --json
+$LISA_BIN session smoke --project-root "$(pwd)" --levels 4 --json
 ./smoke-nested --project-root "$(pwd)" --max-polls 120
 
 # include nested wording probe in smoke summary
-./lisa session smoke --project-root "$(pwd)" --levels 4 --prompt-style dot-slash --json
+$LISA_BIN session smoke --project-root "$(pwd)" --levels 4 --prompt-style dot-slash --json
 ```
 
 Four-level matrix (quick confidence loop):
 
 ```bash
 for L in 1 2 3 4; do
-  ./lisa session smoke --project-root "$(pwd)" --levels "$L" --json
+  $LISA_BIN session smoke --project-root "$(pwd)" --levels "$L" --json
 done
 ```
 
@@ -227,7 +227,7 @@ done
 ```bash
 ROOT="$(pwd)"
 PARENT=$($LISA_BIN session spawn --agent codex --mode exec --project-root "$ROOT" \
-  --prompt "Use ./lisa only. Spawn one child codex exec session that asks that child to spawn one grandchild codex exec session. In each level emit markers N1_OK, N2_OK, N3_OK into output and finish." \
+  --prompt "Use lisa only. Spawn one child codex exec session that asks that child to spawn one grandchild codex exec session. In each level emit markers N1_OK, N2_OK, N3_OK into output and finish." \
   --json | jq -r .session)
 
 $LISA_BIN session monitor --session "$PARENT" --project-root "$ROOT" \

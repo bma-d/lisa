@@ -1,7 +1,7 @@
 # Lisa Commands
 
-Use with `LISA_BIN=./lisa` in this repo.
-Subcommands are separate argv tokens: `./lisa session spawn ...` (not `./lisa "session spawn" ...`).
+Resolve binary first: `[ -x ./lisa ] && LISA_BIN=./lisa || LISA_BIN=lisa`.
+Subcommands are separate argv tokens: `$LISA_BIN session spawn ...` (not `$LISA_BIN "session spawn" ...`).
 For `--json` workflows, parse `stdout` as contract data and treat `stderr` as advisory/logging.
 Use `--project-root` across session flows (and optionally `agent build-cmd`) for deterministic root context.
 

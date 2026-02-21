@@ -95,7 +95,7 @@ Lifecycle:
 - Raw capture `--delta-from` supports offset/timestamp incremental fetch; JSON responses include `nextOffset` for polling loops.
 - `session exists` supports `--project-root` for cross-root checks.
 - `session tree` reads metadata graph and may include historical roots; use `session list` for active-only views.
-- Nested runs should always pass `--project-root` and prefer `./lisa` in prompts.
+- Nested runs should always pass `--project-root`; use `lisa` in prompts by default and `./lisa` when repo-local binary is known to exist.
 - Use `--nested-policy force|off` to avoid prompt-heuristic ambiguity in Codex exec nesting.
 - JSON payloads include `stderrPolicy` so orchestrators can classify stderr as diagnostics channel.
 - After nested runs, perform cleanup (`cleanup --dry-run` first in shared environments).
