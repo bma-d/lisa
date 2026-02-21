@@ -23,6 +23,8 @@ go build -o lisa .
 ./lisa version
 ```
 
+If you run from repo source, rebuild `./lisa` after code changes before validating CLI behavior.
+
 Install options are also listed in `README.md` (Homebrew, `go install`, release archives/packages).
 
 ## Command Map
@@ -31,6 +33,7 @@ Install options are also listed in `README.md` (Homebrew, `go install`, release 
 lisa doctor
 lisa cleanup
 lisa version
+lisa capabilities
 lisa session name
 lisa session spawn
 lisa session send
@@ -138,6 +141,19 @@ Behavior:
 - Reachable sockets with active clients are kept.
 - `--dry-run` reports `wouldKillServers` / `wouldRemove` without mutation.
 - Any probe/kill/remove failures print per-socket errors to stderr and exit `1`.
+
+### `capabilities`
+
+Describe current CLI command/flag support for orchestration clients.
+
+```bash
+lisa capabilities
+lisa capabilities --json
+```
+
+Flags:
+
+- `--json`: JSON output including build metadata and command+flag matrix
 
 ### `skills sync`
 

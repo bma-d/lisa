@@ -42,7 +42,7 @@ lisa/
 - Zero external deps — stdlib only for portability
 - Function variable pattern for test mocking (`var tmuxFooFn = tmuxFoo`)
 - Hand-rolled flag parsing (no flag library)
-- Machine-readable `--json` is available on `doctor`, `agent build-cmd`, and all major session commands (`name|spawn|send|status|explain|monitor|capture|tree|smoke|list|exists|kill|kill-all`)
+- Machine-readable `--json` is available on `doctor`, `capabilities`, `agent build-cmd`, and all major session commands (`name|spawn|send|status|explain|monitor|capture|tree|smoke|list|exists|kill|kill-all`)
 - Session artifacts in `/tmp/` keyed by project hash
 - `skills` command manages bidirectional Lisa skill sync/install (`skills sync`, `skills install`)
 - Release artifacts and package-manager distribution are handled via GoReleaser (Homebrew, deb/rpm/apk, archives)

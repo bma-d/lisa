@@ -26,7 +26,7 @@ Reference syntax: `@path/file.md`
 
 **Lisa** — standalone Go CLI for orchestrating Claude/Codex AI agent sessions inside tmux. Zero external dependencies. Infrastructure for LLM orchestrators that manage concurrent AI workers.
 
-Commands: `doctor` | `session {name,spawn,send,status,explain,monitor,capture,tree,smoke,list,exists,kill,kill-all}` | `agent build-cmd` | `skills {sync,install}`
+Commands: `doctor` | `capabilities` | `session {name,spawn,send,status,explain,monitor,capture,tree,smoke,list,exists,kill,kill-all}` | `agent build-cmd` | `skills {sync,install}`
 
 ## Context Files
 
