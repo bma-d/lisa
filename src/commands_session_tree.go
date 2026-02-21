@@ -43,6 +43,7 @@ func cmdSessionTree(args []string) int {
 	activeOnly := false
 	flat := false
 	jsonOut := hasJSONFlag(args)
+	jsonMin := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -67,6 +68,9 @@ func cmdSessionTree(args []string) int {
 		case "--flat":
 			flat = true
 		case "--json":
+			jsonOut = true
+		case "--json-min":
+			jsonMin = true
 			jsonOut = true
 		default:
 			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
@@ -136,6 +140,18 @@ func cmdSessionTree(args []string) int {
 	}
 
 	if jsonOut {
+		if jsonMin {
+			payload := map[string]any{
+				"nodeCount": result.NodeCount,
+			}
+			if flat {
+				payload["rows"] = flattenSessionTreeRowsMin(result.Rows)
+			} else {
+				payload["roots"] = minimizeSessionTreeRoots(result.Roots)
+			}
+			writeJSON(payload)
+			return 0
+		}
 		writeJSON(result)
 		return 0
 	}
@@ -158,6 +174,45 @@ func cmdSessionTree(args []string) int {
 		printSessionTreeNode(root, "")
 	}
 	return 0
+}
+
+func flattenSessionTreeRowsMin(rows []sessionTreeRow) []map[string]any {
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		item := map[string]any{
+			"session": row.Session,
+		}
+		if strings.TrimSpace(row.ParentSession) != "" {
+			item["parentSession"] = row.ParentSession
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func minimizeSessionTreeRoots(roots []sessionTreeNode) []map[string]any {
+	out := make([]map[string]any, 0, len(roots))
+	for _, root := range roots {
+		out = append(out, minimizeSessionTreeNode(root))
+	}
+	return out
+}
+
+func minimizeSessionTreeNode(node sessionTreeNode) map[string]any {
+	item := map[string]any{
+		"session": node.Session,
+	}
+	if strings.TrimSpace(node.ParentSession) != "" {
+		item["parentSession"] = node.ParentSession
+	}
+	if len(node.Children) > 0 {
+		children := make([]map[string]any, 0, len(node.Children))
+		for _, child := range node.Children {
+			children = append(children, minimizeSessionTreeNode(child))
+		}
+		item["children"] = children
+	}
+	return item
 }
 
 func filterActiveTreeMetas(defaultProjectRoot string, metas []sessionMeta) []sessionMeta {

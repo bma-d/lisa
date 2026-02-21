@@ -12,6 +12,7 @@ func cmdSessionList(args []string) int {
 	allSockets := false
 	projectRoot := getPWD()
 	jsonOut := hasJSONFlag(args)
+	jsonMin := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -28,6 +29,9 @@ func cmdSessionList(args []string) int {
 			projectRoot = args[i+1]
 			i++
 		case "--json":
+			jsonOut = true
+		case "--json-min":
+			jsonMin = true
 			jsonOut = true
 		default:
 			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
@@ -48,13 +52,16 @@ func cmdSessionList(args []string) int {
 		return commandErrorf(jsonOut, "session_list_failed", "failed to list sessions: %v", err)
 	}
 	if jsonOut {
-		writeJSON(map[string]any{
-			"sessions":    list,
-			"count":       len(list),
-			"projectOnly": projectOnly,
-			"allSockets":  allSockets,
-			"projectRoot": projectRoot,
-		})
+		payload := map[string]any{
+			"sessions": list,
+			"count":    len(list),
+		}
+		if !jsonMin {
+			payload["projectOnly"] = projectOnly
+			payload["allSockets"] = allSockets
+			payload["projectRoot"] = projectRoot
+		}
+		writeJSON(payload)
 		return 0
 	}
 	fmt.Println(strings.Join(list, "\n"))
@@ -228,7 +235,9 @@ func cmdSessionKill(args []string) int {
 
 		if !tmuxHasSessionFn(target) {
 			if isRoot {
-				fmt.Fprintln(os.Stderr, "session not found")
+				if !jsonOut {
+					fmt.Fprintln(os.Stderr, "session not found")
+				}
 			}
 			if err := cleanupSessionArtifactsWithOptions(projectRoot, target, cleanupOpts); err != nil {
 				errs = append(errs, fmt.Sprintf("%s cleanup: %v", target, err))
@@ -276,8 +285,10 @@ func cmdSessionKill(args []string) int {
 				"projectRoot": projectRoot,
 			})
 		}
-		for _, e := range errs {
-			fmt.Fprintln(os.Stderr, e)
+		if !jsonOut {
+			for _, e := range errs {
+				fmt.Fprintln(os.Stderr, e)
+			}
 		}
 		return 1
 	}
@@ -293,8 +304,10 @@ func cmdSessionKill(args []string) int {
 				"projectRoot": projectRoot,
 			})
 		}
-		for _, e := range errs {
-			fmt.Fprintln(os.Stderr, e)
+		if !jsonOut {
+			for _, e := range errs {
+				fmt.Fprintln(os.Stderr, e)
+			}
 		}
 		return 1
 	}
@@ -387,9 +400,11 @@ func cmdSessionKillAll(args []string) int {
 				"errorCode":   "session_kill_all_failed",
 			})
 		}
-		fmt.Fprintf(os.Stderr, "killed %d/%d sessions\n", killed, len(sessions))
-		for _, e := range errs {
-			fmt.Fprintln(os.Stderr, e)
+		if !jsonOut {
+			fmt.Fprintf(os.Stderr, "killed %d/%d sessions\n", killed, len(sessions))
+			for _, e := range errs {
+				fmt.Fprintln(os.Stderr, e)
+			}
 		}
 		return 1
 	}

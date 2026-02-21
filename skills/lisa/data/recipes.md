@@ -72,6 +72,11 @@ $LISA_BIN session capture --session "$S" --raw --lines 200 --json
 
 # Raw pane with startup noise/chrome
 $LISA_BIN session capture --session "$S" --raw --keep-noise --lines 200 --json
+
+# Low-token incremental raw capture (offset polling)
+$LISA_BIN session capture --session "$S" --raw --delta-from 0 --json
+# use returned nextOffset for subsequent polls
+$LISA_BIN session capture --session "$S" --raw --delta-from "$NEXT_OFFSET" --json
 ```
 
 Transcript resolution path:
@@ -93,6 +98,9 @@ $LISA_BIN session send --session "$S" --keys "Escape"
 ```bash
 # one-shot CSV
 $LISA_BIN session status --session "$S" --project-root .
+
+# low-token status snapshot
+$LISA_BIN session status --session "$S" --project-root . --json-min
 
 # deep diagnostics
 $LISA_BIN session explain --session "$S" --project-root . --events 20
@@ -131,6 +139,7 @@ Safety: prefer `cleanup --dry-run` first in shared tmux environments.
 ```bash
 PARENT=$($LISA_BIN session spawn --agent codex --mode interactive \
   --project-root . \
+  --nested-policy auto \
   --prompt "Use ./lisa only. Spawn 2 exec workers, monitor both, then summarize findings." \
   --detect-nested \
   --json | jq -r .session)
@@ -157,11 +166,48 @@ Wording that does not trigger nested bypass:
 Tip: validate trigger intent with `session spawn --dry-run --json` and inspect `command` for
 `--dangerously-bypass-approvals-and-sandbox` vs `--full-auto`.
 
+Explicit nested policy controls:
+
+```bash
+# force bypass even when prompt has no nesting hint
+$LISA_BIN session spawn --agent codex --mode exec --nested-policy force \
+  --prompt "No nesting requested here." --dry-run --detect-nested --json
+
+# disable prompt-triggered bypass
+$LISA_BIN session spawn --agent codex --mode exec --nested-policy off \
+  --prompt "Use ./lisa for child orchestration." --dry-run --detect-nested --json
+```
+
+Trigger calibration sweep:
+
+```bash
+for p in \
+  "Use ./lisa for all child orchestration." \
+  "Run lisa session spawn inside the spawned agent." \
+  "Build a nested lisa chain and report markers." \
+  "No nesting requested here."
+do
+  $LISA_BIN session spawn --agent codex --mode exec --project-root . \
+    --prompt "$p" --dry-run --detect-nested --json | jq --arg prompt "$p" '{prompt:$prompt,command,nestedDetection}'
+done
+```
+
 Deterministic nested validation:
 
 ```bash
 ./lisa session smoke --project-root "$(pwd)" --levels 4 --json
 ./smoke-nested --project-root "$(pwd)" --max-polls 120
+
+# include nested wording probe in smoke summary
+./lisa session smoke --project-root "$(pwd)" --levels 4 --prompt-style dot-slash --json
+```
+
+Four-level matrix (quick confidence loop):
+
+```bash
+for L in 1 2 3 4; do
+  ./lisa session smoke --project-root "$(pwd)" --levels "$L" --json
+done
 ```
 
 ## Creative Nested Chain (Parent -> Child -> Grandchild)
@@ -178,3 +224,7 @@ $LISA_BIN session monitor --session "$PARENT" --project-root "$ROOT" \
 $LISA_BIN session capture --session "$PARENT" --project-root "$ROOT" --raw --lines 260 --json
 $LISA_BIN session tree --project-root "$ROOT" --active-only --json
 ```
+
+JSON parsing hygiene:
+- parse JSON from `stdout` only
+- use `stderrPolicy` in payload to classify stderr as diagnostics channel

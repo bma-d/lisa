@@ -127,6 +127,7 @@ func cmdSessionName(args []string) int {
 func cmdSessionSpawn(args []string) int {
 	agent := "claude"
 	mode := "interactive"
+	nestedPolicy := "auto"
 	projectRoot := getPWD()
 	session := ""
 	prompt := ""
@@ -155,6 +156,12 @@ func cmdSessionSpawn(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --mode")
 			}
 			mode = args[i+1]
+			i++
+		case "--nested-policy":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --nested-policy")
+			}
+			nestedPolicy = args[i+1]
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
@@ -230,6 +237,10 @@ func cmdSessionSpawn(args []string) int {
 	if err != nil {
 		return commandError(jsonOut, "invalid_mode", err.Error())
 	}
+	nestedPolicy, err = parseNestedPolicy(nestedPolicy)
+	if err != nil {
+		return commandError(jsonOut, "invalid_nested_policy", err.Error())
+	}
 	projectRoot = canonicalProjectRoot(projectRoot)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
@@ -253,11 +264,12 @@ func cmdSessionSpawn(args []string) int {
 			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 		}
 	}
-	nestedDetection := detectNestedCodexBypass(agent, mode, prompt, agentArgs)
+	nestedDetection, adjustedArgs, nestedErr := applyNestedPolicyToAgentArgs(agent, mode, prompt, agentArgs, nestedPolicy)
+	if nestedErr != nil {
+		return commandError(jsonOut, "invalid_nested_policy_combination", nestedErr.Error())
+	}
+	agentArgs = adjustedArgs
 	if command == "" {
-		if nestedDetection.AutoBypass {
-			agentArgs = strings.TrimSpace(agentArgs + " --dangerously-bypass-approvals-and-sandbox")
-		}
 		command, err = buildAgentCommandWithOptions(agent, mode, prompt, agentArgs, skipPermissions)
 		if err != nil {
 			emitSpawnFailureEvent("spawn_command_build_error")
@@ -283,6 +295,7 @@ func cmdSessionSpawn(args []string) int {
 			"session":        session,
 			"agent":          agent,
 			"mode":           mode,
+			"nestedPolicy":   nestedPolicy,
 			"runId":          runID,
 			"projectRoot":    projectRoot,
 			"command":        command,
@@ -371,12 +384,13 @@ func cmdSessionSpawn(args []string) int {
 
 	if jsonOut {
 		payload := map[string]any{
-			"session":     session,
-			"agent":       agent,
-			"mode":        mode,
-			"runId":       runID,
-			"projectRoot": projectRoot,
-			"command":     command,
+			"session":      session,
+			"agent":        agent,
+			"mode":         mode,
+			"nestedPolicy": nestedPolicy,
+			"runId":        runID,
+			"projectRoot":  projectRoot,
+			"command":      command,
 		}
 		if detectNested {
 			payload["nestedDetection"] = nestedDetection
@@ -413,6 +427,7 @@ func parentSessionFromEnv(currentSession string) string {
 
 type nestedCodexDetection struct {
 	Eligible          bool   `json:"eligible"`
+	NestedPolicy      string `json:"nestedPolicy,omitempty"`
 	AutoBypass        bool   `json:"autoBypass"`
 	Reason            string `json:"reason"`
 	MatchedHint       string `json:"matchedHint,omitempty"`
@@ -457,6 +472,57 @@ func detectNestedCodexBypass(agent, mode, prompt, agentArgs string) nestedCodexD
 		detection.Reason = "prompt_contains_nested_lisa"
 	}
 	return detection
+}
+
+func parseNestedPolicy(policy string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "", "auto":
+		return "auto", nil
+	case "force":
+		return "force", nil
+	case "off":
+		return "off", nil
+	default:
+		return "", fmt.Errorf("invalid --nested-policy: %s (expected auto|force|off)", policy)
+	}
+}
+
+func applyNestedPolicyToAgentArgs(agent, mode, prompt, agentArgs, nestedPolicy string) (nestedCodexDetection, string, error) {
+	detection := detectNestedCodexBypass(agent, mode, prompt, agentArgs)
+	detection.NestedPolicy = nestedPolicy
+
+	switch nestedPolicy {
+	case "auto":
+		if detection.AutoBypass {
+			agentArgs = strings.TrimSpace(agentArgs + " --dangerously-bypass-approvals-and-sandbox")
+		}
+		return detection, agentArgs, nil
+	case "off":
+		if detection.Eligible && !detection.HasBypassArg {
+			detection.AutoBypass = false
+			detection.MatchedHint = ""
+			detection.Reason = "nested_policy_off"
+		}
+		return detection, agentArgs, nil
+	case "force":
+		if !detection.Eligible {
+			detection.AutoBypass = false
+			detection.Reason = "nested_policy_force_not_applicable"
+			return detection, agentArgs, nil
+		}
+		if detection.HasFullAutoArg && !detection.HasBypassArg {
+			return detection, agentArgs, fmt.Errorf("invalid --nested-policy force with --agent-args --full-auto: codex exec bypass cannot be combined with full-auto")
+		}
+		detection.AutoBypass = true
+		detection.MatchedHint = "nested-policy:force"
+		detection.Reason = "nested_policy_force"
+		if !detection.HasBypassArg {
+			agentArgs = strings.TrimSpace(agentArgs + " --dangerously-bypass-approvals-and-sandbox")
+		}
+		return detection, agentArgs, nil
+	default:
+		return detection, agentArgs, fmt.Errorf("invalid --nested-policy: %s", nestedPolicy)
+	}
 }
 
 func shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs string) bool {

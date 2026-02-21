@@ -1,6 +1,8 @@
 # Lisa Commands
 
 Use with `LISA_BIN=./lisa` in this repo.
+Subcommands are separate argv tokens: `./lisa session spawn ...` (not `./lisa "session spawn" ...`).
+For `--json` workflows, parse `stdout` as contract data and treat `stderr` as advisory/logging.
 
 ## session spawn
 
@@ -10,6 +12,7 @@ Create/start an agent session.
 |---|---|---|
 | `--agent` | `claude` | `claude` or `codex` |
 | `--mode` | `interactive` | `interactive` or `exec` (aliases: `execution`, `non-interactive`) |
+| `--nested-policy` | `auto` | Codex nested bypass policy: `auto`, `force`, `off` |
 | `--prompt` | `""` | Initial prompt |
 | `--project-root` | cwd | Project directory |
 | `--session` | auto | Override name (must start with `lisa-`) |
@@ -30,11 +33,14 @@ Spawn notes:
 - If `--session` absent, Lisa auto-generates one.
 - Codex `exec` defaults: `--full-auto --skip-git-repo-check`.
 - Nested Codex hints (`./lisa`, `lisa session spawn`, `nested lisa`) auto-enable `--dangerously-bypass-approvals-and-sandbox` and omit `--full-auto`.
+- `--nested-policy force` enables nested bypass without prompt hints (omits `--full-auto`).
+- `--nested-policy off` disables prompt-based nested bypass heuristics.
 - If `--agent-args '--dangerously-bypass-approvals-and-sandbox'` is passed, Lisa omits `--full-auto` automatically.
 - Non-nested Codex `exec` with `--full-auto` can block child Lisa tmux sockets (`Operation not permitted`); prefer interactive + `session send` or explicit bypass args.
 - For deeply nested prompts, prefer heredoc injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`).
 - `--dry-run` returns resolved `command`, wrapped `startupCommand`, `socketPath`, and injected `env` keys.
 - `--detect-nested --json` adds `nestedDetection` (`autoBypass`, `reason`, `matchedHint`, arg/full-auto signals, effective command flags).
+- Observed `nestedDetection.reason` values include: `prompt_contains_dot_slash_lisa`, `prompt_contains_lisa_session_spawn`, `prompt_contains_nested_lisa`, `no_nested_hint`, `not_codex_exec`.
 
 ## session send
 
@@ -61,6 +67,7 @@ One-shot status poll.
 | `--mode` | `auto` | `auto`, `interactive`, `exec` |
 | `--full` | false | Include classification/signal columns in CSV |
 | `--fail-not-found` | false | Exit 1 when resolved status is `not_found` |
+| `--json-min` | false | Minimal JSON output (`session`,`status`,`sessionState`,`todosDone`,`todosTotal`,`waitEstimate`) |
 | `--json` | false | JSON output |
 
 CSV: `status,todosDone,todosTotal,activeTask,waitEstimate,sessionState`
@@ -98,7 +105,7 @@ Exit reasons:
 `completed`, `crashed`, `not_found`, `stuck`, `waiting_input`, `waiting_input_turn_complete`, `marker_found`, `max_polls_exceeded`, `degraded_max_polls_exceeded`
 
 Monitor nuance:
-- Timeout often returns `finalState:"timeout"`, `exitReason:"max_polls_exceeded"`, `finalStatus:"active"`.
+- Timeout returns `finalState:"timeout"`, `exitReason:"max_polls_exceeded"`, `finalStatus:"timeout"`.
 - `marker_found` is success, often before terminal completion (`in_progress`/`active`).
 - `--waiting-requires-turn-complete true` can timeout whenever turn-complete cannot be inferred (common in Codex/non-transcript flows).
 - `--expect terminal` on marker/waiting success returns `expected_terminal_got_*` (exit `2`).
@@ -118,6 +125,7 @@ Capture transcript (default for Claude) or raw pane output.
 | `--session` | required | Session name |
 | `--lines` | `200` | Pane lines for raw capture |
 | `--raw` | false | Force raw tmux capture |
+| `--delta-from` | `""` | Delta start (`offset`, `@unix`, RFC3339); requires `--raw` |
 | `--keep-noise` | false | Keep Codex/MCP startup noise |
 | `--strip-noise` | n/a | Compatibility alias for default filtering |
 | `--project-root` | cwd | Project directory |
@@ -127,7 +135,11 @@ Capture behavior:
 - Claude default reads `~/.claude/projects/{encoded-path}/{sessionId}.jsonl` for structured messages.
 - Falls back to raw pane capture if transcript unavailable.
 - Promptless/custom-command Claude sessions lacking prompt+createdAt metadata intentionally fall back to raw.
-- Raw capture strips startup noise by default; use `--keep-noise` to preserve full pane output.
+- Raw capture filters MCP startup/auth noise by default; use `--keep-noise` to preserve full pane output (including MCP startup chatter/errors).
+- Delta capture (`--delta-from`) supports:
+  - offset mode: integer byte offset into current capture
+  - timestamp mode: `@unix` or RFC3339; returns full capture only if output changed after timestamp
+  - JSON includes `deltaMode` + `nextOffset` for iterative polling
 
 JSON:
 - transcript: `{"session","claudeSession","messages":[{"role","text","timestamp"}]}`
@@ -152,7 +164,7 @@ JSON: `{"status":{...},"eventFile","events":[...],"droppedEventLines"}`
 
 | Command | Key Flags | Output |
 |---|---|---|
-| `session list` | `--all-sockets`, `--project-only`, `--project-root`, `--json` | names (text) or JSON |
+| `session list` | `--all-sockets`, `--project-only`, `--project-root`, `--json`, `--json-min` | names (text) or JSON |
 | `session exists` | `--session`, `--project-root`, `--json` | `true`/`false` (exit 0/1) or JSON |
 | `session kill` | `--session`, `--project-root`, `--cleanup-all-hashes`, `--json` | `ok` or JSON (`found:false` + exit `1` when missing) |
 | `session kill-all` | `--project-only`, `--project-root`, `--cleanup-all-hashes`, `--json` | `killed N sessions` or JSON |
@@ -174,6 +186,7 @@ Inspect metadata parent/child links for nested orchestration.
 | `--all-hashes` | false | Include metadata from all project hashes |
 | `--active-only` | false | Include only sessions currently active in tmux |
 | `--flat` | false | Machine-friendly parent/child rows |
+| `--json-min` | false | Minimal JSON output (`nodeCount` + session graph) |
 | `--json` | false | JSON output |
 
 JSON: `{"session","projectRoot","allHashes","nodeCount","roots":[{"session","parentSession","agent","mode","projectRoot","createdAt","children":[...]}]}`
@@ -186,9 +199,10 @@ Tree semantics:
 
 Deterministic nested smoke (`L1 -> ... -> LN`) with marker assertions.
 
-Flags: `--project-root`, `--levels` (1-4, default `3`), `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--json`.
+Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|dot-slash|spawn|nested|neutral`), `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--json`.
 
 Behavior: uses nested `session spawn/monitor/capture`, asserts all level markers, non-zero exit on spawn/monitor/marker failure.
+`--prompt-style` adds a pre-smoke dry-run probe that validates nested wording detection.
 
 ## cleanup
 
@@ -209,7 +223,7 @@ Non-JSON output: one-line summary. Exit `1` if any probe/kill/remove errors occu
 | Command | Purpose |
 |---|---|
 | `doctor [--json]` | Check prerequisites (tmux + at least one of claude/codex). Exit 0=ok, 1=missing |
-| `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--prompt`, `--agent-args`, `--no-dangerously-skip-permissions`, `--json`) |
+| `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--nested-policy`, `--prompt`, `--agent-args`, `--no-dangerously-skip-permissions`, `--json`) |
 | `skills sync` | Sync external skill into repo `skills/lisa` (`--json`: `{"source","destination","files","directories","symlinks"}`) |
 | `skills install` | Install repo `skills/lisa` to `codex`, `claude`, or `project` (`--json`: `{"source","destination","files","directories","symlinks"}`) |
 | `version` | Print build version (`version`, `--version`, `-v`) |
@@ -230,3 +244,4 @@ Aliases `execution` and `non-interactive` map to `exec`.
 JSON error contract:
 - command/runtime failures emit `{"ok":false,"errorCode":"...","error":"..."}` when `--json` is enabled.
 - state/result payload failures also include `errorCode` on non-success paths.
+- JSON payloads include `stderrPolicy` so callers can treat stderr as diagnostics channel.

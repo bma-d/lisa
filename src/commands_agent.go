@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 )
 
 type doctorCheck struct {
@@ -113,6 +112,7 @@ func cmdAgent(args []string) int {
 func cmdAgentBuildCmd(args []string) int {
 	agent := "claude"
 	mode := "interactive"
+	nestedPolicy := "auto"
 	prompt := ""
 	agentArgs := ""
 	skipPermissions := true
@@ -134,6 +134,12 @@ func cmdAgentBuildCmd(args []string) int {
 			}
 			mode = args[i+1]
 			i++
+		case "--nested-policy":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --nested-policy")
+			}
+			nestedPolicy = args[i+1]
+			i++
 		case "--prompt":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --prompt")
@@ -154,9 +160,17 @@ func cmdAgentBuildCmd(args []string) int {
 			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
 	}
-	if shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs) {
-		agentArgs = strings.TrimSpace(agentArgs + " --dangerously-bypass-approvals-and-sandbox")
+	parsedNestedPolicy, err := parseNestedPolicy(nestedPolicy)
+	if err != nil {
+		return commandError(jsonOut, "invalid_nested_policy", err.Error())
 	}
+	nestedPolicy = parsedNestedPolicy
+
+	nestedDetection, adjustedArgs, nestedErr := applyNestedPolicyToAgentArgs(agent, mode, prompt, agentArgs, nestedPolicy)
+	if nestedErr != nil {
+		return commandError(jsonOut, "invalid_nested_policy_combination", nestedErr.Error())
+	}
+	agentArgs = adjustedArgs
 
 	cmd, err := buildAgentCommandWithOptions(agent, mode, prompt, agentArgs, skipPermissions)
 	if err != nil {
@@ -168,10 +182,12 @@ func cmdAgentBuildCmd(args []string) int {
 
 	if jsonOut {
 		writeJSON(map[string]any{
-			"agent":   agent,
-			"mode":    mode,
-			"prompt":  prompt,
-			"command": cmd,
+			"agent":           agent,
+			"mode":            mode,
+			"prompt":          prompt,
+			"nestedPolicy":    nestedPolicy,
+			"nestedDetection": nestedDetection,
+			"command":         cmd,
 		})
 		return 0
 	}

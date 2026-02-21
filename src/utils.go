@@ -89,6 +89,16 @@ func writeJSON(v any) {
 		fmt.Println("{}")
 		return
 	}
+	var payload map[string]any
+	if err := json.Unmarshal(b, &payload); err == nil {
+		if _, ok := payload["stderrPolicy"]; !ok {
+			payload["stderrPolicy"] = "diagnostic"
+		}
+		if withPolicy, marshalErr := json.Marshal(payload); marshalErr == nil {
+			fmt.Println(string(withPolicy))
+			return
+		}
+	}
 	fmt.Println(string(b))
 }
 

@@ -91,8 +91,11 @@ Lifecycle:
 - Spawn wrapper injects heartbeat loop + `EXIT` trap (done file + marker).
 - Claude sessions default to `--dangerously-skip-permissions` unless disabled.
 - Runtime sets tmux env vars: `LISA_SESSION`, `LISA_SESSION_NAME`, `LISA_AGENT`, `LISA_MODE`, `LISA_PROJECT_HASH`, `LISA_HEARTBEAT_FILE`, `LISA_DONE_FILE`.
-- Raw pane capture strips startup noise by default; opt out with `--keep-noise`.
+- Raw pane capture filters MCP startup/auth noise by default; opt out with `--keep-noise`.
+- Raw capture `--delta-from` supports offset/timestamp incremental fetch; JSON responses include `nextOffset` for polling loops.
 - `session exists` supports `--project-root` for cross-root checks.
 - `session tree` reads metadata graph and may include historical roots; use `session list` for active-only views.
 - Nested runs should always pass `--project-root` and prefer `./lisa` in prompts.
+- Use `--nested-policy force|off` to avoid prompt-heuristic ambiguity in Codex exec nesting.
+- JSON payloads include `stderrPolicy` so orchestrators can classify stderr as diagnostics channel.
 - After nested runs, perform cleanup (`cleanup --dry-run` first in shared environments).

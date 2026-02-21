@@ -133,6 +133,7 @@ func helpSessionSpawn() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: claude)")
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Session mode: interactive|exec (default: interactive)")
+	fmt.Fprintln(os.Stderr, "  --nested-policy MODE  Nested codex bypass policy: auto|force|off (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --session NAME        Override session name (must start with \"lisa-\")")
 	fmt.Fprintln(os.Stderr, "  --prompt TEXT          Initial prompt for the agent")
 	fmt.Fprintln(os.Stderr, "  --command TEXT         Custom command instead of agent CLI")
@@ -178,6 +179,7 @@ func helpSessionStatus() {
 	fmt.Fprintln(os.Stderr, "  --full                Include classification/signal columns")
 	fmt.Fprintln(os.Stderr, "  --fail-not-found      Exit 1 when session resolves to not_found")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: session/status/state/todos/wait")
 }
 
 func helpSessionExplain() {
@@ -223,6 +225,7 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
 	fmt.Fprintln(os.Stderr, "  --raw                 Raw tmux pane capture instead of transcript")
+	fmt.Fprintln(os.Stderr, "  --delta-from VALUE    Delta start: offset integer, @unix timestamp, or RFC3339")
 	fmt.Fprintln(os.Stderr, "  --keep-noise          Keep Codex/MCP startup noise in pane capture")
 	fmt.Fprintln(os.Stderr, "  --strip-noise         Compatibility alias for default noise filtering")
 	fmt.Fprintln(os.Stderr, "  --lines N             Number of pane lines for raw capture (default: 200)")
@@ -240,6 +243,7 @@ func helpSessionList() {
 	fmt.Fprintln(os.Stderr, "  --project-only        Only show sessions for current project")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: sessions/count")
 }
 
 func helpSessionTree() {
@@ -254,6 +258,7 @@ func helpSessionTree() {
 	fmt.Fprintln(os.Stderr, "  --active-only         Include only sessions currently active in tmux")
 	fmt.Fprintln(os.Stderr, "  --flat                Print machine-friendly parent/child rows")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: nodeCount + session graph")
 }
 
 func helpSessionSmoke() {
@@ -264,6 +269,7 @@ func helpSessionSmoke() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --levels N            Nested depth (1-4, default: 3)")
+	fmt.Fprintln(os.Stderr, "  --prompt-style STYLE  Nested hint probe: none|dot-slash|spawn|nested|neutral")
 	fmt.Fprintln(os.Stderr, "  --poll-interval N     Seconds between monitor polls (default: 1)")
 	fmt.Fprintln(os.Stderr, "  --max-polls N         Maximum polls per nested monitor (default: 180)")
 	fmt.Fprintln(os.Stderr, "  --keep-sessions       Keep spawned smoke sessions for inspection")
@@ -322,6 +328,7 @@ func helpAgentBuildCmd() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: claude)")
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Session mode: interactive|exec (default: interactive)")
+	fmt.Fprintln(os.Stderr, "  --nested-policy MODE  Nested codex bypass policy: auto|force|off (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --prompt TEXT          Prompt for the agent")
 	fmt.Fprintln(os.Stderr, "  --agent-args TEXT      Extra args passed to agent CLI")
 	fmt.Fprintln(os.Stderr, "  --no-dangerously-skip-permissions")

@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,15 @@ type monitorResultMin struct {
 	Polls      int    `json:"polls"`
 }
 
+type sessionStatusMin struct {
+	Session      string `json:"session"`
+	Status       string `json:"status"`
+	SessionState string `json:"sessionState"`
+	TodosDone    int    `json:"todosDone"`
+	TodosTotal   int    `json:"todosTotal"`
+	WaitEstimate int    `json:"waitEstimate"`
+}
+
 func normalizeStatusForSessionStatusOutput(status sessionStatus) sessionStatus {
 	normalized := status
 	switch normalized.SessionState {
@@ -33,7 +43,31 @@ func normalizeStatusForSessionStatusOutput(status sessionStatus) sessionStatus {
 	return normalized
 }
 
-func writeSessionStatusJSON(status sessionStatus, errorCode string) {
+func writeSessionStatusJSON(status sessionStatus, errorCode string, jsonMin bool) {
+	if jsonMin {
+		minPayload := sessionStatusMin{
+			Session:      status.Session,
+			Status:       status.Status,
+			SessionState: status.SessionState,
+			TodosDone:    status.TodosDone,
+			TodosTotal:   status.TodosTotal,
+			WaitEstimate: status.WaitEstimate,
+		}
+		payload := map[string]any{
+			"session":      minPayload.Session,
+			"status":       minPayload.Status,
+			"sessionState": minPayload.SessionState,
+			"todosDone":    minPayload.TodosDone,
+			"todosTotal":   minPayload.TodosTotal,
+			"waitEstimate": minPayload.WaitEstimate,
+		}
+		if errorCode != "" {
+			payload["errorCode"] = errorCode
+		}
+		writeJSON(payload)
+		return
+	}
+
 	payload := map[string]any{
 		"session":               status.Session,
 		"agent":                 status.Agent,
@@ -121,6 +155,7 @@ func cmdSessionStatus(args []string) int {
 	full := false
 	failNotFound := false
 	jsonOut := hasJSONFlag(args)
+	jsonMin := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -157,6 +192,9 @@ func cmdSessionStatus(args []string) int {
 			failNotFound = true
 		case "--json":
 			jsonOut = true
+		case "--json-min":
+			jsonMin = true
+			jsonOut = true
 		default:
 			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
@@ -188,7 +226,7 @@ func cmdSessionStatus(args []string) int {
 		if failNotFound && status.SessionState == "not_found" {
 			errorCode = "session_not_found"
 		}
-		writeSessionStatusJSON(status, errorCode)
+		writeSessionStatusJSON(status, errorCode, jsonMin)
 		if failNotFound && status.SessionState == "not_found" {
 			return 1
 		}
@@ -504,7 +542,7 @@ func cmdSessionMonitor(args []string) int {
 		OutputFile:  last.OutputFile,
 		ExitReason:  "max_polls_exceeded",
 		Polls:       maxPolls,
-		FinalStatus: normalizeMonitorFinalStatus("timeout", last.Status),
+		FinalStatus: "timeout",
 	}
 	if degradedPolls == maxPolls && maxPolls > 0 {
 		result.ExitReason = "degraded_max_polls_exceeded"
@@ -674,6 +712,7 @@ func cmdSessionCapture(args []string) int {
 	lines := 200
 	jsonOut := hasJSONFlag(args)
 	raw := false
+	deltaFrom := ""
 	stripNoise := true
 	projectRoot := getPWD()
 	projectRootExplicit := false
@@ -699,6 +738,12 @@ func cmdSessionCapture(args []string) int {
 			i++
 		case "--raw":
 			raw = true
+		case "--delta-from":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --delta-from")
+			}
+			deltaFrom = strings.TrimSpace(args[i+1])
+			i++
 		case "--keep-noise":
 			stripNoise = false
 		case "--strip-noise":
@@ -718,6 +763,9 @@ func cmdSessionCapture(args []string) int {
 	}
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
+	}
+	if deltaFrom != "" && !raw {
+		return commandError(jsonOut, "delta_requires_raw_capture", "--delta-from requires --raw")
 	}
 
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
@@ -758,15 +806,147 @@ func cmdSessionCapture(args []string) int {
 	if stripNoise {
 		capture = filterCaptureNoise(capture)
 	}
+	if err := updateCaptureState(projectRoot, session, capture); err != nil {
+		fmt.Fprintf(os.Stderr, "observability warning: failed to update capture state: %v\n", err)
+	}
+
+	deltaMode := ""
+	nextOffset := 0
+	if deltaFrom != "" {
+		capture, deltaMode, nextOffset, err = applyCaptureDelta(projectRoot, session, capture, deltaFrom)
+		if err != nil {
+			return commandError(jsonOut, "invalid_delta_from", err.Error())
+		}
+	}
+
 	if jsonOut {
-		writeJSON(map[string]any{
+		payload := map[string]any{
 			"session": session,
 			"capture": capture,
-		})
+		}
+		if deltaFrom != "" {
+			payload["deltaFrom"] = deltaFrom
+			payload["deltaMode"] = deltaMode
+			payload["nextOffset"] = nextOffset
+		}
+		writeJSON(payload)
 		return 0
 	}
 	fmt.Print(capture)
 	return 0
+}
+
+func updateCaptureState(projectRoot, session, capture string) error {
+	statePath := sessionStateFile(projectRoot, session)
+	_, err := withStateFileLockFn(statePath, func() error {
+		state, loadErr := loadSessionStateWithError(statePath)
+		if loadErr != nil {
+			state = sessionState{}
+		}
+		hash := md5Hex8(capture)
+		if state.LastOutputHash == hash {
+			return nil
+		}
+		now := nowFn()
+		state.LastOutputHash = hash
+		state.LastOutputAt = now.Unix()
+		state.LastOutputAtNanos = now.UnixNano()
+		return saveSessionState(statePath, state)
+	})
+	return err
+}
+
+func applyCaptureDelta(projectRoot, session, capture, deltaFrom string) (string, string, int, error) {
+	fullLen := len(capture)
+	if deltaFrom == "" {
+		return capture, "", fullLen, nil
+	}
+
+	if offset, ok := parseCaptureOffset(deltaFrom); ok {
+		if offset < 0 {
+			offset = 0
+		}
+		if offset > fullLen {
+			offset = fullLen
+		}
+		return capture[offset:], "offset", fullLen, nil
+	}
+
+	cutoffNanos, err := parseCaptureTimestamp(deltaFrom)
+	if err != nil {
+		return "", "", 0, err
+	}
+	lastOutputAtNanos, err := loadCaptureLastOutputAtNanos(projectRoot, session)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("failed to load capture state: %w", err)
+	}
+	if lastOutputAtNanos <= 0 || lastOutputAtNanos > cutoffNanos {
+		return capture, "timestamp", fullLen, nil
+	}
+	return "", "timestamp", fullLen, nil
+}
+
+func parseCaptureOffset(deltaFrom string) (int, bool) {
+	if strings.HasPrefix(deltaFrom, "@") {
+		return 0, false
+	}
+	if strings.Contains(deltaFrom, "T") || strings.Contains(deltaFrom, "-") || strings.Contains(deltaFrom, ":") {
+		return 0, false
+	}
+	n, err := strconv.Atoi(deltaFrom)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func parseCaptureTimestamp(deltaFrom string) (int64, error) {
+	value := strings.TrimSpace(deltaFrom)
+	if value == "" {
+		return 0, fmt.Errorf("invalid --delta-from: empty value")
+	}
+	if strings.HasPrefix(value, "@") {
+		raw := strings.TrimSpace(strings.TrimPrefix(value, "@"))
+		if raw == "" {
+			return 0, fmt.Errorf("invalid --delta-from timestamp: missing unix value after @")
+		}
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid --delta-from timestamp: %s", deltaFrom)
+		}
+		switch {
+		case n > 1_000_000_000_000_000_000:
+			return n, nil
+		case n > 1_000_000_000_000:
+			if n > math.MaxInt64/int64(time.Millisecond) {
+				return math.MaxInt64, nil
+			}
+			return n * int64(time.Millisecond), nil
+		default:
+			if n > math.MaxInt64/int64(time.Second) {
+				return math.MaxInt64, nil
+			}
+			return n * int64(time.Second), nil
+		}
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return ts.UnixNano(), nil
+	}
+	return 0, fmt.Errorf("invalid --delta-from: expected offset integer, @unix timestamp, or RFC3339 timestamp")
+}
+
+func loadCaptureLastOutputAtNanos(projectRoot, session string) (int64, error) {
+	state, err := loadSessionStateWithError(sessionStateFile(projectRoot, session))
+	if err != nil {
+		return 0, err
+	}
+	if state.LastOutputAtNanos > 0 {
+		return state.LastOutputAtNanos, nil
+	}
+	if state.LastOutputAt > 0 {
+		return state.LastOutputAt * int64(time.Second), nil
+	}
+	return 0, nil
 }
 
 func shouldUseTranscriptCapture(session, projectRoot string) bool {

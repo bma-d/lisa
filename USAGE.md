@@ -220,6 +220,7 @@ Flags:
 
 - `--agent`: `claude|codex`
 - `--mode`: `interactive|exec`
+- `--nested-policy`: `auto|force|off` (default `auto`)
 - `--session`: explicit name (must start with `lisa-`)
 - `--prompt`: startup prompt
 - `--command`: full command override (skips agent command builder)
@@ -240,6 +241,8 @@ Notes:
 - If no `--session`, Lisa auto-generates one.
 - Codex `exec` defaults include `--full-auto` and `--skip-git-repo-check`.
 - Nested Codex prompts: when prompt text suggests Lisa nesting (`./lisa`, `lisa session spawn`, `nested lisa`), Lisa auto-adds `--dangerously-bypass-approvals-and-sandbox` and omits `--full-auto`.
+- `--nested-policy force` enables Codex nested bypass without relying on prompt wording (and omits `--full-auto`).
+- `--nested-policy off` disables prompt-based nested bypass heuristics.
 - For non-nested Codex `exec`, `--full-auto` sandbox can still block tmux socket creation for child Lisa sessions (`Operation not permitted`); use `--mode interactive` + `session send` or pass explicit bypass args.
 - If you pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'`, Lisa omits `--full-auto` automatically (Codex rejects combining both flags).
 - For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`) to avoid shell quoting collisions in inline nested commands.
@@ -285,6 +288,7 @@ Flags:
 - `--full`: include classification/signal columns in CSV mode
 - `--fail-not-found`: exit `1` when resolved state is `not_found`
 - `--json`
+- `--json-min`: minimal JSON (`session`, `status`, `sessionState`, `todosDone`, `todosTotal`, `waitEstimate`)
 
 Output note:
 
@@ -341,6 +345,7 @@ Output note:
 
 - `finalState` is the terminal/stop-state from monitor.
 - `finalStatus` is normalized for terminal monitor states (`completed`, `crashed`, `stuck`, `not_found`) so it aligns with `finalState` in JSON/CSV output.
+- Timeout exits use `finalState=timeout` and `finalStatus=timeout`.
 
 When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
 `waiting_input` after transcript tail inspection confirms an assistant turn is
@@ -370,6 +375,7 @@ Flags:
 
 - `--session` (required)
 - `--raw`: force tmux pane capture
+- `--delta-from VALUE`: delta start (`offset` integer, `@unix` timestamp, or RFC3339 timestamp; requires `--raw`)
 - `--keep-noise`: keep Codex/MCP startup noise in pane capture
 - `--strip-noise`: compatibility alias to force default noise filtering
 - `--lines N`: pane lines for raw capture (default `200`)
@@ -383,6 +389,10 @@ Behavior:
 - raw capture path filters known Codex/MCP startup noise by default
 - `--keep-noise`: disables that filtering
 - `--strip-noise`: compatibility alias for default filtering (legacy scripts)
+- `--delta-from` supports low-token polling:
+  - offset mode (`--delta-from 1200`): returns capture bytes after offset
+  - timestamp mode (`--delta-from @1700000000` or RFC3339): returns full capture only if output changed after timestamp
+  - JSON capture includes `deltaMode` and `nextOffset` for subsequent polls
 
 ### `session list`
 
@@ -400,6 +410,7 @@ Flags:
 - `--project-only`
 - `--project-root`
 - `--json`
+- `--json-min`: minimal JSON (`sessions`, `count`)
 
 Behavior note:
 
@@ -424,6 +435,7 @@ Flags:
 - `--active-only` (include only sessions currently active in tmux)
 - `--flat` (machine-friendly parent/child rows)
 - `--json`
+- `--json-min`: minimal JSON (`nodeCount` plus session graph rows/roots)
 
 Behavior note:
 
@@ -443,6 +455,7 @@ Flags:
 
 - `--project-root`
 - `--levels N` (1-4, default `3`)
+- `--prompt-style STYLE` (`none|dot-slash|spawn|nested|neutral`, default `none`)
 - `--poll-interval N` (default `1`)
 - `--max-polls N` (default `180`)
 - `--keep-sessions`
@@ -453,6 +466,7 @@ Behavior:
 - Creates nested interactive sessions using `session spawn/monitor/capture`.
 - Asserts deterministic markers from every level in `L1` capture.
 - Returns non-zero on any missing marker, spawn/monitor failure, or timeout.
+- Optional `--prompt-style` runs a nested-wording probe (`session spawn --dry-run --detect-nested --json`) before smoke execution and records probe result in JSON summary.
 
 ### `session exists`
 
@@ -526,6 +540,7 @@ Flags:
 
 - `--agent`: `claude|codex`
 - `--mode`: `interactive|exec`
+- `--nested-policy`: `auto|force|off` (default `auto`)
 - `--prompt`
 - `--agent-args`
 - `--no-dangerously-skip-permissions`
@@ -556,6 +571,7 @@ JSON failure contract:
 
 - With `--json`, command/runtime failures emit `{"ok":false,"errorCode":"...","error":"..."}`.
 - Stateful JSON failures (for example `session kill`, `session exists`, `session monitor`, `session smoke`) also include command-specific payload fields plus `errorCode`.
+- JSON responses include `stderrPolicy` so LLM/tool callers can treat stderr as diagnostic stream.
 
 Text/CSV-only commands:
 
