@@ -12,8 +12,12 @@ type sessionPreflightContractCheck struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+var sessionPreflightModelCheckFn = runSessionPreflightModelCheck
+
 func cmdSessionPreflight(args []string) int {
 	projectRoot := getPWD()
+	agent := ""
+	model := ""
 	jsonOut := hasJSONFlag(args)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -25,6 +29,18 @@ func cmdSessionPreflight(args []string) int {
 			}
 			projectRoot = args[i+1]
 			i++
+		case "--agent":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
+			}
+			agent = args[i+1]
+			i++
+		case "--model":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --model")
+			}
+			model = args[i+1]
+			i++
 		case "--json":
 			jsonOut = true
 		default:
@@ -35,10 +51,36 @@ func cmdSessionPreflight(args []string) int {
 	projectRoot = canonicalProjectRoot(projectRoot)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
+	var err error
+	agent = strings.TrimSpace(agent)
+	model = strings.TrimSpace(model)
+	if model != "" && agent == "" {
+		agent = "codex"
+	}
+	if agent != "" {
+		agent, err = parseAgent(agent)
+		if err != nil {
+			return commandError(jsonOut, "invalid_agent", err.Error())
+		}
+	}
+	if model != "" {
+		model, err = parseModel(model)
+		if err != nil {
+			return commandError(jsonOut, "invalid_model", err.Error())
+		}
+		if _, err := applyModelToAgentArgs(agent, "", model); err != nil {
+			return commandError(jsonOut, "invalid_model_configuration", err.Error())
+		}
+	}
 
 	envChecks := collectDoctorChecks()
 	envReady := doctorReady(envChecks)
 	contractChecks := runSessionPreflightContractChecks()
+	var modelCheck *sessionPreflightModelCheck
+	if model != "" {
+		probe := sessionPreflightModelCheckFn(agent, model)
+		modelCheck = &probe
+	}
 
 	contractsReady := true
 	for _, check := range contractChecks {
@@ -47,8 +89,12 @@ func cmdSessionPreflight(args []string) int {
 			break
 		}
 	}
+	modelReady := true
+	if modelCheck != nil {
+		modelReady = modelCheck.OK
+	}
 
-	ok := envReady && contractsReady
+	ok := envReady && contractsReady && modelReady
 	if jsonOut {
 		payload := map[string]any{
 			"ok":          ok,
@@ -59,6 +105,9 @@ func cmdSessionPreflight(args []string) int {
 			"commit":      BuildCommit,
 			"date":        BuildDate,
 			"generatedAt": time.Now().UTC().Format(time.RFC3339),
+		}
+		if modelCheck != nil {
+			payload["modelCheck"] = modelCheck
 		}
 		if code := preflightErrorCode(ok); code != "" {
 			payload["errorCode"] = code
@@ -94,6 +143,13 @@ func cmdSessionPreflight(args []string) int {
 			continue
 		}
 		fmt.Printf("- %s %s\n", line, c.Name)
+	}
+	if modelCheck != nil {
+		line := "ok"
+		if !modelCheck.OK {
+			line = "fail"
+		}
+		fmt.Printf("model_check: %s agent=%s model=%s detail=%s\n", line, modelCheck.Agent, modelCheck.Model, modelCheck.Detail)
 	}
 	return boolExit(ok)
 }
@@ -135,7 +191,7 @@ func runSessionPreflightContractChecks() []sessionPreflightContractCheck {
 	_, err = parseCaptureTimestamp("2026-02-21T00:00:00Z")
 	add("capture_delta_rfc3339_parse", err == nil, fmt.Sprintf("err=%v", err))
 
-	autoDetection, autoArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "Use ./lisa for child orchestration.", "", "auto")
+	autoDetection, autoArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "Use ./lisa for child orchestration.", "", "auto", "auto")
 	autoCmd := ""
 	if err == nil {
 		autoCmd, err = buildAgentCommandWithOptions("codex", "exec", "Use ./lisa for child orchestration.", autoArgs, true)
@@ -146,7 +202,7 @@ func runSessionPreflightContractChecks() []sessionPreflightContractCheck {
 		!strings.Contains(autoCmd, "--full-auto")
 	add("nested_prompt_auto_bypass", autoBypass, fmt.Sprintf("reason=%s err=%v", autoDetection.Reason, err))
 
-	neutralDetection, neutralArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "No nesting requested here.", "", "auto")
+	neutralDetection, neutralArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "No nesting requested here.", "", "auto", "auto")
 	neutralCmd := ""
 	if err == nil {
 		neutralCmd, err = buildAgentCommandWithOptions("codex", "exec", "No nesting requested here.", neutralArgs, true)
@@ -156,6 +212,19 @@ func runSessionPreflightContractChecks() []sessionPreflightContractCheck {
 		strings.Contains(neutralCmd, "--full-auto") &&
 		!strings.Contains(neutralCmd, "--dangerously-bypass-approvals-and-sandbox")
 	add("nested_prompt_neutral_full_auto", neutralFullAuto, fmt.Sprintf("reason=%s err=%v", neutralDetection.Reason, err))
+
+	quotedDetection, _, err := applyNestedPolicyToAgentArgs("codex", "exec", "The string './lisa' appears in docs only.", "", "auto", "auto")
+	add("nested_prompt_quote_guard", err == nil && !quotedDetection.AutoBypass, fmt.Sprintf("reason=%s err=%v", quotedDetection.Reason, err))
+
+	intentDetection, intentArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "No nesting requested here.", "", "auto", "nested")
+	intentCmd := ""
+	if err == nil {
+		intentCmd, err = buildAgentCommandWithOptions("codex", "exec", "No nesting requested here.", intentArgs, true)
+	}
+	intentBypass := err == nil &&
+		intentDetection.AutoBypass &&
+		strings.Contains(intentCmd, "--dangerously-bypass-approvals-and-sandbox")
+	add("nested_intent_nested_bypass", intentBypass, fmt.Sprintf("reason=%s err=%v", intentDetection.Reason, err))
 
 	return checks
 }

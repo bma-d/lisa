@@ -29,8 +29,12 @@ func cmdSession(args []string) int {
 		return cmdSessionName(args[1:])
 	case "spawn":
 		return cmdSessionSpawn(args[1:])
+	case "detect-nested":
+		return cmdSessionDetectNested(args[1:])
 	case "send":
 		return cmdSessionSend(args[1:])
+	case "snapshot":
+		return cmdSessionSnapshot(args[1:])
 	case "status":
 		return cmdSessionStatus(args[1:])
 	case "explain":
@@ -130,11 +134,13 @@ func cmdSessionSpawn(args []string) int {
 	agent := "claude"
 	mode := "interactive"
 	nestedPolicy := "auto"
+	nestingIntent := "auto"
 	projectRoot := getPWD()
 	session := ""
 	prompt := ""
 	command := ""
 	agentArgs := ""
+	model := ""
 	width := defaultTmuxWidth
 	height := defaultTmuxHeight
 	cleanupAllHashes := false
@@ -165,6 +171,12 @@ func cmdSessionSpawn(args []string) int {
 			}
 			nestedPolicy = args[i+1]
 			i++
+		case "--nesting-intent":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --nesting-intent")
+			}
+			nestingIntent = args[i+1]
+			i++
 		case "--project-root":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
@@ -194,6 +206,12 @@ func cmdSessionSpawn(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent-args")
 			}
 			agentArgs = args[i+1]
+			i++
+		case "--model":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --model")
+			}
+			model = args[i+1]
 			i++
 		case "--width":
 			if i+1 >= len(args) {
@@ -239,9 +257,21 @@ func cmdSessionSpawn(args []string) int {
 	if err != nil {
 		return commandError(jsonOut, "invalid_mode", err.Error())
 	}
+	model, err = parseModel(model)
+	if err != nil {
+		return commandError(jsonOut, "invalid_model", err.Error())
+	}
+	agentArgs, err = applyModelToAgentArgs(agent, agentArgs, model)
+	if err != nil {
+		return commandError(jsonOut, "invalid_model_configuration", err.Error())
+	}
 	nestedPolicy, err = parseNestedPolicy(nestedPolicy)
 	if err != nil {
 		return commandError(jsonOut, "invalid_nested_policy", err.Error())
+	}
+	nestingIntent, err = parseNestingIntent(nestingIntent)
+	if err != nil {
+		return commandError(jsonOut, "invalid_nesting_intent", err.Error())
 	}
 	projectRoot = canonicalProjectRoot(projectRoot)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
@@ -266,7 +296,7 @@ func cmdSessionSpawn(args []string) int {
 			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 		}
 	}
-	nestedDetection, adjustedArgs, nestedErr := applyNestedPolicyToAgentArgs(agent, mode, prompt, agentArgs, nestedPolicy)
+	nestedDetection, adjustedArgs, nestedErr := applyNestedPolicyToAgentArgs(agent, mode, prompt, agentArgs, nestedPolicy, nestingIntent)
 	if nestedErr != nil {
 		return commandError(jsonOut, "invalid_nested_policy_combination", nestedErr.Error())
 	}
@@ -297,7 +327,9 @@ func cmdSessionSpawn(args []string) int {
 			"session":        session,
 			"agent":          agent,
 			"mode":           mode,
+			"model":          model,
 			"nestedPolicy":   nestedPolicy,
+			"nestingIntent":  nestingIntent,
 			"runId":          runID,
 			"projectRoot":    projectRoot,
 			"command":        command,
@@ -390,6 +422,7 @@ func cmdSessionSpawn(args []string) int {
 			"agent":        agent,
 			"mode":         mode,
 			"nestedPolicy": nestedPolicy,
+			"nestingIntent": nestingIntent,
 			"runId":        runID,
 			"projectRoot":  projectRoot,
 			"command":      command,
@@ -430,6 +463,7 @@ func parentSessionFromEnv(currentSession string) string {
 type nestedCodexDetection struct {
 	Eligible          bool   `json:"eligible"`
 	NestedPolicy      string `json:"nestedPolicy,omitempty"`
+	NestingIntent     string `json:"nestingIntent,omitempty"`
 	AutoBypass        bool   `json:"autoBypass"`
 	Reason            string `json:"reason"`
 	MatchedHint       string `json:"matchedHint,omitempty"`
@@ -439,12 +473,13 @@ type nestedCodexDetection struct {
 	EffectiveFullAuto bool   `json:"effectiveFullAuto,omitempty"`
 }
 
-func detectNestedCodexBypass(agent, mode, prompt, agentArgs string) nestedCodexDetection {
+func detectNestedCodexBypass(agent, mode, prompt, agentArgs, nestingIntent string) nestedCodexDetection {
 	detection := nestedCodexDetection{
 		Eligible:       normalizeAgent(agent) == "codex" && normalizeMode(mode) == "exec",
 		HasBypassArg:   hasFlagToken(agentArgs, "--dangerously-bypass-approvals-and-sandbox"),
 		HasFullAutoArg: hasFlagToken(agentArgs, "--full-auto"),
 		Reason:         "no_nested_hint",
+		NestingIntent:  nestingIntent,
 	}
 	if !detection.Eligible {
 		detection.Reason = "not_codex_exec"
@@ -458,22 +493,95 @@ func detectNestedCodexBypass(agent, mode, prompt, agentArgs string) nestedCodexD
 		detection.Reason = "agent_args_has_full_auto"
 		return detection
 	}
+	switch nestingIntent {
+	case "nested":
+		detection.AutoBypass = true
+		detection.MatchedHint = "nesting-intent:nested"
+		detection.Reason = "nesting_intent_nested"
+		return detection
+	case "neutral":
+		detection.AutoBypass = false
+		detection.MatchedHint = ""
+		detection.Reason = "nesting_intent_neutral"
+		return detection
+	}
 	lowerPrompt := strings.ToLower(prompt)
 	switch {
-	case strings.Contains(lowerPrompt, "./lisa"):
-		detection.AutoBypass = true
-		detection.MatchedHint = "./lisa"
-		detection.Reason = "prompt_contains_dot_slash_lisa"
-	case strings.Contains(lowerPrompt, "lisa session spawn"):
+	case strings.Contains(lowerPrompt, "lisa session spawn") && !isNonExecutableNestedMention(lowerPrompt, "lisa session spawn"):
 		detection.AutoBypass = true
 		detection.MatchedHint = "lisa session spawn"
 		detection.Reason = "prompt_contains_lisa_session_spawn"
-	case strings.Contains(lowerPrompt, "nested lisa"):
+	case strings.Contains(lowerPrompt, "nested lisa") && !isNonExecutableNestedMention(lowerPrompt, "nested lisa"):
 		detection.AutoBypass = true
 		detection.MatchedHint = "nested lisa"
 		detection.Reason = "prompt_contains_nested_lisa"
+	case strings.Contains(lowerPrompt, "./lisa") && !isNonExecutableNestedMention(lowerPrompt, "./lisa"):
+		detection.AutoBypass = true
+		detection.MatchedHint = "./lisa"
+		detection.Reason = "prompt_contains_dot_slash_lisa"
 	}
 	return detection
+}
+
+func isNonExecutableNestedMention(lowerPrompt, hint string) bool {
+	indices := findAllSubstringIndices(lowerPrompt, hint)
+	if len(indices) == 0 {
+		return false
+	}
+	for _, idx := range indices {
+		start := idx - 48
+		if start < 0 {
+			start = 0
+		}
+		end := idx + len(hint) + 48
+		if end > len(lowerPrompt) {
+			end = len(lowerPrompt)
+		}
+		window := lowerPrompt[start:end]
+		hasDocContext := containsAnyKeyword(window, []string{
+			"docs", "documentation", "readme", "string", "literal", "quote", "quoted",
+			"mention", "mentions", "example", "examples", "appears", "appear", "shown", "text",
+		})
+		if !hasDocContext {
+			return false
+		}
+		hasActionContext := containsAnyKeyword(window, []string{
+			"run", "use", "invoke", "spawn", "execute", "launch", "call",
+		})
+		if hasActionContext {
+			return false
+		}
+	}
+	return true
+}
+
+func findAllSubstringIndices(haystack, needle string) []int {
+	if needle == "" {
+		return nil
+	}
+	indices := make([]int, 0, 2)
+	start := 0
+	for {
+		idx := strings.Index(haystack[start:], needle)
+		if idx < 0 {
+			break
+		}
+		indices = append(indices, start+idx)
+		start += idx + len(needle)
+		if start >= len(haystack) {
+			break
+		}
+	}
+	return indices
+}
+
+func containsAnyKeyword(input string, keywords []string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(input, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseNestedPolicy(policy string) (string, error) {
@@ -489,8 +597,21 @@ func parseNestedPolicy(policy string) (string, error) {
 	}
 }
 
-func applyNestedPolicyToAgentArgs(agent, mode, prompt, agentArgs, nestedPolicy string) (nestedCodexDetection, string, error) {
-	detection := detectNestedCodexBypass(agent, mode, prompt, agentArgs)
+func parseNestingIntent(intent string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(intent)) {
+	case "", "auto":
+		return "auto", nil
+	case "nested", "bypass":
+		return "nested", nil
+	case "neutral", "none", "off":
+		return "neutral", nil
+	default:
+		return "", fmt.Errorf("invalid --nesting-intent: %s (expected auto|nested|neutral)", intent)
+	}
+}
+
+func applyNestedPolicyToAgentArgs(agent, mode, prompt, agentArgs, nestedPolicy, nestingIntent string) (nestedCodexDetection, string, error) {
+	detection := detectNestedCodexBypass(agent, mode, prompt, agentArgs, nestingIntent)
 	detection.NestedPolicy = nestedPolicy
 
 	switch nestedPolicy {
@@ -527,8 +648,8 @@ func applyNestedPolicyToAgentArgs(agent, mode, prompt, agentArgs, nestedPolicy s
 	}
 }
 
-func shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs string) bool {
-	return detectNestedCodexBypass(agent, mode, prompt, agentArgs).AutoBypass
+func shouldAutoEnableNestedCodexBypass(agent, mode, prompt, agentArgs, nestingIntent string) bool {
+	return detectNestedCodexBypass(agent, mode, prompt, agentArgs, nestingIntent).AutoBypass
 }
 
 func shouldRecordInputTimestamp(text string, keyList []string, enter bool) bool {
@@ -569,6 +690,7 @@ func cmdSessionSend(args []string) int {
 	keys := ""
 	enter := false
 	jsonOut := hasJSONFlag(args)
+	jsonMin := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -602,6 +724,9 @@ func cmdSessionSend(args []string) int {
 		case "--enter":
 			enter = true
 		case "--json":
+			jsonOut = true
+		case "--json-min":
+			jsonMin = true
 			jsonOut = true
 		default:
 			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
@@ -664,6 +789,13 @@ func cmdSessionSend(args []string) int {
 	}
 
 	if jsonOut {
+		if jsonMin {
+			writeJSON(map[string]any{
+				"session": session,
+				"ok":      true,
+			})
+			return 0
+		}
 		writeJSON(map[string]any{
 			"session": session,
 			"ok":      true,

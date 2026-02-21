@@ -120,9 +120,11 @@ func cmdAgentBuildCmd(args []string) int {
 	agent := "claude"
 	mode := "interactive"
 	nestedPolicy := "auto"
+	nestingIntent := "auto"
 	projectRoot := getPWD()
 	prompt := ""
 	agentArgs := ""
+	model := ""
 	skipPermissions := true
 	jsonOut := hasJSONFlag(args)
 
@@ -148,6 +150,12 @@ func cmdAgentBuildCmd(args []string) int {
 			}
 			nestedPolicy = args[i+1]
 			i++
+		case "--nesting-intent":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --nesting-intent")
+			}
+			nestingIntent = args[i+1]
+			i++
 		case "--prompt":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --prompt")
@@ -166,6 +174,12 @@ func cmdAgentBuildCmd(args []string) int {
 			}
 			agentArgs = args[i+1]
 			i++
+		case "--model":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --model")
+			}
+			model = args[i+1]
+			i++
 		case "--no-dangerously-skip-permissions":
 			skipPermissions = false
 		case "--json":
@@ -179,8 +193,27 @@ func cmdAgentBuildCmd(args []string) int {
 		return commandError(jsonOut, "invalid_nested_policy", err.Error())
 	}
 	nestedPolicy = parsedNestedPolicy
+	nestingIntent, err = parseNestingIntent(nestingIntent)
+	if err != nil {
+		return commandError(jsonOut, "invalid_nesting_intent", err.Error())
+	}
 
-	nestedDetection, adjustedArgs, nestedErr := applyNestedPolicyToAgentArgs(agent, mode, prompt, agentArgs, nestedPolicy)
+	model, err = parseModel(model)
+	if err != nil {
+		return commandError(jsonOut, "invalid_model", err.Error())
+	}
+
+	agent, err = parseAgent(agent)
+	if err != nil {
+		return commandError(jsonOut, "invalid_agent", err.Error())
+	}
+
+	agentArgs, err = applyModelToAgentArgs(agent, agentArgs, model)
+	if err != nil {
+		return commandError(jsonOut, "invalid_model_configuration", err.Error())
+	}
+
+	nestedDetection, adjustedArgs, nestedErr := applyNestedPolicyToAgentArgs(agent, mode, prompt, agentArgs, nestedPolicy, nestingIntent)
 	if nestedErr != nil {
 		return commandError(jsonOut, "invalid_nested_policy_combination", nestedErr.Error())
 	}
@@ -191,7 +224,6 @@ func cmdAgentBuildCmd(args []string) int {
 		return commandError(jsonOut, "agent_command_build_failed", err.Error())
 	}
 
-	agent, _ = parseAgent(agent)
 	mode, _ = parseMode(mode)
 	projectRoot = canonicalProjectRoot(projectRoot)
 
@@ -202,6 +234,7 @@ func cmdAgentBuildCmd(args []string) int {
 			"projectRoot":     projectRoot,
 			"prompt":          prompt,
 			"nestedPolicy":    nestedPolicy,
+			"nestingIntent":   nestingIntent,
 			"nestedDetection": nestedDetection,
 			"command":         cmd,
 		})

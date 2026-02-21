@@ -36,7 +36,9 @@ lisa version
 lisa capabilities
 lisa session name
 lisa session spawn
+lisa session detect-nested
 lisa session send
+lisa session snapshot
 lisa session status
 lisa session explain
 lisa session monitor
@@ -238,10 +240,12 @@ Flags:
 - `--agent`: `claude|codex`
 - `--mode`: `interactive|exec`
 - `--nested-policy`: `auto|force|off` (default `auto`)
+- `--nesting-intent`: `auto|nested|neutral` (default `auto`)
 - `--session`: explicit name (must start with `lisa-`)
 - `--prompt`: startup prompt
 - `--command`: full command override (skips agent command builder)
 - `--agent-args`: extra args appended to agent CLI
+- `--model`: Codex model name (supported with `--agent codex`; e.g. `GPT-5.3-Codex-Spark`)
 - `--project-root`: project isolation root (default cwd)
 - `--width`: tmux width (default `220`)
 - `--height`: tmux height (default `60`)
@@ -258,14 +262,37 @@ Notes:
 - If no `--session`, Lisa auto-generates one.
 - Codex `exec` defaults include `--full-auto` and `--skip-git-repo-check`.
 - Nested Codex prompts: when prompt text suggests Lisa nesting (`./lisa`, `lisa session spawn`, `nested lisa`), Lisa auto-adds `--dangerously-bypass-approvals-and-sandbox` and omits `--full-auto`.
+- Quote/doc guard: non-executable references like `The string './lisa' appears in docs only.` do not auto-trigger bypass.
 - `--nested-policy force` enables Codex nested bypass without relying on prompt wording (and omits `--full-auto`).
 - `--nested-policy off` disables prompt-based nested bypass heuristics.
+- `--nesting-intent nested|neutral` explicitly overrides prompt heuristics.
 - For non-nested Codex `exec`, `--full-auto` sandbox can still block tmux socket creation for child Lisa sessions (`Operation not permitted`); use `--mode interactive` + `session send` or pass explicit bypass args.
 - If you pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'`, Lisa omits `--full-auto` automatically (Codex rejects combining both flags).
+- Use `--model GPT-5.3-Codex-Spark` (or another Codex model name) to inject `--model` without manual `--agent-args` quoting.
 - For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`) to avoid shell quoting collisions in inline nested commands.
 - Spawned panes receive `LISA_*` routing env (see Runtime Environment Variables) so nested Lisa commands preserve project/socket isolation.
 - `--dry-run` validates inputs and returns planned spawn payload (`session`, `command`, wrapped `startupCommand`, `socketPath`, injected env vars) without creating a session.
 - `--detect-nested --json` adds `nestedDetection` with decision fields (`autoBypass`, `reason`, `matchedHint`, arg/full-auto signals, effective command flags).
+
+### `session detect-nested`
+
+Probe nested Codex bypass decisions without spawning tmux sessions.
+
+```bash
+lisa session detect-nested --prompt "Use ./lisa for child orchestration." --json
+```
+
+Flags:
+
+- `--agent`: `claude|codex` (default `codex`)
+- `--mode`: `interactive|exec` (default `exec`)
+- `--nested-policy`: `auto|force|off` (default `auto`)
+- `--nesting-intent`: `auto|nested|neutral` (default `auto`)
+- `--prompt`
+- `--agent-args`
+- `--model`
+- `--project-root`
+- `--json`
 
 ### `session send`
 
@@ -284,6 +311,30 @@ Flags:
 - `--keys` (mutually exclusive with `--text`; whitespace-split into tmux key tokens)
 - `--enter`
 - `--json`
+- `--json-min`: minimal JSON ack (`session`, `ok`)
+
+### `session snapshot`
+
+One-shot poll helper: status + raw capture + `nextOffset` in one call.
+
+```bash
+lisa session snapshot --session <NAME> --json-min
+```
+
+Flags:
+
+- `--session` (required)
+- `--agent`: `auto|claude|codex`
+- `--mode`: `auto|interactive|exec`
+- `--project-root`
+- `--lines N` (default `200`)
+- `--delta-from VALUE`
+- `--markers CSV` (marker-only extraction mode)
+- `--keep-noise`
+- `--strip-noise`
+- `--fail-not-found`
+- `--json`
+- `--json-min`
 
 ### `session status`
 
@@ -328,7 +379,9 @@ Flags:
 - `--mode`: `auto|interactive|exec`
 - `--project-root`
 - `--events N` (default `10`)
+- `--recent N` (alias for `--events`)
 - `--json`
+- `--json-min` (minimal JSON: `session`, `status`, `sessionState`, `reason`, `recent`)
 
 Output note:
 
@@ -365,6 +418,7 @@ Output note:
 - `finalStatus` is normalized for terminal monitor states (`completed`, `crashed`, `stuck`, `not_found`) so it aligns with `finalState` in JSON/CSV output.
 - Timeout exits use `finalState=timeout` and `finalStatus=timeout`.
 - `--stream-json` emits one JSON object per poll (`type=poll`), then emits the standard final monitor JSON payload.
+- Final monitor JSON includes `nextOffset` when pane capture is available (ready for follow-up delta capture polling).
 
 When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
 `waiting_input` after transcript tail inspection confirms an assistant turn is
@@ -395,10 +449,13 @@ Flags:
 - `--session` (required)
 - `--raw`: force tmux pane capture
 - `--delta-from VALUE`: delta start (`offset` integer, `@unix` timestamp, or RFC3339 timestamp; requires `--raw`)
+- `--markers CSV`: marker-only extraction mode (comma-separated markers)
 - `--keep-noise`: keep Codex/MCP startup noise in pane capture
 - `--strip-noise`: compatibility alias to force default noise filtering
 - `--lines N`: pane lines for raw capture (default `200`)
 - `--project-root`
+- `--agent` (optional model-probe agent; currently `codex`)
+- `--model` (optional codex model probe)
 - `--json`
 - `--json-min` (compact JSON payloads for polling workflows)
 
@@ -433,6 +490,7 @@ Behavior:
 
 - Runs doctor-equivalent environment checks (`tmux`, `claude`, `codex`).
 - Validates critical parser/contract assumptions (mode aliases, monitor marker guard, capture delta parsing, nested codex hint routing).
+- Optional model probe: `--agent codex --model <NAME>` runs a real Codex model-availability check.
 - Returns exit `0` when both environment and contract checks pass; else exit `1`.
 
 ### `session list`
@@ -449,9 +507,11 @@ Flags:
 
 - `--all-sockets`: discover active sessions across project sockets by replaying metadata roots
 - `--project-only`
+- `--stale`: include metadata historical/stale counts (+ stale list in full JSON/text)
 - `--project-root`
 - `--json`
 - `--json-min`: minimal JSON (`sessions`, `count`)
+- `--json-min` with `--stale` includes `historicalCount` + `staleCount`.
 
 Behavior note:
 
@@ -497,6 +557,7 @@ Flags:
 - `--project-root`
 - `--levels N` (1-4, default `3`)
 - `--prompt-style STYLE` (`none|dot-slash|spawn|nested|neutral`, default `none`)
+- `--matrix-file PATH`: prompt regression matrix (`mode|prompt`, mode = `bypass|full-auto|any`)
 - `--poll-interval N` (default `1`)
 - `--max-polls N` (default `180`)
 - `--keep-sessions`
@@ -508,6 +569,7 @@ Behavior:
 - Asserts deterministic markers from every level in `L1` capture.
 - Returns non-zero on any missing marker, spawn/monitor failure, or timeout.
 - Optional `--prompt-style` runs a nested-wording probe (`session spawn --dry-run --detect-nested --json`) before smoke execution and records probe result in JSON summary.
+- Optional `--matrix-file` runs a multi-prompt regression sweep before smoke execution and fails on expectation mismatch.
 
 ### `session exists`
 
@@ -574,6 +636,7 @@ Build agent startup command without spawning tmux session.
 
 ```bash
 lisa agent build-cmd --agent codex --mode exec --prompt "Run tests"
+lisa agent build-cmd --agent codex --mode exec --model GPT-5.3-Codex-Spark --prompt "Run tests"
 lisa agent build-cmd --agent claude --mode interactive --prompt "Review diff" --json
 ```
 
@@ -582,9 +645,11 @@ Flags:
 - `--agent`: `claude|codex`
 - `--mode`: `interactive|exec`
 - `--nested-policy`: `auto|force|off` (default `auto`)
+- `--nesting-intent`: `auto|nested|neutral` (default `auto`)
 - `--project-root` (context only; included in JSON payload)
 - `--prompt`
 - `--agent-args`
+- `--model`: Codex model name (supported with `--agent codex`)
 - `--no-dangerously-skip-permissions`
 - `--json`
 
@@ -597,6 +662,7 @@ JSON support:
 - `agent build-cmd`
 - `session spawn`
 - `session send`
+- `session snapshot`
 - `session status`
 - `session explain`
 - `session monitor`
@@ -604,6 +670,7 @@ JSON support:
 - `session tree`
 - `session smoke`
 - `session preflight`
+- `session detect-nested`
 - `session name`
 - `session list`
 - `session exists`

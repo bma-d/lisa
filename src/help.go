@@ -16,7 +16,9 @@ var helpFuncs = map[string]func(){
 	"session":           helpSession,
 	"session name":      helpSessionName,
 	"session spawn":     helpSessionSpawn,
+	"session detect-nested": helpSessionDetectNested,
 	"session send":      helpSessionSend,
+	"session snapshot":  helpSessionSnapshot,
 	"session status":    helpSessionStatus,
 	"session explain":   helpSessionExplain,
 	"session monitor":   helpSessionMonitor,
@@ -55,7 +57,9 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  version              Print version info")
 	fmt.Fprintln(os.Stderr, "  session name          Generate unique session name")
 	fmt.Fprintln(os.Stderr, "  session spawn         Create and start an agent session")
+	fmt.Fprintln(os.Stderr, "  session detect-nested Inspect nested-codex bypass detection")
 	fmt.Fprintln(os.Stderr, "  session send          Send text or keys to a running session")
+	fmt.Fprintln(os.Stderr, "  session snapshot      One-shot status + capture + nextOffset")
 	fmt.Fprintln(os.Stderr, "  session status        Get current session status")
 	fmt.Fprintln(os.Stderr, "  session explain       Detailed session diagnostics")
 	fmt.Fprintln(os.Stderr, "  session monitor       Poll session until terminal state")
@@ -103,7 +107,9 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "Subcommands:")
 	fmt.Fprintln(os.Stderr, "  name       Generate unique session name")
 	fmt.Fprintln(os.Stderr, "  spawn      Create and start an agent session")
+	fmt.Fprintln(os.Stderr, "  detect-nested Inspect nested-codex bypass detection")
 	fmt.Fprintln(os.Stderr, "  send       Send text or keys to a running session")
+	fmt.Fprintln(os.Stderr, "  snapshot   One-shot status + capture + nextOffset")
 	fmt.Fprintln(os.Stderr, "  status     Get current session status")
 	fmt.Fprintln(os.Stderr, "  explain    Detailed session diagnostics")
 	fmt.Fprintln(os.Stderr, "  monitor    Poll session until terminal state")
@@ -139,10 +145,12 @@ func helpSessionSpawn() {
 	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: claude)")
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Session mode: interactive|exec (default: interactive)")
 	fmt.Fprintln(os.Stderr, "  --nested-policy MODE  Nested codex bypass policy: auto|force|off (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --nesting-intent MODE Nested intent override: auto|nested|neutral (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --session NAME        Override session name (must start with \"lisa-\")")
 	fmt.Fprintln(os.Stderr, "  --prompt TEXT          Initial prompt for the agent")
 	fmt.Fprintln(os.Stderr, "  --command TEXT         Custom command instead of agent CLI")
 	fmt.Fprintln(os.Stderr, "  --agent-args TEXT      Extra args passed to agent CLI")
+	fmt.Fprintln(os.Stderr, "  --model NAME           Codex model name (for --agent codex)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory for isolation (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --width N             Tmux pane width (default: 220)")
 	fmt.Fprintln(os.Stderr, "  --height N            Tmux pane height (default: 60)")
@@ -154,6 +162,23 @@ func helpSessionSpawn() {
 	fmt.Fprintln(os.Stderr, "  note                  Nested codex exec prompts (./lisa, lisa session spawn)")
 	fmt.Fprintln(os.Stderr, "                        auto-enable '--dangerously-bypass-approvals-and-sandbox'")
 	fmt.Fprintln(os.Stderr, "                        and omit --full-auto")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSessionDetectNested() {
+	fmt.Fprintln(os.Stderr, "lisa session detect-nested — inspect nested-codex bypass detection")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session detect-nested [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: codex)")
+	fmt.Fprintln(os.Stderr, "  --mode MODE           Session mode: interactive|exec (default: exec)")
+	fmt.Fprintln(os.Stderr, "  --nested-policy MODE  Nested codex bypass policy: auto|force|off (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --nesting-intent MODE Nested intent override: auto|nested|neutral (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --prompt TEXT         Prompt text used for hint detection")
+	fmt.Fprintln(os.Stderr, "  --agent-args TEXT     Existing agent args to evaluate")
+	fmt.Fprintln(os.Stderr, "  --model NAME          Codex model name (for --agent codex)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -169,6 +194,27 @@ func helpSessionSend() {
 	fmt.Fprintln(os.Stderr, "  --keys \"KEYS...\"      Tmux keys to send (mutually exclusive with --text)")
 	fmt.Fprintln(os.Stderr, "  --enter               Press Enter after sending")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON ack: session/ok")
+}
+
+func helpSessionSnapshot() {
+	fmt.Fprintln(os.Stderr, "lisa session snapshot — one-shot status + raw capture + nextOffset")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session snapshot [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          Agent hint: auto|claude|codex (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --mode MODE           Mode hint: auto|interactive|exec (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --lines N             Pane lines for capture (default: 200)")
+	fmt.Fprintln(os.Stderr, "  --delta-from VALUE    Delta start: offset integer, @unix timestamp, or RFC3339")
+	fmt.Fprintln(os.Stderr, "  --markers CSV         Marker-only extraction (comma-separated)")
+	fmt.Fprintln(os.Stderr, "  --keep-noise          Keep Codex/MCP startup noise")
+	fmt.Fprintln(os.Stderr, "  --strip-noise         Compatibility alias for default filtering")
+	fmt.Fprintln(os.Stderr, "  --fail-not-found      Exit 1 when session resolves to not_found")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
 
 func helpSessionStatus() {
@@ -198,7 +244,9 @@ func helpSessionExplain() {
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Mode hint: auto|interactive|exec (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --events N            Number of recent events to show (default: 10)")
+	fmt.Fprintln(os.Stderr, "  --recent N            Alias for --events with compact intent")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: session/state/reason/recent events")
 }
 
 func helpSessionMonitor() {
@@ -232,6 +280,7 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
 	fmt.Fprintln(os.Stderr, "  --raw                 Raw tmux pane capture instead of transcript")
 	fmt.Fprintln(os.Stderr, "  --delta-from VALUE    Delta start: offset integer, @unix timestamp, or RFC3339")
+	fmt.Fprintln(os.Stderr, "  --markers CSV         Marker-only extraction (comma-separated)")
 	fmt.Fprintln(os.Stderr, "  --keep-noise          Keep Codex/MCP startup noise in pane capture")
 	fmt.Fprintln(os.Stderr, "  --strip-noise         Compatibility alias for default noise filtering")
 	fmt.Fprintln(os.Stderr, "  --lines N             Number of pane lines for raw capture (default: 200)")
@@ -247,6 +296,8 @@ func helpSessionPreflight() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          Optional model-probe agent (codex)")
+	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model probe")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -258,6 +309,7 @@ func helpSessionList() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --all-sockets         Discover active sessions across project sockets")
 	fmt.Fprintln(os.Stderr, "  --project-only        Only show sessions for current project")
+	fmt.Fprintln(os.Stderr, "  --stale               Include stale metadata-only session counts/list")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: sessions/count")
@@ -287,6 +339,7 @@ func helpSessionSmoke() {
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --levels N            Nested depth (1-4, default: 3)")
 	fmt.Fprintln(os.Stderr, "  --prompt-style STYLE  Nested hint probe: none|dot-slash|spawn|nested|neutral")
+	fmt.Fprintln(os.Stderr, "  --matrix-file PATH    Prompt matrix file: mode|prompt (mode=bypass|full-auto|any)")
 	fmt.Fprintln(os.Stderr, "  --poll-interval N     Seconds between monitor polls (default: 1)")
 	fmt.Fprintln(os.Stderr, "  --max-polls N         Maximum polls per nested monitor (default: 180)")
 	fmt.Fprintln(os.Stderr, "  --keep-sessions       Keep spawned smoke sessions for inspection")
@@ -355,9 +408,11 @@ func helpAgentBuildCmd() {
 	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: claude)")
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Session mode: interactive|exec (default: interactive)")
 	fmt.Fprintln(os.Stderr, "  --nested-policy MODE  Nested codex bypass policy: auto|force|off (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --nesting-intent MODE Nested intent override: auto|nested|neutral (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --prompt TEXT          Prompt for the agent")
 	fmt.Fprintln(os.Stderr, "  --agent-args TEXT      Extra args passed to agent CLI")
+	fmt.Fprintln(os.Stderr, "  --model NAME           Codex model name (for --agent codex)")
 	fmt.Fprintln(os.Stderr, "  --no-dangerously-skip-permissions")
 	fmt.Fprintln(os.Stderr, "                        Don't add --dangerously-skip-permissions to claude")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")

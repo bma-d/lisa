@@ -15,6 +15,7 @@ func cmdSessionExplain(args []string) int {
 	modeHint := "auto"
 	eventLimit := 10
 	jsonOut := hasJSONFlag(args)
+	jsonMin := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -55,8 +56,21 @@ func cmdSessionExplain(args []string) int {
 			}
 			eventLimit = n
 			i++
+		case "--recent":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --recent")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n <= 0 {
+				return commandError(jsonOut, "invalid_recent", "invalid --recent")
+			}
+			eventLimit = n
+			i++
 		case "--json":
 			jsonOut = true
+		case "--json-min":
+			jsonOut = true
+			jsonMin = true
 		default:
 			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
@@ -90,6 +104,30 @@ func cmdSessionExplain(args []string) int {
 	events := eventTail.Events
 
 	if jsonOut {
+		if jsonMin {
+			recent := make([]map[string]any, 0, len(events))
+			for _, event := range events {
+				recent = append(recent, map[string]any{
+					"at":     event.At,
+					"type":   event.Type,
+					"state":  event.State,
+					"status": event.Status,
+					"reason": event.Reason,
+				})
+			}
+			payload := map[string]any{
+				"session":      status.Session,
+				"status":       status.Status,
+				"sessionState": status.SessionState,
+				"reason":       status.ClassificationReason,
+				"recent":       recent,
+			}
+			if status.SessionState == "not_found" {
+				payload["errorCode"] = "session_not_found"
+			}
+			writeJSON(payload)
+			return 0
+		}
 		payload := map[string]any{
 			"status":            status,
 			"eventFile":         sessionEventsFile(projectRoot, session),

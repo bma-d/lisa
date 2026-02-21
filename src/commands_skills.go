@@ -26,6 +26,7 @@ type skillsCopySummary struct {
 	Files       int    `json:"files"`
 	Directories int    `json:"directories"`
 	Symlinks    int    `json:"symlinks"`
+	Noop        bool   `json:"noop,omitempty"`
 }
 
 type skillsInstallBatchSummary struct {
@@ -356,7 +357,11 @@ func copyDirReplace(sourcePath, destinationPath string) (skillsCopySummary, erro
 	sourcePath = filepath.Clean(sourcePath)
 	destinationPath = filepath.Clean(destinationPath)
 	if sourcePath == destinationPath {
-		return skillsCopySummary{}, fmt.Errorf("source and destination are identical: %s", sourcePath)
+		return skillsCopySummary{
+			Source:      sourcePath,
+			Destination: destinationPath,
+			Noop:        true,
+		}, nil
 	}
 
 	info, err := os.Stat(sourcePath)

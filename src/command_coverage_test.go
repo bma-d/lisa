@@ -64,6 +64,47 @@ func TestCmdAgentBuildCmdExecPath(t *testing.T) {
 	}
 }
 
+func TestCmdAgentBuildCmdExecPathWithModel(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdAgentBuildCmd([]string{
+			"--agent", "codex",
+			"--mode", "exec",
+			"--model", "GPT-5.3-Codex-Spark",
+			"--prompt", "ship release",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected exec build-cmd success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `--model 'GPT-5.3-Codex-Spark'`) {
+		t.Fatalf("expected codex exec command to include model flag, got %q", stdout)
+	}
+}
+
+func TestCmdAgentBuildCmdModelRejectsClaude(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdAgentBuildCmd([]string{
+			"--agent", "claude",
+			"--mode", "interactive",
+			"--model", "GPT-5.3-Codex-Spark",
+			"--json",
+		})
+		if code == 0 {
+			t.Fatalf("expected model/agent validation failure")
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"errorCode":"invalid_model_configuration"`) {
+		t.Fatalf("expected invalid_model_configuration, got %q", stdout)
+	}
+}
+
 func TestCmdAgentBuildCmdExecPathAutoBypassesNestedCodexPrompt(t *testing.T) {
 	stdout, stderr := captureOutput(t, func() {
 		code := cmdAgentBuildCmd([]string{

@@ -291,6 +291,59 @@ func TestCmdSessionSpawnNestedPolicyModes(t *testing.T) {
 	}
 }
 
+func TestCmdSessionSpawnDryRunWithModel(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionSpawn([]string{
+			"--agent", "codex",
+			"--mode", "exec",
+			"--model", "GPT-5.3-Codex-Spark",
+			"--project-root", t.TempDir(),
+			"--prompt", "Run checks",
+			"--dry-run",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `--model 'GPT-5.3-Codex-Spark'`) {
+		t.Fatalf("expected dry-run command to include codex model, got %q", stdout)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("failed to parse output json: %v (%q)", err, stdout)
+	}
+	if payload["model"] != "GPT-5.3-Codex-Spark" {
+		t.Fatalf("expected model in dry-run payload, got %v", payload["model"])
+	}
+}
+
+func TestCmdSessionSpawnModelRejectsClaude(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionSpawn([]string{
+			"--agent", "claude",
+			"--mode", "interactive",
+			"--model", "GPT-5.3-Codex-Spark",
+			"--project-root", t.TempDir(),
+			"--dry-run",
+			"--json",
+		})
+		if code == 0 {
+			t.Fatalf("expected model/agent validation failure")
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"errorCode":"invalid_model_configuration"`) {
+		t.Fatalf("expected invalid_model_configuration, got %q", stdout)
+	}
+}
+
 func TestCmdSessionKillMissingJSONDoesNotWriteStderr(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	t.Cleanup(func() { tmuxHasSessionFn = origHas })

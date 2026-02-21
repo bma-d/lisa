@@ -1,6 +1,7 @@
 # Lisa Recipes
 
-Resolve binary first: `[ -x ./lisa ] && LISA_BIN=./lisa || LISA_BIN=lisa`.
+Repo-local validation should pin to `./lisa` only:
+`test -x ./lisa || { echo "missing ./lisa"; exit 1; }; LISA_BIN=./lisa`.
 
 ## Core Pattern
 
@@ -38,6 +39,7 @@ Use before complex orchestration to lock command assumptions:
 ```bash
 $LISA_BIN doctor --json
 $LISA_BIN session preflight --json
+$LISA_BIN session preflight --agent codex --model GPT-5.3-Codex-Spark --json
 $LISA_BIN session spawn --help
 $LISA_BIN session monitor --help
 $LISA_BIN session tree --help
@@ -57,6 +59,12 @@ S2=$($LISA_BIN session spawn --agent claude --mode exec \
 $LISA_BIN session monitor --session "$S1" --project-root . --json &
 $LISA_BIN session monitor --session "$S2" --project-root . --json &
 wait
+
+# codex worker pinned to explicit model
+SC=$($LISA_BIN session spawn --agent codex --mode exec \
+  --model GPT-5.3-Codex-Spark \
+  --prompt "Run integration tests and summarize failures" \
+  --project-root . --json | jq -r .session)
 ```
 
 ## Capture Transcript vs Raw
@@ -82,6 +90,9 @@ $LISA_BIN session capture --session "$S" --raw --delta-from "$NEXT_OFFSET" --jso
 # Compact JSON payload variants
 $LISA_BIN session capture --session "$S" --json-min
 $LISA_BIN session capture --session "$S" --raw --delta-from "$NEXT_OFFSET" --json-min
+
+# Marker-only extraction (compact)
+$LISA_BIN session capture --session "$S" --raw --markers "DONE_MARKER,ERROR_MARKER" --json-min
 ```
 
 Transcript resolution path:
@@ -115,6 +126,9 @@ $LISA_BIN session monitor --session "$S" --project-root . --verbose --json
 
 # line-delimited low-token poll stream + final result
 $LISA_BIN session monitor --session "$S" --project-root . --json-min --stream-json
+
+# one-shot compact status+capture payload
+$LISA_BIN session snapshot --session "$S" --project-root . --json-min
 ```
 
 Expectation patterns:
@@ -164,7 +178,7 @@ $LISA_BIN session send --session "$PARENT" \
 ```
 
 Nested Codex exec trigger wording (auto-bypass + omit `--full-auto`):
-- `Use lisa for all child orchestration.`
+- `Use ./lisa for all child orchestration.`
 - `Run lisa session spawn inside the spawned agent.`
 - `Build a nested lisa chain and report markers.`
 - `Create nested lisa inside lisa inside lisa and report.`
@@ -183,16 +197,20 @@ Explicit nested policy controls:
 $LISA_BIN session spawn --agent codex --mode exec --nested-policy force \
   --prompt "No nesting requested here." --dry-run --detect-nested --json
 
+# explicit nested intent override (without changing policy)
+$LISA_BIN session spawn --agent codex --mode exec --nesting-intent nested \
+  --prompt "No nesting requested here." --dry-run --detect-nested --json
+
 # disable prompt-triggered bypass
 $LISA_BIN session spawn --agent codex --mode exec --nested-policy off \
-  --prompt "Use lisa for child orchestration." --dry-run --detect-nested --json
+  --prompt "Use ./lisa for child orchestration." --dry-run --detect-nested --json
 ```
 
 Trigger calibration sweep:
 
 ```bash
 for p in \
-  "Use lisa for all child orchestration." \
+  "Use ./lisa for all child orchestration." \
   "Run lisa session spawn inside the spawned agent." \
   "Build a nested lisa chain and report markers." \
   "Create nested lisa inside lisa inside lisa and report." \
@@ -202,6 +220,10 @@ do
   $LISA_BIN session spawn --agent codex --mode exec --project-root . \
     --prompt "$p" --dry-run --detect-nested --json | jq --arg prompt "$p" '{prompt:$prompt,command,nestedDetection}'
 done
+
+# standalone detector (no tmux spawn)
+$LISA_BIN session detect-nested --agent codex --mode exec \
+  --prompt "The string './lisa' appears in docs only." --json
 ```
 
 Deterministic nested validation:
@@ -212,6 +234,9 @@ $LISA_BIN session smoke --project-root "$(pwd)" --levels 4 --json
 
 # include nested wording probe in smoke summary
 $LISA_BIN session smoke --project-root "$(pwd)" --levels 4 --prompt-style dot-slash --json
+
+# matrix-file regression before smoke
+$LISA_BIN session smoke --project-root "$(pwd)" --levels 4 --matrix-file ./nested-matrix.txt --json
 ```
 
 Four-level matrix (quick confidence loop):
@@ -235,6 +260,14 @@ $LISA_BIN session monitor --session "$PARENT" --project-root "$ROOT" \
 
 $LISA_BIN session capture --session "$PARENT" --project-root "$ROOT" --raw --lines 260 --json
 $LISA_BIN session tree --project-root "$ROOT" --active-only --json
+```
+
+Build-command preview with model pin:
+
+```bash
+$LISA_BIN agent build-cmd --agent codex --mode exec \
+  --model GPT-5.3-Codex-Spark \
+  --prompt "Run tests" --json
 ```
 
 JSON parsing hygiene:

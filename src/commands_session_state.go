@@ -25,6 +25,7 @@ type monitorResultMin struct {
 	FinalState string `json:"finalState"`
 	ExitReason string `json:"exitReason"`
 	Polls      int    `json:"polls"`
+	NextOffset int    `json:"nextOffset,omitempty"`
 }
 
 type monitorStreamPollMin struct {
@@ -118,12 +119,16 @@ func writeMonitorJSON(result monitorResult, jsonMin bool, errorCode string) {
 			FinalState: result.FinalState,
 			ExitReason: result.ExitReason,
 			Polls:      result.Polls,
+			NextOffset: result.NextOffset,
 		}
 		payload := map[string]any{
 			"session":    minPayload.Session,
 			"finalState": minPayload.FinalState,
 			"exitReason": minPayload.ExitReason,
 			"polls":      minPayload.Polls,
+		}
+		if minPayload.NextOffset > 0 {
+			payload["nextOffset"] = minPayload.NextOffset
 		}
 		if errorCode != "" {
 			payload["errorCode"] = errorCode
@@ -137,12 +142,16 @@ func writeMonitorJSON(result monitorResult, jsonMin bool, errorCode string) {
 		"todosDone":   result.TodosDone,
 		"todosTotal":  result.TodosTotal,
 		"outputFile":  result.OutputFile,
+		"nextOffset":  result.NextOffset,
 		"exitReason":  result.ExitReason,
 		"polls":       result.Polls,
 		"finalStatus": result.FinalStatus,
 	}
 	if result.OutputFile == "" {
 		delete(payload, "outputFile")
+	}
+	if result.NextOffset <= 0 {
+		delete(payload, "nextOffset")
 	}
 	if errorCode != "" {
 		payload["errorCode"] = errorCode
@@ -547,6 +556,7 @@ func cmdSessionMonitor(args []string) int {
 				TodosDone:   status.TodosDone,
 				TodosTotal:  status.TodosTotal,
 				OutputFile:  status.OutputFile,
+				NextOffset:  computeSessionCaptureNextOffset(session),
 				ExitReason:  finalReason,
 				Polls:       poll,
 				FinalStatus: normalizeMonitorFinalStatus(status.SessionState, status.Status),
@@ -596,6 +606,7 @@ func cmdSessionMonitor(args []string) int {
 		TodosDone:   last.TodosDone,
 		TodosTotal:  last.TodosTotal,
 		OutputFile:  last.OutputFile,
+		NextOffset:  computeSessionCaptureNextOffset(session),
 		ExitReason:  "max_polls_exceeded",
 		Polls:       maxPolls,
 		FinalStatus: "timeout",
@@ -623,6 +634,19 @@ func cmdSessionMonitor(args []string) int {
 		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 	}
 	return 2
+}
+
+func computeSessionCaptureNextOffset(session string) int {
+	if strings.TrimSpace(session) == "" || !tmuxHasSessionFn(session) {
+		return 0
+	}
+	capture, err := tmuxCapturePaneFn(session, 320)
+	if err != nil {
+		return 0
+	}
+	capture = strings.Join(trimLines(capture), "\n")
+	capture = filterCaptureNoise(capture)
+	return len(capture)
 }
 
 func monitorWaitingTurnComplete(session, projectRoot string, status sessionStatus) waitingTurnCompleteResult {
@@ -770,6 +794,7 @@ func cmdSessionCapture(args []string) int {
 	jsonMin := false
 	raw := false
 	deltaFrom := ""
+	markersRaw := ""
 	stripNoise := true
 	projectRoot := getPWD()
 	projectRootExplicit := false
@@ -801,6 +826,12 @@ func cmdSessionCapture(args []string) int {
 			}
 			deltaFrom = strings.TrimSpace(args[i+1])
 			i++
+		case "--markers":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --markers")
+			}
+			markersRaw = args[i+1]
+			i++
 		case "--keep-noise":
 			stripNoise = false
 		case "--strip-noise":
@@ -826,6 +857,10 @@ func cmdSessionCapture(args []string) int {
 	}
 	if deltaFrom != "" && !raw {
 		return commandError(jsonOut, "delta_requires_raw_capture", "--delta-from requires --raw")
+	}
+	markers, err := parseCaptureMarkersFlag(markersRaw)
+	if err != nil {
+		return commandError(jsonOut, "invalid_markers", err.Error())
 	}
 
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
@@ -879,8 +914,23 @@ func cmdSessionCapture(args []string) int {
 		}
 	}
 
+	markerSummary := captureMarkerSummary{}
+	if len(markers) > 0 {
+		markerSummary = buildCaptureMarkerSummary(capture, markers)
+	}
+
 	if jsonOut {
 		payload := map[string]any{"session": session, "capture": capture}
+		if len(markers) > 0 {
+			delete(payload, "capture")
+			payload["markers"] = markerSummary.Markers
+			payload["markerMatches"] = markerSummary.Matches
+			payload["foundMarkers"] = markerSummary.Found
+			payload["missingMarkers"] = markerSummary.Missing
+			if !jsonMin {
+				payload["markerCounts"] = markerSummary.Counts
+			}
+		}
 		if deltaFrom != "" {
 			if !jsonMin {
 				payload["deltaFrom"] = deltaFrom
@@ -889,6 +939,12 @@ func cmdSessionCapture(args []string) int {
 			payload["nextOffset"] = nextOffset
 		}
 		writeJSON(payload)
+		return 0
+	}
+	if len(markers) > 0 {
+		for _, marker := range markerSummary.Markers {
+			fmt.Printf("%s=%t\n", marker, markerSummary.Matches[marker])
+		}
 		return 0
 	}
 	fmt.Print(capture)

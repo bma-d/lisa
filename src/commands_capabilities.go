@@ -44,10 +44,12 @@ var commandCapabilities = []commandCapability{
 			"--agent",
 			"--mode",
 			"--nested-policy",
+			"--nesting-intent",
 			"--session",
 			"--prompt",
 			"--command",
 			"--agent-args",
+			"--model",
 			"--project-root",
 			"--width",
 			"--height",
@@ -59,8 +61,29 @@ var commandCapabilities = []commandCapability{
 		},
 	},
 	{
+		Name:  "session detect-nested",
+		Flags: []string{"--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--agent-args", "--model", "--project-root", "--json"},
+	},
+	{
 		Name:  "session send",
-		Flags: []string{"--session", "--project-root", "--text", "--keys", "--enter", "--json"},
+		Flags: []string{"--session", "--project-root", "--text", "--keys", "--enter", "--json", "--json-min"},
+	},
+	{
+		Name: "session snapshot",
+		Flags: []string{
+			"--session",
+			"--project-root",
+			"--agent",
+			"--mode",
+			"--lines",
+			"--delta-from",
+			"--markers",
+			"--keep-noise",
+			"--strip-noise",
+			"--fail-not-found",
+			"--json",
+			"--json-min",
+		},
 	},
 	{
 		Name: "session status",
@@ -77,7 +100,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session explain",
-		Flags: []string{"--session", "--agent", "--mode", "--project-root", "--events", "--json"},
+		Flags: []string{"--session", "--agent", "--mode", "--project-root", "--events", "--recent", "--json", "--json-min"},
 	},
 	{
 		Name: "session monitor",
@@ -106,6 +129,7 @@ var commandCapabilities = []commandCapability{
 			"--lines",
 			"--raw",
 			"--delta-from",
+			"--markers",
 			"--keep-noise",
 			"--strip-noise",
 			"--json",
@@ -118,15 +142,15 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session smoke",
-		Flags: []string{"--project-root", "--levels", "--prompt-style", "--poll-interval", "--max-polls", "--keep-sessions", "--json"},
+		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--poll-interval", "--max-polls", "--keep-sessions", "--json"},
 	},
 	{
 		Name:  "session preflight",
-		Flags: []string{"--project-root", "--json"},
+		Flags: []string{"--project-root", "--agent", "--model", "--json"},
 	},
 	{
 		Name:  "session list",
-		Flags: []string{"--all-sockets", "--project-only", "--project-root", "--json", "--json-min"},
+		Flags: []string{"--all-sockets", "--project-only", "--stale", "--project-root", "--json", "--json-min"},
 	},
 	{
 		Name:  "session exists",
@@ -142,7 +166,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "agent build-cmd",
-		Flags: []string{"--agent", "--mode", "--nested-policy", "--prompt", "--project-root", "--agent-args", "--no-dangerously-skip-permissions", "--json"},
+		Flags: []string{"--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--project-root", "--agent-args", "--model", "--no-dangerously-skip-permissions", "--json"},
 	},
 	{
 		Name:  "skills sync",

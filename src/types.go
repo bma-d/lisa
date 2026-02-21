@@ -131,6 +131,7 @@ type monitorResult struct {
 	TodosDone   int    `json:"todosDone"`
 	TodosTotal  int    `json:"todosTotal"`
 	OutputFile  string `json:"outputFile,omitempty"`
+	NextOffset  int    `json:"nextOffset,omitempty"`
 	ExitReason  string `json:"exitReason"`
 	Polls       int    `json:"polls"`
 	FinalStatus string `json:"finalStatus"`

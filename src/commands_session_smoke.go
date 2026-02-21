@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,6 +29,7 @@ type sessionSmokeSummary struct {
 	Levels         int                `json:"levels"`
 	PromptStyle    string             `json:"promptStyle,omitempty"`
 	PromptProbe    *smokePromptProbe  `json:"promptProbe,omitempty"`
+	PromptMatrix   []smokeMatrixProbe `json:"promptMatrix,omitempty"`
 	WorkDir        string             `json:"workDir"`
 	KeepSessions   bool               `json:"keepSessions"`
 	Sessions       []string           `json:"sessions"`
@@ -40,10 +42,20 @@ type sessionSmokeSummary struct {
 	CleanupErrors  []string           `json:"cleanupErrors,omitempty"`
 }
 
+type smokeMatrixProbe struct {
+	ExpectedMode string               `json:"expectedMode"`
+	ActualMode   string               `json:"actualMode"`
+	Prompt       string               `json:"prompt"`
+	Pass         bool                 `json:"pass"`
+	Detection    nestedCodexDetection `json:"detection"`
+	Command      string               `json:"command,omitempty"`
+}
+
 func cmdSessionSmoke(args []string) int {
 	projectRoot := getPWD()
 	levels := 3
 	promptStyle := "none"
+	matrixFile := ""
 	maxPolls := 180
 	pollInterval := 1
 	keepSessions := false
@@ -74,6 +86,12 @@ func cmdSessionSmoke(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --prompt-style")
 			}
 			promptStyle = args[i+1]
+			i++
+		case "--matrix-file":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --matrix-file")
+			}
+			matrixFile = args[i+1]
 			i++
 		case "--max-polls":
 			if i+1 >= len(args) {
@@ -169,6 +187,13 @@ func cmdSessionSmoke(args []string) int {
 			return emitSmokeFailure(jsonOut, &summary, "smoke_prompt_style_probe_failed", probeErr.Error())
 		}
 		summary.PromptProbe = probe
+	}
+	if strings.TrimSpace(matrixFile) != "" {
+		matrixProbes, matrixErr := runSmokePromptMatrixProbe(binPath, projectRoot, matrixFile)
+		summary.PromptMatrix = matrixProbes
+		if matrixErr != nil {
+			return emitSmokeFailure(jsonOut, &summary, "smoke_prompt_matrix_assertion_failed", matrixErr.Error())
+		}
 	}
 
 	for idx := levels - 1; idx >= 0; idx-- {
@@ -339,6 +364,107 @@ func parseSmokePromptStyle(style string) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid --prompt-style: %s (expected none|dot-slash|spawn|nested|neutral)", style)
 	}
+}
+
+type smokePromptMatrixCase struct {
+	ExpectedMode string
+	Prompt       string
+}
+
+func parseSmokePromptMatrixFile(path string) ([]smokePromptMatrixCase, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	cases := []smokePromptMatrixCase{}
+	scanner := bufio.NewScanner(file)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid matrix line %d: expected mode|prompt", lineNo)
+		}
+		mode := strings.ToLower(strings.TrimSpace(parts[0]))
+		prompt := strings.TrimSpace(parts[1])
+		if prompt == "" {
+			return nil, fmt.Errorf("invalid matrix line %d: empty prompt", lineNo)
+		}
+		switch mode {
+		case "bypass", "full-auto", "any":
+		default:
+			return nil, fmt.Errorf("invalid matrix line %d: mode must be bypass|full-auto|any", lineNo)
+		}
+		cases = append(cases, smokePromptMatrixCase{
+			ExpectedMode: mode,
+			Prompt:       prompt,
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(cases) == 0 {
+		return nil, fmt.Errorf("matrix file has no probe rows")
+	}
+	return cases, nil
+}
+
+func runSmokePromptMatrixProbe(binPath, projectRoot, matrixFile string) ([]smokeMatrixProbe, error) {
+	cases, err := parseSmokePromptMatrixFile(matrixFile)
+	if err != nil {
+		return nil, err
+	}
+	probes := make([]smokeMatrixProbe, 0, len(cases))
+	for _, matrixCase := range cases {
+		raw, stderrText, runErr := runLisaSubcommandFn(binPath,
+			"session", "spawn",
+			"--agent", "codex",
+			"--mode", "exec",
+			"--project-root", projectRoot,
+			"--prompt", matrixCase.Prompt,
+			"--dry-run",
+			"--detect-nested",
+			"--json",
+		)
+		if runErr != nil {
+			return probes, fmt.Errorf("matrix probe failed: %s", formatSmokeSubcommandError("session spawn dry-run", runErr, stderrText))
+		}
+		var payload struct {
+			Command         string               `json:"command"`
+			NestedDetection nestedCodexDetection `json:"nestedDetection"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload); err != nil {
+			return probes, fmt.Errorf("failed parsing matrix probe output: %w", err)
+		}
+
+		actualMode := "other"
+		switch {
+		case strings.Contains(payload.Command, "--dangerously-bypass-approvals-and-sandbox"):
+			actualMode = "bypass"
+		case strings.Contains(payload.Command, "--full-auto"):
+			actualMode = "full-auto"
+		}
+		pass := matrixCase.ExpectedMode == "any" || matrixCase.ExpectedMode == actualMode
+		probe := smokeMatrixProbe{
+			ExpectedMode: matrixCase.ExpectedMode,
+			ActualMode:   actualMode,
+			Prompt:       matrixCase.Prompt,
+			Pass:         pass,
+			Detection:    payload.NestedDetection,
+			Command:      payload.Command,
+		}
+		probes = append(probes, probe)
+		if !pass {
+			return probes, fmt.Errorf("matrix mismatch for prompt %q: expected %s got %s (reason=%s)", matrixCase.Prompt, matrixCase.ExpectedMode, actualMode, payload.NestedDetection.Reason)
+		}
+	}
+	return probes, nil
 }
 
 func smokePromptForStyle(style string) (string, bool) {

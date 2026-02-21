@@ -10,6 +10,7 @@ import (
 func cmdSessionList(args []string) int {
 	projectOnly := false
 	allSockets := false
+	stale := false
 	projectRoot := getPWD()
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
@@ -22,6 +23,8 @@ func cmdSessionList(args []string) int {
 			projectOnly = true
 		case "--all-sockets":
 			allSockets = true
+		case "--stale":
+			stale = true
 		case "--project-root":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
@@ -51,10 +54,27 @@ func cmdSessionList(args []string) int {
 	if err != nil {
 		return commandErrorf(jsonOut, "session_list_failed", "failed to list sessions: %v", err)
 	}
+	staleSessions := []string{}
+	historicalCount := 0
+	if stale {
+		staleList, historyCount, staleErr := listStaleSessions(projectRoot, list)
+		if staleErr != nil {
+			return commandErrorf(jsonOut, "session_list_stale_failed", "failed to compute stale sessions: %v", staleErr)
+		}
+		staleSessions = staleList
+		historicalCount = historyCount
+	}
 	if jsonOut {
 		payload := map[string]any{
 			"sessions": list,
 			"count":    len(list),
+		}
+		if stale {
+			payload["historicalCount"] = historicalCount
+			payload["staleCount"] = len(staleSessions)
+			if !jsonMin {
+				payload["staleSessions"] = staleSessions
+			}
 		}
 		if !jsonMin {
 			payload["projectOnly"] = projectOnly
@@ -64,8 +84,57 @@ func cmdSessionList(args []string) int {
 		writeJSON(payload)
 		return 0
 	}
-	fmt.Println(strings.Join(list, "\n"))
+	if !stale {
+		fmt.Println(strings.Join(list, "\n"))
+		return 0
+	}
+	fmt.Printf("active=%d historical=%d stale=%d\n", len(list), historicalCount, len(staleSessions))
+	if len(list) > 0 {
+		fmt.Println("active_sessions:")
+		fmt.Println(strings.Join(list, "\n"))
+	}
+	if len(staleSessions) > 0 {
+		fmt.Println("stale_sessions:")
+		fmt.Println(strings.Join(staleSessions, "\n"))
+	}
 	return 0
+}
+
+func listStaleSessions(projectRoot string, activeSessions []string) ([]string, int, error) {
+	metas, err := loadSessionMetasForProject(projectRoot, true)
+	if err != nil {
+		return nil, 0, err
+	}
+	activeSet := make(map[string]struct{}, len(activeSessions))
+	for _, session := range activeSessions {
+		activeSet[session] = struct{}{}
+	}
+	projectHashCurrent := projectHash(projectRoot)
+	historicalSet := map[string]struct{}{}
+	staleSet := map[string]struct{}{}
+	for _, meta := range metas {
+		session := strings.TrimSpace(meta.Session)
+		if session == "" {
+			continue
+		}
+		metaRoot := canonicalProjectRoot(meta.ProjectRoot)
+		if metaRoot == "" {
+			metaRoot = projectRoot
+		}
+		if projectHash(metaRoot) != projectHashCurrent {
+			continue
+		}
+		historicalSet[session] = struct{}{}
+		if _, ok := activeSet[session]; !ok {
+			staleSet[session] = struct{}{}
+		}
+	}
+	stale := make([]string, 0, len(staleSet))
+	for session := range staleSet {
+		stale = append(stale, session)
+	}
+	sort.Strings(stale)
+	return stale, len(historicalSet), nil
 }
 
 func listSessionsAcrossSockets(projectRoot string, projectOnly bool) ([]string, error) {

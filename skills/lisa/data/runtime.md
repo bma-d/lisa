@@ -93,9 +93,14 @@ Lifecycle:
 - Runtime sets tmux env vars: `LISA_SESSION`, `LISA_SESSION_NAME`, `LISA_AGENT`, `LISA_MODE`, `LISA_PROJECT_HASH`, `LISA_HEARTBEAT_FILE`, `LISA_DONE_FILE`.
 - Raw pane capture filters MCP startup/auth noise by default; opt out with `--keep-noise`.
 - Raw capture `--delta-from` supports offset/timestamp incremental fetch; JSON responses include `nextOffset` for polling loops.
+- `session capture --markers` / `session snapshot --markers` return compact marker-only summaries for gating.
+- `session monitor` final payload includes `nextOffset` when capture is available.
 - `session exists` supports `--project-root` for cross-root checks.
 - `session tree` reads metadata graph and may include historical roots; use `session list` for active-only views.
+- `session list --stale` reports metadata historical/stale counts relative to active tmux sessions.
 - Nested runs should always pass `--project-root`; use `lisa` in prompts by default and `./lisa` when repo-local binary is known to exist.
 - Use `--nested-policy force|off` to avoid prompt-heuristic ambiguity in Codex exec nesting.
+- Use `--nesting-intent nested|neutral` to explicitly override prompt heuristics.
+- Quote/doc prompt mentions (`The string './lisa' appears in docs only.`) are treated as non-executable for nested bypass.
 - JSON payloads include `stderrPolicy` so orchestrators can classify stderr as diagnostics channel.
 - After nested runs, perform cleanup (`cleanup --dry-run` first in shared environments).
