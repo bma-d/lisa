@@ -9,8 +9,8 @@ description: |
   Requires: tmux, claude or codex on PATH. Install: brew install bma-d/tap/lisa.
   Examples assume repo-local `./lisa`; only switch to global `lisa` intentionally.
 author: Claude Code
-version: 2.6.1
-date: 2026-02-20
+version: 2.6.2
+date: 2026-02-21
 tags: [lisa, tmux, orchestration, claude, codex, agents]
 ---
 
@@ -56,7 +56,7 @@ $LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --until-ma
 $LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --lines 300
 $LISA_BIN session kill --session "$SESSION" --project-root "$ROOT"
 ```
-Observed behavior (validated 2026-02-20):
+Observed behavior (validated 2026-02-21):
 - `--until-marker` returns `exitReason:"marker_found"` with `finalState:"in_progress"` / `finalStatus:"active"` (success, not terminal completion).
 - `--waiting-requires-turn-complete true` can timeout (`max_polls_exceeded`) for custom-command sessions without transcript turn boundaries.
 - `session exists` prints `false` and exits `1` when missing.
@@ -161,7 +161,7 @@ Exit: 0 by default for all resolved statuses (including `not_found`); with `--fa
 
 ### session monitor
 
-Block until terminal state.
+Block until success/terminal condition based on monitor flags.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -180,7 +180,7 @@ Block until terminal state.
 
 JSON output: `{"finalState","session","todosDone","todosTotal","outputFile","exitReason","polls","finalStatus"}`
 
-Exit reasons: `completed`, `crashed`, `not_found`, `stuck`, `waiting_input`, `waiting_input_turn_complete`, `marker_found`, `max_polls_exceeded`, `degraded_max_polls_exceeded`
+Exit reasons: `completed`, `crashed`, `not_found`, `stuck`, `waiting_input`, `waiting_input_turn_complete`, `marker_found`, `max_polls_exceeded`, `degraded_max_polls_exceeded`.
 
 Timeout nuance: JSON commonly returns `finalState:"timeout"` with `exitReason:"max_polls_exceeded"` and `finalStatus:"active"`.
 
@@ -190,7 +190,7 @@ Turn-complete nuance: `--waiting-requires-turn-complete true` is strict; with no
 
 Expectation nuance: `--expect terminal` fails fast on marker/waiting success paths (`expected_terminal_got_*`, exit `2`). `--expect marker` fails fast when marker is not first success condition (`expected_marker_got_*`, exit `2`).
 
-Exit codes: 0 = completed/waiting_input/waiting_input_turn_complete/marker_found, 2 = crashed/stuck/not_found/timeout/expectation-mismatch.
+Exit codes: 0 = completed/waiting_input/waiting_input_turn_complete/marker_found, 2 = crashed/stuck/not_found/timeout/expectation-mismatch (`expected_*`).
 
 ### session capture
 
@@ -279,15 +279,7 @@ When not using `--json`, Lisa prints a one-line summary. Exit 1 if any socket pr
 
 ### Other Commands
 
-| Command | Purpose |
-|---------|---------|
-| `doctor [--json]` | Check prerequisites (tmux + at least one of claude/codex). Exit 0 = ok, 1 = missing |
-| `cleanup [--dry-run] [--include-tmux-default] [--json]` | Remove stale sockets and kill detached no-client tmux servers |
-| `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--prompt`, `--agent-args`, `--no-dangerously-skip-permissions`, `--json`) |
-| `session smoke` | Deterministic nested smoke test (`--levels`, `--max-polls`, `--poll-interval`, `--keep-sessions`, `--json`) |
-| `skills sync` | Sync external Lisa skill into repo `skills/lisa` (`--from codex|claude|path`, `--repo-root`, `--json`) |
-| `skills install` | Install repo `skills/lisa` to `codex|claude|project` (`--to`, `--project-path`, `--repo-root`, `--json`) |
-| `version` | Print version (also `--version`, `-v`) |
+`doctor [--json]` validates prerequisites, `agent build-cmd` previews agent invocations, `skills sync/install` manages Lisa skill distribution, and `version` prints build info.
 
 ## Modes
 
@@ -320,9 +312,9 @@ Classification is process-first: pane status -> done file -> agent PID -> intera
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success / completed / waiting_input / waiting_input_turn_complete (with --stop-on-waiting) |
-| 1 | Error (bad flags, missing session, tmux failure) |
-| 2 | Monitor: crashed, stuck, not_found, timeout (`max_polls_exceeded` / `degraded_max_polls_exceeded`) |
+| 0 | Success (`completed`, `waiting_input`, `waiting_input_turn_complete`, `marker_found`) |
+| 1 | Command/runtime error (bad flags, tmux/IO failure) |
+| 2 | Monitor non-success (`crashed`, `stuck`, `not_found`, `max_polls_exceeded`, `degraded_max_polls_exceeded`, `expected_*`) |
 
 ## Recipes
 
@@ -432,15 +424,11 @@ Wording that reliably triggers nested bypass:
 Deterministic nested validation:
 
 ```bash
-# Built-in 3-level smoke
-./smoke-nested --project-root "$(pwd)" --max-polls 120
+# Preferred: built-in smoke supports levels 1-4
+./lisa session smoke --project-root "$(pwd)" --levels 4 --json
 
-# For 4-level verification, chain L1->L2->L3->L4 with command wrappers:
-# each level runs:
-#   ./lisa session spawn --command "/bin/bash <next-level-script>"
-#   ./lisa session monitor ...
-#   ./lisa session capture ...
-# and assert markers from all levels in L1 capture.
+# Optional legacy wrapper (3-level) when shell trace is needed
+./smoke-nested --project-root "$(pwd)" --max-polls 120
 ```
 
 ## State Detection (Process-First)
@@ -502,7 +490,7 @@ Artifacts cleaned on `kill`/`kill-all` (events preserved). Stale event files pru
 - Custom `--session` names must start with `lisa-`
 - Commands > 500 chars sent via temp script (not send-keys)
 - Text sent via tmux `load-buffer`/`paste-buffer` for safe multi-line delivery
-- `--json` available on spawn/send/status/monitor/capture/explain/doctor/cleanup/build-cmd
+- `--json` available on doctor/cleanup/agent build-cmd/skills sync/skills install/session name|spawn|send|status|explain|monitor|capture|tree|smoke|list|exists|kill|kill-all
 - Spawn wraps commands with heartbeat loop + EXIT trap (done file + session marker)
 - Claude gets `--dangerously-skip-permissions` by default (disable with `--no-dangerously-skip-permissions`)
 - Tmux env vars set per session: `LISA_SESSION`, `LISA_SESSION_NAME`, `LISA_AGENT`, `LISA_MODE`, `LISA_PROJECT_HASH`, `LISA_HEARTBEAT_FILE`, `LISA_DONE_FILE`
