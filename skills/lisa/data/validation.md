@@ -19,16 +19,13 @@ Validated: 2026-02-22
 - State-gated polling path: `session monitor --until-state waiting_input|completed|crashed --json`.
 - `session monitor` final payload includes `nextOffset` when capture is available.
 - `session monitor --stream-json --emit-handoff` emits `type=handoff` packets per poll.
-- `session monitor --stream-json --emit-handoff --event-budget <N>` emits bounded incremental handoff deltas tuned by token budget.
 - `session monitor --handoff-cursor-file <PATH>` emits incremental handoff deltas and persists `nextDeltaOffset`.
 - `session handoff --json-min` and `session context-pack --json-min` provide compact transfer payloads for multi-agent loops.
 - `session handoff --delta-from <N>` returns incremental `recent` events + `nextDeltaOffset`.
 - `session handoff --cursor-file /tmp/handoff.cursor` persists/reuses `nextDeltaOffset` across loops.
 - `session packet --json-min` provides one-call status + summary + recent handoff items.
-- `session packet --fields <csv>` projects payload to selected JSON fields for low-token transport.
 - `session packet --cursor-file <PATH>` persists/reuses handoff event delta offsets.
 - `session context-pack --strategy terse|balanced|full` applies deterministic default budgets.
-- `session context-pack --redact <rules>` applies built-in payload redaction (`none|all|paths|emails|secrets|numbers|tokens`).
 - `session context-pack --from-handoff <path|->` builds pack without live status polling.
 - Nested diagnostics path: `session spawn --dry-run --detect-nested --json` or `session detect-nested --json`.
 - `session detect-nested --rewrite` emits trigger-safe prompt rewrites.
@@ -46,8 +43,6 @@ Validated: 2026-02-22
 - `session capture --summary --token-budget N` returns bounded summary payloads.
 - `session capture --summary-style ops|debug` emits role-specific summary bodies.
 - `session route --budget N --emit-runbook` propagates token-budget hints into capture/context-pack steps.
-- `session route --topology planner,workers,reviewer` emits multi-agent topology graph payload.
-- `session route --cost-estimate` emits per-step token/time prediction payload.
 - `session route --from-state <PATH|->` routes from handoff/status JSON and emits `fromState` in payload.
 - `session list --active-only --with-next-action --json-min` returns filtered sessions plus per-session next actions.
 - `session list --cursor-file <PATH>` is meaningful only with `--delta-json` (cursor snapshot read/write).
@@ -55,18 +50,10 @@ Validated: 2026-02-22
 - `session guard --shared-tmux --enforce --command ...` returns `errorCode:"shared_tmux_guard_enforced"` on medium/high risk.
 - `session guard --shared-tmux --advice-only --command ...` preserves diagnostics while always exiting `0`.
 - `session smoke --chaos delay|drop-marker|fail-child|mixed --json` emits deterministic chaos metadata/results.
-- `session smoke` terminal gating uses `--stop-on-waiting false` during root monitor to avoid waiting-input expectation mismatch in delayed chaos paths.
-- `session smoke --chaos-report` normalizes expected-failure modes (`drop-marker|fail-child|mixed`) to pass when observed error code matches contract.
 - `session autopilot --json` emits step-by-step orchestration payload with per-step exit statuses.
 - `session autopilot --resume-from <PATH|->` resumes from first failed step (`resumedFrom`,`resumeStep`); `-` reads JSON from stdin.
-- `session autopilot --resume-from` preserves resumed `goal/mode` when caller does not override flags.
 - `session preflight --fast --json` runs reduced high-risk contract checks (`contract_count` lower than full mode).
 - `skills doctor --explain-drift --json` includes remediation hints per target.
-- `session schema --command <name> --json` emits JSON schema contract payloads for machine parsing.
-- `session checkpoint save|resume --file <PATH>` saves/resumes atomic orchestration bundles.
-- `session dedupe --task-hash <HASH>` enforces duplicate-task claims across active sessions.
-- `session list --priority --json-min` emits priority score/label fields and sorted queue.
-- `session capture --semantic-delta --cursor-file <PATH>` emits semantic deltas with persistent baseline.
 
 ## Observed Behaviors
 

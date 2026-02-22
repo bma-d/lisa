@@ -22,7 +22,6 @@ Axiom: minimum context, deterministic command contracts.
 7. For marker-gated monitor (`--until-marker`), choose a unique marker not present in prompt text.
 8. In shared tmux environments, run `session guard --shared-tmux --json` before cleanup/kill-all actions.
 9. `session guard --shared-tmux` returning `safe:false` is expected risk signaling (often exit `1`); switch to `--project-only` flows.
-10. For deterministic CI/non-blocking guard checks, set `session guard --machine-policy warn|off` explicitly.
 
 ## Crucial Commands
 
@@ -43,25 +42,20 @@ $LISA_BIN session preflight --agent codex --auto-model --project-root "$ROOT" --
 # spawn + monitor + capture + cleanup
 SESSION=$($LISA_BIN session spawn --agent codex --mode interactive --project-root "$ROOT" --prompt "Do X, then wait." --json | jq -r .session)
 $LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --until-state waiting_input --json-min --stream-json
-$LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --until-state waiting_input --json-min --stream-json --emit-handoff --handoff-cursor-file /tmp/lisa.monitor.cursor --event-budget 64
+$LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --until-state waiting_input --json-min --stream-json --emit-handoff --handoff-cursor-file /tmp/lisa.monitor.cursor
 $LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --until-jsonpath '$.sessionState=waiting_input' --json-min
 $LISA_BIN session snapshot --session "$SESSION" --project-root "$ROOT" --json-min
-$LISA_BIN session packet --session "$SESSION" --project-root "$ROOT" --cursor-file /tmp/lisa.packet.cursor --fields session,nextAction,nextOffset --json
-$LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --cursor-file /tmp/lisa.cursor --semantic-delta --json
+$LISA_BIN session packet --session "$SESSION" --project-root "$ROOT" --cursor-file /tmp/lisa.packet.cursor --json-min
+$LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --cursor-file /tmp/lisa.cursor --json-min
 $LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --markers "DONE_MARKER,ERROR_MARKER" --markers-json --json
 $LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --summary --summary-style ops --token-budget 320 --json
 $LISA_BIN session handoff --session "$SESSION" --project-root "$ROOT" --cursor-file /tmp/lisa.handoff.cursor --json-min
-$LISA_BIN session context-pack --for "$SESSION" --project-root "$ROOT" --strategy balanced --redact all --json-min
-$LISA_BIN session checkpoint save --session "$SESSION" --project-root "$ROOT" --file /tmp/lisa.checkpoint.json --json
-$LISA_BIN session checkpoint resume --file /tmp/lisa.checkpoint.json --json
-$LISA_BIN session dedupe --task-hash task-abc123 --session "$SESSION" --project-root "$ROOT" --json
+$LISA_BIN session context-pack --for "$SESSION" --project-root "$ROOT" --strategy balanced --json-min
 $LISA_BIN session kill --session "$SESSION" --project-root "$ROOT" --json
 
 # shared tmux safety gate + cleanup planning
 $LISA_BIN session guard --shared-tmux --enforce --command "./lisa session kill-all --project-only --project-root $ROOT" --json
-$LISA_BIN session guard --shared-tmux --machine-policy warn --json
 $LISA_BIN session guard --shared-tmux --advice-only --command "./lisa cleanup --include-tmux-default" --json
-$LISA_BIN session list --project-root "$ROOT" --priority --json-min
 $LISA_BIN session list --project-root "$ROOT" --delta-json --cursor-file /tmp/lisa.list.cursor --json-min
 $LISA_BIN cleanup --dry-run --json
 
@@ -70,8 +64,6 @@ $LISA_BIN session autopilot --goal analysis --agent codex --project-root "$ROOT"
   --summary --summary-style ops --token-budget 320 --kill-after true --json
 $LISA_BIN session autopilot --resume-from /tmp/lisa.autopilot.json --project-root "$ROOT" --json
 cat /tmp/lisa.autopilot.json | $LISA_BIN session autopilot --resume-from - --project-root "$ROOT" --json
-$LISA_BIN session route --goal nested --topology planner,workers,reviewer --cost-estimate --emit-runbook --project-root "$ROOT" --json
-$LISA_BIN session schema --command packet --json
 ```
 
 ## Nested Diagnostics
@@ -90,7 +82,6 @@ $LISA_BIN session spawn --agent codex --mode exec --project-root "$ROOT" \
   --prompt "Create nested lisa inside lisa inside lisa and report" \
   --dry-run --detect-nested --json
 $LISA_BIN session smoke --project-root "$ROOT" --levels 4 --prompt-style nested --model "$MODEL" --json
-$LISA_BIN session smoke --project-root "$ROOT" --levels 2 --chaos drop-marker --chaos-report --report-min --json
 $LISA_BIN session smoke --project-root "$ROOT" --levels 4 --report-min --json
 $LISA_BIN session route --goal nested --project-root "$ROOT" --emit-runbook --json
 ```
@@ -109,9 +100,6 @@ Exit/contract quick-map:
 - Usage/flag/runtime errors exit `1` (for example `--expect marker` without `--until-marker`)
 - `session list --cursor-file` is cursor snapshot I/O for `--delta-json` mode.
 - `autopilot` propagates failing step exit (`monitor` often `2` for timeout/terminal mismatch)
-- `autopilot --resume-from` preserves resumed `goal/mode` when not explicitly overridden.
-- `capture --markers --markers-json` emits `foundMarkers|markerCounts|markerHits` keys (parser-safe marker contracts).
-- `smoke --chaos-report` can return success on expected-failure chaos modes (`drop-marker|fail-child|mixed`) when observed error code matches contract.
 
 ## Router (JIT)
 

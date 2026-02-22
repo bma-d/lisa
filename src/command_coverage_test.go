@@ -11,11 +11,11 @@ import (
 )
 
 func TestBuildAgentCommandInteractiveVariants(t *testing.T) {
-	cmd, err := buildAgentCommand("claude", "interactive", "hello world", "--model sonnet")
+	cmd, err := buildAgentCommand("claude", "interactive", "hello world", "--model haiku")
 	if err != nil {
 		t.Fatalf("buildAgentCommand interactive claude failed: %v", err)
 	}
-	if cmd != "claude --dangerously-skip-permissions --model sonnet 'hello world'" {
+	if cmd != "claude --dangerously-skip-permissions --model haiku 'hello world'" {
 		t.Fatalf("unexpected claude interactive command: %q", cmd)
 	}
 
