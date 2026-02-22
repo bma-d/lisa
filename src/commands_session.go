@@ -49,6 +49,8 @@ func cmdSession(args []string) int {
 		return cmdSessionContextPack(args[1:])
 	case "route":
 		return cmdSessionRoute(args[1:])
+	case "autopilot":
+		return cmdSessionAutopilot(args[1:])
 	case "guard":
 		return cmdSessionGuard(args[1:])
 	case "tree":

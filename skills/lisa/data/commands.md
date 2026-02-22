@@ -146,6 +146,7 @@ Block until success/terminal condition per flags.
 | `--waiting-requires-turn-complete` | `false` | Require transcript turn-complete before waiting stop |
 | `--until-marker` | `""` | Stop on marker text in raw pane output |
 | `--until-state` | `""` | Stop when session reaches a target state |
+| `--until-jsonpath` | `""` | Stop when status JSON path is truthy or matches (`$.path=value`) |
 | `--expect` | `any` | `any`, `terminal`, `marker` (`marker` requires `--until-marker`) |
 | `--json-min` | false | Minimal JSON output (`session`,`finalState`,`exitReason`,`polls`,`nextOffset?`) |
 | `--stream-json` | false | Emit line-delimited JSON poll events before final payload |
@@ -189,6 +190,7 @@ Capture transcript (default for Claude) or raw pane output.
 | `--cursor-file` | `""` | Persist/reuse raw capture offsets across polling loops (`--raw` only) |
 | `--markers` | `""` | Marker-only extraction mode (`A,B,C`) |
 | `--summary` | false | Return bounded summary instead of full capture |
+| `--summary-style` | `terse` | Summary style: `terse`, `ops`, `debug` (requires `--summary` when non-default) |
 | `--token-budget` | `320` | Summary token budget |
 | `--keep-noise` | false | Keep Codex/MCP startup noise |
 | `--strip-noise` | n/a | Compatibility alias for default filtering |
@@ -237,7 +239,7 @@ JSON: `{"status":{...},"eventFile","events":[...],"droppedEventLines"}`
 
 Compact handoff packet for another orchestrator/agent loop.
 
-Flags: `--session` (required), `--project-root`, `--agent`, `--mode`, `--events`, `--delta-from`, `--json`, `--json-min`.
+Flags: `--session` (required), `--project-root`, `--agent`, `--mode`, `--events`, `--delta-from`, `--cursor-file`, `--json`, `--json-min`.
 
 JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","summary","recent?","deltaFrom?","nextDeltaOffset?","deltaCount?"}`.
 
@@ -245,7 +247,7 @@ JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","su
 
 Token-budgeted context packet with state + recent events + capture tail.
 
-Flags: `--for` (alias `--session`, required), `--project-root`, `--agent`, `--mode`, `--events`, `--lines`, `--token-budget`, `--strategy`, `--json`, `--json-min`.
+Flags: `--for` (alias `--session`, required), `--project-root`, `--agent`, `--mode`, `--events`, `--lines`, `--token-budget`, `--strategy`, `--from-handoff`, `--json`, `--json-min`.
 
 JSON: `{"session","sessionState","status","reason","nextAction","nextOffset","strategy","pack","tokenBudget","truncated"}`.
 
@@ -253,7 +255,7 @@ JSON: `{"session","sessionState","status","reason","nextAction","nextOffset","st
 
 Recommend mode/policy/model defaults for orchestration goal.
 
-Flags: `--goal` (`nested|analysis|exec`), `--agent`, `--prompt`, `--model`, `--project-root`, `--emit-runbook`, `--json`.
+Flags: `--goal` (`nested|analysis|exec`), `--agent`, `--prompt`, `--model`, `--budget`, `--project-root`, `--emit-runbook`, `--json`.
 
 JSON includes command preview + routing rationale:
 `{"goal","agent","mode","nestedPolicy","nestingIntent","model","command","monitorHint","nestedDetection","rationale","runbook?"}`.
@@ -262,15 +264,23 @@ JSON includes command preview + routing rationale:
 
 Shared tmux safety guard.
 
-Flags: `--shared-tmux` (required), `--command`, `--project-root`, `--json`.
+Flags: `--shared-tmux` (required), `--enforce`, `--command`, `--project-root`, `--json`.
 
-JSON: `{"sharedTmux","defaultSessionCount","defaultSessions","commandRisk","safe","warnings"}`.
+JSON: `{"sharedTmux","enforce","defaultSessionCount","defaultSessions","commandRisk","safe","warnings","remediation?","riskReasons?"}`.
+
+## session autopilot
+
+Policy-driven end-to-end orchestration loop: spawn -> monitor -> capture -> handoff -> optional cleanup.
+
+Flags: `--goal`, `--agent`, `--mode`, `--nested-policy`, `--nesting-intent`, `--session`, `--prompt`, `--model`, `--project-root`, `--poll-interval`, `--max-polls`, `--capture-lines`, `--summary`, `--summary-style`, `--token-budget`, `--kill-after`, `--json`.
+
+JSON: `{"ok","failedStep?","errorCode?","session","spawn","monitor","capture","handoff","cleanup?"}`.
 
 ## session list / exists / kill / kill-all / name
 
 | Command | Key Flags | Output |
 |---|---|---|
-| `session list` | `--all-sockets`, `--project-only`, `--stale`, `--prune-preview`, `--project-root`, `--json`, `--json-min` | names (text) or JSON |
+| `session list` | `--all-sockets`, `--project-only`, `--active-only`, `--with-next-action`, `--stale`, `--prune-preview`, `--project-root`, `--json`, `--json-min` | names (text) or JSON |
 | `session exists` | `--session`, `--project-root`, `--json` | `true`/`false` (exit 0/1) or JSON |
 | `session kill` | `--session`, `--project-root`, `--cleanup-all-hashes`, `--json` | `ok` or JSON (`found:false` + exit `1` when missing) |
 | `session kill-all` | `--project-only`, `--project-root`, `--cleanup-all-hashes`, `--json` | `killed N sessions` or JSON |
@@ -311,7 +321,7 @@ Tree semantics:
 
 Deterministic nested smoke (`L1 -> ... -> LN`) with marker assertions.
 
-Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|dot-slash|spawn|nested|neutral`), `--matrix-file` (`mode|prompt` lines; mode=`bypass|full-auto|any`), `--model`, `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--report-min`, `--json`.
+Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|dot-slash|spawn|nested|neutral`), `--matrix-file` (`mode|prompt` lines; mode=`bypass|full-auto|any`), `--chaos` (`none|delay|drop-marker|fail-child|mixed`), `--model`, `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--report-min`, `--json`.
 
 Behavior: uses nested `session spawn/monitor/capture`, asserts all level markers, non-zero exit on spawn/monitor/marker failure.
 `--prompt-style` adds a pre-smoke dry-run probe that validates nested wording detection.
@@ -356,7 +366,7 @@ Safety: in shared tmux environments, run `session guard --shared-tmux --json` an
 | `capabilities [--json]` | Emit command/flag capability matrix for orchestrator contract checks |
 | `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--nested-policy`, `--nesting-intent`, `--project-root`, `--prompt`, `--agent-args`, `--model`, `--no-dangerously-skip-permissions`, `--json`) |
 | `skills sync` | Sync external skill into repo `skills/lisa` (`--json`: `{"source","destination","files","directories","symlinks"}`) |
-| `skills doctor` | Verify installed Codex/Claude skill drift vs repo capability contract (`--deep` adds recursive content hash checks) |
+| `skills doctor` | Verify installed Codex/Claude skill drift vs repo capability contract (`--deep` adds recursive content hash checks, `--explain-drift` adds remediation hints) |
 | `skills install` | Install repo `skills/lisa` to `codex`, `claude`, or `project` (`--json`: `{"source","destination","files","directories","symlinks","noop?"}`; same source/destination now returns `noop:true`) |
 | `version` | Print build version (`version`, `--version`, `-v`) |
 

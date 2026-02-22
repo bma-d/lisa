@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -48,6 +49,13 @@ type monitorStreamHandoffMin struct {
 	Reason       string `json:"reason"`
 	NextAction   string `json:"nextAction"`
 	NextOffset   int    `json:"nextOffset,omitempty"`
+}
+
+type monitorJSONPathExpr struct {
+	Expr      string
+	Path      []string
+	HasExpect bool
+	ExpectRaw string
 }
 
 type sessionStatusMin struct {
@@ -400,6 +408,8 @@ func cmdSessionMonitor(args []string) int {
 	untilMarker := ""
 	untilMarkerSet := false
 	untilState := ""
+	untilJSONPathExprRaw := ""
+	untilJSONPath := monitorJSONPathExpr{}
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 	streamJSON := false
@@ -502,6 +512,12 @@ func cmdSessionMonitor(args []string) int {
 			}
 			untilState = parsedState
 			i++
+		case "--until-jsonpath":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --until-jsonpath")
+			}
+			untilJSONPathExprRaw = strings.TrimSpace(args[i+1])
+			i++
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -525,6 +541,13 @@ func cmdSessionMonitor(args []string) int {
 	}
 	if untilMarkerSet && untilMarker == "" {
 		return commandError(jsonOut, "invalid_until_marker", "invalid --until-marker: cannot be empty")
+	}
+	if untilJSONPathExprRaw != "" {
+		parsedJSONPath, parseErr := parseMonitorJSONPathExpr(untilJSONPathExprRaw)
+		if parseErr != nil {
+			return commandError(jsonOut, "invalid_until_jsonpath", parseErr.Error())
+		}
+		untilJSONPath = parsedJSONPath
 	}
 	if err := validateMonitorExpectationConfig(expect, untilMarker); err != nil {
 		return commandError(jsonOut, "expect_marker_requires_until_marker", err.Error())
@@ -573,7 +596,18 @@ func cmdSessionMonitor(args []string) int {
 		if untilStateMatched {
 			reason = status.SessionState
 		}
-		if untilMarker != "" {
+		untilJSONPathMatched := false
+		if reason == "" && untilJSONPath.Expr != "" {
+			matched, _, evalErr := evaluateMonitorJSONPathExpr(status, untilJSONPath)
+			if evalErr != nil {
+				return commandErrorf(jsonOut, "invalid_until_jsonpath", "invalid --until-jsonpath: %v", evalErr)
+			}
+			if matched {
+				reason = "jsonpath_matched"
+				untilJSONPathMatched = true
+			}
+		}
+		if reason == "" && untilMarker != "" {
 			capture, captureErr := tmuxCapturePaneFn(session, 320)
 			if captureErr == nil && strings.Contains(capture, untilMarker) {
 				reason = "marker_found"
@@ -634,7 +668,7 @@ func cmdSessionMonitor(args []string) int {
 				errorCode := ""
 				if !expectationMet {
 					errorCode = "monitor_expectation_mismatch"
-				} else if !untilStateMatched && !(reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input")) {
+				} else if !untilStateMatched && !untilJSONPathMatched && !(reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input")) {
 					errorCode = "monitor_" + reason
 				}
 				writeMonitorJSON(result, jsonMin, errorCode)
@@ -658,7 +692,7 @@ func cmdSessionMonitor(args []string) int {
 			if !expectationMet {
 				return 2
 			}
-			if reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input") || untilStateMatched {
+			if reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input") || untilStateMatched || untilJSONPathMatched {
 				return 0
 			}
 			return 2
@@ -867,6 +901,7 @@ func cmdSessionCapture(args []string) int {
 	cursorFile := ""
 	markersRaw := ""
 	tokenBudget := 320
+	summaryStyle := "terse"
 	stripNoise := true
 	projectRoot := getPWD()
 	projectRootExplicit := false
@@ -894,6 +929,12 @@ func cmdSessionCapture(args []string) int {
 			raw = true
 		case "--summary":
 			summary = true
+		case "--summary-style":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --summary-style")
+			}
+			summaryStyle = args[i+1]
+			i++
 		case "--delta-from":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --delta-from")
@@ -954,6 +995,14 @@ func cmdSessionCapture(args []string) int {
 	if summary && len(markersRaw) > 0 {
 		return commandError(jsonOut, "summary_incompatible_with_markers", "--summary cannot be combined with --markers")
 	}
+	parsedSummaryStyle, parseErr := parseCaptureSummaryStyle(summaryStyle)
+	if parseErr != nil {
+		return commandError(jsonOut, "invalid_summary_style", parseErr.Error())
+	}
+	summaryStyle = parsedSummaryStyle
+	if !summary && summaryStyle != "terse" {
+		return commandError(jsonOut, "summary_style_requires_summary", "--summary-style requires --summary")
+	}
 	markers, err := parseCaptureMarkersFlag(markersRaw)
 	if err != nil {
 		return commandError(jsonOut, "invalid_markers", err.Error())
@@ -989,13 +1038,14 @@ func cmdSessionCapture(args []string) int {
 		if err == nil {
 			if summary {
 				transcriptText := formatTranscriptPlain(messages)
-				summaryText, truncated := summarizeCaptureText(transcriptText, tokenBudget)
+				summaryText, truncated := summarizeCaptureTextByStyle(session, projectRoot, transcriptText, tokenBudget, summaryStyle)
 				if jsonOut {
 					payload := map[string]any{
 						"session":       session,
 						"claudeSession": sessionID,
 						"messageCount":  len(messages),
 						"summary":       summaryText,
+						"summaryStyle":  summaryStyle,
 						"tokenBudget":   tokenBudget,
 						"truncated":     truncated,
 					}
@@ -1056,17 +1106,18 @@ func cmdSessionCapture(args []string) int {
 	summaryText := ""
 	summaryTruncated := false
 	if summary {
-		summaryText, summaryTruncated = summarizeCaptureText(capture, tokenBudget)
+		summaryText, summaryTruncated = summarizeCaptureTextByStyle(session, projectRoot, capture, tokenBudget, summaryStyle)
 	}
 
 	if jsonOut {
 		payload := map[string]any{"session": session, "capture": capture}
 		if summary {
 			payload = map[string]any{
-				"session":     session,
-				"summary":     summaryText,
-				"tokenBudget": tokenBudget,
-				"truncated":   summaryTruncated,
+				"session":      session,
+				"summary":      summaryText,
+				"summaryStyle": summaryStyle,
+				"tokenBudget":  tokenBudget,
+				"truncated":    summaryTruncated,
 			}
 		}
 		if len(markers) > 0 {
@@ -1133,6 +1184,67 @@ func summarizeCaptureText(text string, tokenBudget int) (string, bool) {
 	}
 	body := strings.Join(window, "\n")
 	return truncateToTokenBudget(body, tokenBudget)
+}
+
+func summarizeCaptureTextByStyle(session, projectRoot, text string, tokenBudget int, style string) (string, bool) {
+	style = strings.ToLower(strings.TrimSpace(style))
+	base, baseTruncated := summarizeCaptureText(text, tokenBudget)
+	switch style {
+	case "terse":
+		return base, baseTruncated
+	case "ops":
+		lines := trimLines(text)
+		tail := lines
+		if len(tail) > 8 {
+			tail = tail[len(tail)-8:]
+		}
+		doneMarker := strings.Contains(text, "__LISA_SESSION_DONE__")
+		execMarker := strings.Contains(text, "__LISA_EXEC_DONE__")
+		hasError := strings.Contains(strings.ToLower(text), "error")
+		body := strings.Join([]string{
+			"ops_summary:",
+			"session=" + session,
+			fmt.Sprintf("lines=%d", len(lines)),
+			fmt.Sprintf("contains_done_marker=%t", doneMarker),
+			fmt.Sprintf("contains_exec_done=%t", execMarker),
+			fmt.Sprintf("contains_error=%t", hasError),
+			"tail:",
+			strings.Join(tail, "\n"),
+		}, "\n")
+		return truncateToTokenBudget(body, tokenBudget)
+	case "debug":
+		lines := trimLines(text)
+		head := lines
+		if len(head) > 6 {
+			head = head[:6]
+		}
+		tail := lines
+		if len(tail) > 10 {
+			tail = tail[len(tail)-10:]
+		}
+		stateSummary := "unavailable"
+		if tmuxHasSessionFn(session) {
+			status, err := computeSessionStatusFn(session, projectRoot, "auto", "auto", false, 0)
+			if err == nil {
+				status = normalizeStatusForSessionStatusOutput(status)
+				stateSummary = fmt.Sprintf("%s/%s reason=%s", status.SessionState, status.Status, status.ClassificationReason)
+			}
+		}
+		body := strings.Join([]string{
+			"debug_summary:",
+			"session=" + session,
+			"state=" + stateSummary,
+			fmt.Sprintf("chars=%d", len(text)),
+			fmt.Sprintf("lines=%d", len(lines)),
+			"head:",
+			strings.Join(head, "\n"),
+			"tail:",
+			strings.Join(tail, "\n"),
+		}, "\n")
+		return truncateToTokenBudget(body, tokenBudget)
+	default:
+		return base, baseTruncated
+	}
 }
 
 func updateCaptureState(projectRoot, session, capture string) error {
@@ -1263,6 +1375,129 @@ func shouldUseTranscriptCapture(session, projectRoot string) bool {
 		return false
 	}
 	return normalizeAgent(meta.Agent) == "claude"
+}
+
+func parseCaptureSummaryStyle(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "terse":
+		return "terse", nil
+	case "ops":
+		return "ops", nil
+	case "debug":
+		return "debug", nil
+	default:
+		return "", fmt.Errorf("invalid --summary-style: %s (expected terse|ops|debug)", raw)
+	}
+}
+
+func parseMonitorJSONPathExpr(raw string) (monitorJSONPathExpr, error) {
+	expr := strings.TrimSpace(raw)
+	if expr == "" {
+		return monitorJSONPathExpr{}, fmt.Errorf("expression cannot be empty")
+	}
+	pathPart := expr
+	expect := ""
+	hasExpect := false
+	if idx := strings.Index(pathPart, "="); idx >= 0 {
+		hasExpect = true
+		expect = strings.TrimSpace(pathPart[idx+1:])
+		pathPart = strings.TrimSpace(pathPart[:idx])
+		if expect == "" {
+			return monitorJSONPathExpr{}, fmt.Errorf("expected value after '='")
+		}
+	}
+	pathPart = strings.TrimPrefix(pathPart, "$.")
+	pathPart = strings.TrimPrefix(pathPart, "$")
+	pathPart = strings.TrimPrefix(pathPart, ".")
+	if pathPart == "" {
+		return monitorJSONPathExpr{}, fmt.Errorf("jsonpath must contain a field path")
+	}
+	segments := []string{}
+	for _, segment := range strings.Split(pathPart, ".") {
+		part := strings.TrimSpace(segment)
+		if part == "" {
+			return monitorJSONPathExpr{}, fmt.Errorf("invalid jsonpath segment in %q", raw)
+		}
+		segments = append(segments, part)
+	}
+	return monitorJSONPathExpr{
+		Expr:      expr,
+		Path:      segments,
+		HasExpect: hasExpect,
+		ExpectRaw: expect,
+	}, nil
+}
+
+func evaluateMonitorJSONPathExpr(status sessionStatus, expr monitorJSONPathExpr) (bool, string, error) {
+	payload := map[string]any{}
+	raw, err := json.Marshal(status)
+	if err != nil {
+		return false, "", err
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false, "", err
+	}
+	current := any(payload)
+	for _, segment := range expr.Path {
+		node, ok := current.(map[string]any)
+		if !ok {
+			return false, "", nil
+		}
+		next, exists := node[segment]
+		if !exists {
+			return false, "", nil
+		}
+		current = next
+	}
+	valueText := fmt.Sprintf("%v", current)
+	if !expr.HasExpect {
+		return isTruthyJSONValue(current), valueText, nil
+	}
+	return compareJSONPathExpected(current, expr.ExpectRaw), valueText, nil
+}
+
+func compareJSONPathExpected(current any, expectedRaw string) bool {
+	expected := strings.TrimSpace(expectedRaw)
+	switch v := current.(type) {
+	case bool:
+		return strings.EqualFold(strconv.FormatBool(v), expected)
+	case float64:
+		expectedNum, err := strconv.ParseFloat(expected, 64)
+		if err != nil {
+			return false
+		}
+		return v == expectedNum
+	case string:
+		unquoted := strings.Trim(expected, `"'`)
+		return v == unquoted
+	default:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return false
+		}
+		return string(raw) == expected
+	}
+}
+
+func isTruthyJSONValue(v any) bool {
+	switch value := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return value
+	case string:
+		return strings.TrimSpace(value) != ""
+	case float64:
+		return value != 0
+	case int:
+		return value != 0
+	case []any:
+		return len(value) > 0
+	case map[string]any:
+		return len(value) > 0
+	default:
+		return true
+	}
 }
 
 func parseAgentHint(agent string) (string, error) {

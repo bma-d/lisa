@@ -52,11 +52,21 @@ To validate nested wording detectors before smoke execution, use `./lisa session
 `session list --stale --prune-preview --json-min` now emits stale cleanup planning payloads (`pruneCmd`, `metaPath`, `projectRoot`).
 `session monitor --json-min` now emits low-token machine-readable fields (`session`,`finalState`,`exitReason`,`polls`).
 `session monitor --stream-json` now emits line-delimited poll events before the final monitor payload.
+`session monitor --until-jsonpath '$.path=value'` now supports JSON-structured stop gates.
 `session handoff --delta-from <N>` now emits incremental event packets with `nextDeltaOffset`.
+`session handoff --cursor-file /tmp/handoff.cursor` now persists/reuses incremental handoff offsets.
 `session context-pack --strategy terse|balanced|full` now applies deterministic packing defaults for token-sensitive routing.
+`session context-pack --from-handoff <path|->` now repacks handoff JSON without live polling.
 `session route --emit-runbook --json` now emits executable step plans (preflight/spawn/monitor/capture/handoff/cleanup).
+`session route --budget <N>` now propagates token-budget hints into runbook capture/context-pack steps.
+`session autopilot --json` now runs spawn->monitor->capture->handoff->optional cleanup in one command.
 `session detect-nested --rewrite --json` now emits trigger-safe prompt rewrites for non-trigger wording.
 `session smoke --report-min --json` now emits compact CI-oriented smoke payloads.
+`session smoke --chaos delay|drop-marker|fail-child|mixed --json` now supports deterministic fault-injection probes.
+`session guard --enforce` now hard-fails medium/high shared-tmux risk plans with remediation hints.
+`session list --active-only --with-next-action --json-min` now emits triage-ready queue payloads.
+`session capture --summary-style terse|ops|debug` now supports role-specific summary shaping.
+`skills doctor --explain-drift --json` now includes remediation hints per target.
 `session capture --json-min` now emits compact JSON payloads for transcript/raw capture paths.
 `session preflight --json` now validates environment + parser/contract assumptions in one call.
 JSON outputs now include `stderrPolicy` so orchestrators can classify stderr as diagnostics channel.

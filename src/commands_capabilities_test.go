@@ -108,6 +108,7 @@ func TestCommandCapabilitiesCommandSet(t *testing.T) {
 		"session detect-nested",
 		"session exists",
 		"session explain",
+		"session autopilot",
 		"session guard",
 		"session handoff",
 		"session kill",

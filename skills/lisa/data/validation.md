@@ -7,6 +7,7 @@ Validated: 2026-02-21
 - `session list` is source of truth for active sessions.
 - `session tree` is metadata graph; can include historical roots. Use `session tree --active-only` for active-only topology.
 - `session monitor --expect marker` requires `--until-marker`; missing marker target is usage error (exit `1`).
+- `session monitor --until-jsonpath '$.sessionState=waiting_input'` can terminate before marker/state gates and returns `exitReason:"jsonpath_matched"`.
 - `session kill --json` missing session exits `1` with JSON payload including `found:false` (no human stderr line).
 - `--waiting-requires-turn-complete true` may timeout (`max_polls_exceeded`) when turn-complete inference is unavailable.
 - Timeout monitor payloads use `finalState:"timeout"` and `finalStatus:"timeout"`.
@@ -19,7 +20,9 @@ Validated: 2026-02-21
 - `session monitor --stream-json --emit-handoff` emits `type=handoff` packets per poll.
 - `session handoff --json-min` and `session context-pack --json-min` provide compact transfer payloads for multi-agent loops.
 - `session handoff --delta-from <N>` returns incremental `recent` events + `nextDeltaOffset`.
+- `session handoff --cursor-file /tmp/handoff.cursor` persists/reuses `nextDeltaOffset` across loops.
 - `session context-pack --strategy terse|balanced|full` applies deterministic default budgets.
+- `session context-pack --from-handoff <path|->` builds pack without live status polling.
 - Nested diagnostics path: `session spawn --dry-run --detect-nested --json` or `session detect-nested --json`.
 - `session detect-nested --rewrite` emits trigger-safe prompt rewrites.
 - Deterministic nested override: `--nested-policy auto|force|off` and `--nesting-intent auto|nested|neutral`.
@@ -33,6 +36,13 @@ Validated: 2026-02-21
 - `session list --stale --prune-preview` emits safe stale cleanup commands.
 - `session tree --with-state --json-min` emits rows with topology + status/sessionState.
 - `session capture --summary --token-budget N` returns bounded summary payloads.
+- `session capture --summary-style ops|debug` emits role-specific summary bodies.
+- `session route --budget N --emit-runbook` propagates token-budget hints into capture/context-pack steps.
+- `session list --active-only --with-next-action --json-min` returns filtered sessions plus per-session next actions.
+- `session guard --shared-tmux --enforce --command ...` returns `errorCode:"shared_tmux_guard_enforced"` on medium/high risk.
+- `session smoke --chaos delay|drop-marker|fail-child|mixed --json` emits deterministic chaos metadata/results.
+- `session autopilot --json` emits step-by-step orchestration payload with per-step exit statuses.
+- `skills doctor --explain-drift --json` includes remediation hints per target.
 
 ## Observed Behaviors
 

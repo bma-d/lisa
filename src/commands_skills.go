@@ -45,6 +45,7 @@ type skillsDoctorTarget struct {
 	Status          string   `json:"status"`
 	MissingCommands []string `json:"missingCommands,omitempty"`
 	Detail          string   `json:"detail,omitempty"`
+	Remediation     []string `json:"remediation,omitempty"`
 }
 
 type skillsDoctorSummary struct {
@@ -223,6 +224,7 @@ func cmdSkillsDoctor(args []string) int {
 	repoRoot := getPWD()
 	jsonOut := hasJSONFlag(args)
 	deep := false
+	explainDrift := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -236,6 +238,8 @@ func cmdSkillsDoctor(args []string) int {
 			i++
 		case "--deep":
 			deep = true
+		case "--explain-drift":
+			explainDrift = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -265,12 +269,16 @@ func cmdSkillsDoctor(args []string) int {
 	for _, target := range []string{"codex", "claude"} {
 		path, pathErr := defaultSkillInstallPath(target)
 		if pathErr != nil {
-			targets = append(targets, skillsDoctorTarget{
+			targetErr := skillsDoctorTarget{
 				Target: target,
 				Path:   "",
 				Status: "error",
 				Detail: pathErr.Error(),
-			})
+			}
+			if explainDrift {
+				targetErr.Remediation = skillsDoctorRemediation(targetErr, canonicalProjectRoot(repoRoot))
+			}
+			targets = append(targets, targetErr)
 			continue
 		}
 		info := skillsDoctorTarget{
@@ -280,6 +288,9 @@ func cmdSkillsDoctor(args []string) int {
 		if !pathExists(path) {
 			info.Status = "missing"
 			info.Detail = "skill directory not found"
+			if explainDrift {
+				info.Remediation = skillsDoctorRemediation(info, canonicalProjectRoot(repoRoot))
+			}
 			targets = append(targets, info)
 			continue
 		}
@@ -288,6 +299,9 @@ func cmdSkillsDoctor(args []string) int {
 		if versionErr != nil {
 			info.Status = "error"
 			info.Detail = versionErr.Error()
+			if explainDrift {
+				info.Remediation = skillsDoctorRemediation(info, canonicalProjectRoot(repoRoot))
+			}
 			targets = append(targets, info)
 			continue
 		}
@@ -299,6 +313,9 @@ func cmdSkillsDoctor(args []string) int {
 			if hashErr != nil {
 				info.Status = "error"
 				info.Detail = fmt.Sprintf("content hash failed: %v", hashErr)
+				if explainDrift {
+					info.Remediation = skillsDoctorRemediation(info, canonicalProjectRoot(repoRoot))
+				}
 				targets = append(targets, info)
 				continue
 			}
@@ -324,6 +341,9 @@ func cmdSkillsDoctor(args []string) int {
 				info.Detail += "; "
 			}
 			info.Detail += "content drift"
+		}
+		if explainDrift {
+			info.Remediation = skillsDoctorRemediation(info, canonicalProjectRoot(repoRoot))
 		}
 		targets = append(targets, info)
 	}
@@ -364,8 +384,38 @@ func cmdSkillsDoctor(args []string) int {
 		if len(target.MissingCommands) > 0 {
 			fmt.Printf("  missing: %s\n", strings.Join(target.MissingCommands, ", "))
 		}
+		if len(target.Remediation) > 0 {
+			for _, hint := range target.Remediation {
+				fmt.Printf("  remediation: %s\n", hint)
+			}
+		}
 	}
 	return boolExit(ok)
+}
+
+func skillsDoctorRemediation(target skillsDoctorTarget, repoRoot string) []string {
+	hints := []string{}
+	baseInstall := fmt.Sprintf("./lisa skills install --to %s --repo-root %s --json", target.Target, shellQuote(repoRoot))
+	baseSync := fmt.Sprintf("./lisa skills sync --from %s --repo-root %s --json", target.Target, shellQuote(repoRoot))
+
+	switch target.Status {
+	case "up_to_date":
+		return hints
+	case "missing":
+		hints = append(hints, baseInstall)
+		hints = append(hints, "rerun doctor after install: ./lisa skills doctor --repo-root "+shellQuote(repoRoot)+" --json")
+	case "outdated":
+		hints = append(hints, baseInstall)
+		if len(target.MissingCommands) > 0 {
+			hints = append(hints, "command drift detected; verify commands.md contract after install")
+		}
+		hints = append(hints, "if local customizations are required, sync first: "+baseSync)
+		hints = append(hints, "rerun with deep hash check: ./lisa skills doctor --repo-root "+shellQuote(repoRoot)+" --deep --json")
+	default:
+		hints = append(hints, "inspect target path and permissions: "+target.Path)
+		hints = append(hints, baseInstall)
+	}
+	return hints
 }
 
 func resolveSkillsSourcePath(from, fromPath string) (string, error) {

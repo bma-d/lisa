@@ -31,6 +31,7 @@ type sessionSmokeSummary struct {
 	PromptStyle    string             `json:"promptStyle,omitempty"`
 	PromptProbe    *smokePromptProbe  `json:"promptProbe,omitempty"`
 	PromptMatrix   []smokeMatrixProbe `json:"promptMatrix,omitempty"`
+	Chaos          string             `json:"chaos,omitempty"`
 	WorkDir        string             `json:"workDir"`
 	KeepSessions   bool               `json:"keepSessions"`
 	ReportMin      bool               `json:"reportMin,omitempty"`
@@ -58,6 +59,7 @@ func cmdSessionSmoke(args []string) int {
 	levels := 3
 	promptStyle := "none"
 	matrixFile := ""
+	chaos := "none"
 	model := ""
 	maxPolls := 180
 	pollInterval := 1
@@ -96,6 +98,12 @@ func cmdSessionSmoke(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --matrix-file")
 			}
 			matrixFile = args[i+1]
+			i++
+		case "--chaos":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --chaos")
+			}
+			chaos = args[i+1]
 			i++
 		case "--model":
 			if i+1 >= len(args) {
@@ -142,6 +150,10 @@ func cmdSessionSmoke(args []string) int {
 	if err != nil {
 		return commandError(jsonOut, "invalid_prompt_style", err.Error())
 	}
+	chaos, err = parseSmokeChaosMode(chaos)
+	if err != nil {
+		return commandError(jsonOut, "invalid_chaos_mode", err.Error())
+	}
 	model, err = parseModel(model)
 	if err != nil {
 		return commandError(jsonOut, "invalid_model", err.Error())
@@ -186,6 +198,7 @@ func cmdSessionSmoke(args []string) int {
 		Levels:       levels,
 		Model:        model,
 		PromptStyle:  promptStyle,
+		Chaos:        chaos,
 		WorkDir:      workDir,
 		KeepSessions: keepSessions,
 		ReportMin:    reportMin,
@@ -244,6 +257,26 @@ func cmdSessionSmoke(args []string) int {
 			"echo "+markers[idx],
 			"echo LISA_SMOKE_SESSION="+sessions[idx],
 		)
+		switch chaos {
+		case "delay":
+			lines = append(lines, fmt.Sprintf("sleep %d", idx+1))
+		case "drop-marker":
+			if idx == levels-1 {
+				lines = removeSmokeScriptLine(lines, "echo "+markers[idx])
+				lines = append(lines, "echo LISA_SMOKE_CHAOS_MARKER_DROPPED=1")
+			}
+		case "fail-child":
+			if idx == levels-2 {
+				lines = append(lines, "echo LISA_SMOKE_CHAOS_FAIL_CHILD=1")
+				lines = append(lines, "exit 7")
+			}
+		case "mixed":
+			lines = append(lines, fmt.Sprintf("sleep %d", (idx%2)+1))
+			if idx == levels-1 {
+				lines = removeSmokeScriptLine(lines, "echo "+markers[idx])
+				lines = append(lines, "echo LISA_SMOKE_CHAOS_MIXED_MARKER_DROPPED=1")
+			}
+		}
 
 		body := strings.Join(lines, "\n") + "\n"
 		if err := os.WriteFile(scripts[idx], []byte(body), 0o700); err != nil {
@@ -357,11 +390,12 @@ func writeSmokeSummaryJSON(summary sessionSmokeSummary, reportMin bool) {
 		return
 	}
 	payload := map[string]any{
-		"ok":         summary.OK,
-		"errorCode":  summary.ErrorCode,
-		"error":      summary.Error,
-		"levels":     summary.Levels,
-		"model":      summary.Model,
+		"ok":          summary.OK,
+		"errorCode":   summary.ErrorCode,
+		"error":       summary.Error,
+		"levels":      summary.Levels,
+		"model":       summary.Model,
+		"chaos":       summary.Chaos,
 		"projectRoot": summary.ProjectRoot,
 	}
 	if summary.Monitor.FinalState != "" {
@@ -431,6 +465,32 @@ func parseSmokePromptStyle(style string) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid --prompt-style: %s (expected none|dot-slash|spawn|nested|neutral)", style)
 	}
+}
+
+func parseSmokeChaosMode(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "none":
+		return "none", nil
+	case "delay":
+		return "delay", nil
+	case "drop-marker":
+		return "drop-marker", nil
+	case "fail-child":
+		return "fail-child", nil
+	case "mixed":
+		return "mixed", nil
+	default:
+		return "", fmt.Errorf("invalid --chaos: %s (expected none|delay|drop-marker|fail-child|mixed)", raw)
+	}
+}
+
+func removeSmokeScriptLine(lines []string, target string) []string {
+	for i, line := range lines {
+		if line == target {
+			return append(lines[:i], lines[i+1:]...)
+		}
+	}
+	return lines
 }
 
 type smokePromptMatrixCase struct {

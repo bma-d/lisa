@@ -16,9 +16,19 @@ type staleSessionInfo struct {
 	PruneCmd    string `json:"pruneCmd,omitempty"`
 }
 
+type sessionListItem struct {
+	Session      string `json:"session"`
+	Status       string `json:"status,omitempty"`
+	SessionState string `json:"sessionState,omitempty"`
+	NextAction   string `json:"nextAction,omitempty"`
+	ProjectRoot  string `json:"projectRoot,omitempty"`
+}
+
 func cmdSessionList(args []string) int {
 	projectOnly := false
 	allSockets := false
+	activeOnly := false
+	withNextAction := false
 	stale := false
 	prunePreview := false
 	projectRoot := getPWD()
@@ -33,6 +43,10 @@ func cmdSessionList(args []string) int {
 			projectOnly = true
 		case "--all-sockets":
 			allSockets = true
+		case "--active-only":
+			activeOnly = true
+		case "--with-next-action":
+			withNextAction = true
 		case "--stale":
 			stale = true
 		case "--prune-preview":
@@ -57,6 +71,9 @@ func cmdSessionList(args []string) int {
 	if prunePreview && !stale {
 		return commandError(jsonOut, "prune_preview_requires_stale", "--prune-preview requires --stale")
 	}
+	if stale && activeOnly {
+		return commandError(jsonOut, "active_only_incompatible_with_stale", "--active-only cannot be combined with --stale")
+	}
 	list := []string{}
 	var err error
 	if allSockets {
@@ -68,6 +85,45 @@ func cmdSessionList(args []string) int {
 	}
 	if err != nil {
 		return commandErrorf(jsonOut, "session_list_failed", "failed to list sessions: %v", err)
+	}
+	items := []sessionListItem{}
+	if withNextAction || activeOnly {
+		filtered := make([]string, 0, len(list))
+		items = make([]sessionListItem, 0, len(list))
+		for _, session := range list {
+			resolvedRoot := resolveSessionProjectRoot(session, projectRoot, false)
+			restoreRuntime := withProjectRuntimeEnv(resolvedRoot)
+			status, statusErr := computeSessionStatusFn(session, resolvedRoot, "auto", "auto", false, 0)
+			restoreRuntime()
+			if statusErr != nil {
+				if !activeOnly {
+					filtered = append(filtered, session)
+				}
+				if withNextAction {
+					items = append(items, sessionListItem{
+						Session:     session,
+						ProjectRoot: resolvedRoot,
+						NextAction:  "session status",
+					})
+				}
+				continue
+			}
+			status = normalizeStatusForSessionStatusOutput(status)
+			if activeOnly && status.SessionState == "not_found" {
+				continue
+			}
+			filtered = append(filtered, session)
+			if withNextAction {
+				items = append(items, sessionListItem{
+					Session:      session,
+					Status:       status.Status,
+					SessionState: status.SessionState,
+					NextAction:   nextActionForState(status.SessionState),
+					ProjectRoot:  resolvedRoot,
+				})
+			}
+		}
+		list = filtered
 	}
 	staleSessions := []string{}
 	staleInfos := []staleSessionInfo{}
@@ -86,6 +142,9 @@ func cmdSessionList(args []string) int {
 			"sessions": list,
 			"count":    len(list),
 		}
+		if withNextAction {
+			payload["items"] = items
+		}
 		if stale {
 			payload["historicalCount"] = historicalCount
 			payload["staleCount"] = len(staleSessions)
@@ -99,13 +158,21 @@ func cmdSessionList(args []string) int {
 		if !jsonMin {
 			payload["projectOnly"] = projectOnly
 			payload["allSockets"] = allSockets
+			payload["activeOnly"] = activeOnly
+			payload["withNextAction"] = withNextAction
 			payload["projectRoot"] = projectRoot
 		}
 		writeJSON(payload)
 		return 0
 	}
 	if !stale {
-		fmt.Println(strings.Join(list, "\n"))
+		if withNextAction {
+			for _, item := range items {
+				fmt.Printf("%s,%s,%s,%s\n", item.Session, item.Status, item.SessionState, item.NextAction)
+			}
+		} else {
+			fmt.Println(strings.Join(list, "\n"))
+		}
 		return 0
 	}
 	fmt.Printf("active=%d historical=%d stale=%d\n", len(list), historicalCount, len(staleSessions))

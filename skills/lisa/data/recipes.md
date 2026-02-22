@@ -314,3 +314,50 @@ $LISA_BIN session route --goal nested --project-root "$(pwd)" --emit-runbook --j
 JSON parsing hygiene:
 - parse JSON from `stdout` only
 - use `stderrPolicy` in payload to classify stderr as diagnostics channel
+
+## Autopilot Loop
+
+```bash
+$LISA_BIN session autopilot \
+  --goal analysis \
+  --agent codex \
+  --project-root "$(pwd)" \
+  --summary --summary-style ops --token-budget 320 \
+  --kill-after true \
+  --json
+```
+
+## JSONPath-Gated Monitor
+
+```bash
+$LISA_BIN session monitor --session "$S" --project-root . \
+  --until-jsonpath '$.sessionState=waiting_input' \
+  --max-polls 60 --poll-interval 1 --json-min
+```
+
+## Handoff Cursor + Repack
+
+```bash
+# incremental handoff cursor
+$LISA_BIN session handoff --session "$S" --project-root . \
+  --cursor-file /tmp/lisa.handoff.cursor --json-min
+
+# repack from handoff payload without re-polling live session
+$LISA_BIN session handoff --session "$S" --project-root . --json > /tmp/handoff.json
+$LISA_BIN session context-pack --from-handoff /tmp/handoff.json \
+  --strategy balanced --token-budget 480 --json-min
+```
+
+## Route Budgeted Runbook
+
+```bash
+$LISA_BIN session route --goal exec --project-root . \
+  --budget 480 --emit-runbook --json
+```
+
+## Chaos Smoke Probes
+
+```bash
+$LISA_BIN session smoke --project-root . --levels 4 --chaos delay --json
+$LISA_BIN session smoke --project-root . --levels 4 --chaos drop-marker --report-min --json
+```

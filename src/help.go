@@ -26,6 +26,7 @@ var helpFuncs = map[string]func(){
 	"session handoff":       helpSessionHandoff,
 	"session context-pack":  helpSessionContextPack,
 	"session route":         helpSessionRoute,
+	"session autopilot":     helpSessionAutopilot,
 	"session guard":         helpSessionGuard,
 	"session tree":          helpSessionTree,
 	"session smoke":         helpSessionSmoke,
@@ -72,6 +73,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session handoff       Build compact handoff payload for another agent")
 	fmt.Fprintln(os.Stderr, "  session context-pack  Build token-budgeted context packet")
 	fmt.Fprintln(os.Stderr, "  session route         Recommend mode/policy/model for orchestration goal")
+	fmt.Fprintln(os.Stderr, "  session autopilot     Run spawn->monitor->capture->handoff orchestration")
 	fmt.Fprintln(os.Stderr, "  session guard         Shared-tmux safety guardrails")
 	fmt.Fprintln(os.Stderr, "  session tree          Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  session smoke         Run deterministic nested smoke test")
@@ -127,6 +129,7 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  handoff    Build compact handoff payload for another agent")
 	fmt.Fprintln(os.Stderr, "  context-pack Build token-budgeted context packet")
 	fmt.Fprintln(os.Stderr, "  route      Recommend mode/policy/model for orchestration goal")
+	fmt.Fprintln(os.Stderr, "  autopilot  Run spawn->monitor->capture->handoff orchestration")
 	fmt.Fprintln(os.Stderr, "  guard      Shared-tmux safety guardrails")
 	fmt.Fprintln(os.Stderr, "  tree       Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  smoke      Run deterministic nested smoke test")
@@ -280,6 +283,7 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --waiting-requires-turn-complete BOOL  Require transcript turn-complete before stopping on waiting_input (default: false)")
 	fmt.Fprintln(os.Stderr, "  --until-marker TEXT   Stop when raw pane output contains marker text")
 	fmt.Fprintln(os.Stderr, "  --until-state STATE   Stop when session state is reached")
+	fmt.Fprintln(os.Stderr, "  --until-jsonpath EXPR Stop when status JSON path resolves true/matches")
 	fmt.Fprintln(os.Stderr, "  --expect MODE         Success expectation: any|terminal|marker (default: any)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: session/finalState/exitReason/polls")
@@ -300,6 +304,7 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Persist/reuse delta offset cursor (raw capture only)")
 	fmt.Fprintln(os.Stderr, "  --markers CSV         Marker-only extraction (comma-separated)")
 	fmt.Fprintln(os.Stderr, "  --summary             Return bounded summary instead of full capture")
+	fmt.Fprintln(os.Stderr, "  --summary-style MODE  Summary style: terse|ops|debug (default: terse)")
 	fmt.Fprintln(os.Stderr, "  --token-budget N      Summary token budget (default: 320)")
 	fmt.Fprintln(os.Stderr, "  --keep-noise          Keep Codex/MCP startup noise in pane capture")
 	fmt.Fprintln(os.Stderr, "  --strip-noise         Compatibility alias for default noise filtering")
@@ -321,6 +326,7 @@ func helpSessionHandoff() {
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Mode hint: auto|interactive|exec (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --events N            Number of recent events to include (default: 8)")
 	fmt.Fprintln(os.Stderr, "  --delta-from N        Incremental event offset (non-negative integer)")
+	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Persist/reuse incremental event offset")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
@@ -339,6 +345,7 @@ func helpSessionContextPack() {
 	fmt.Fprintln(os.Stderr, "  --lines N             Raw capture lines for context tail (default: 120)")
 	fmt.Fprintln(os.Stderr, "  --token-budget N      Approx token budget for pack body (default: 700)")
 	fmt.Fprintln(os.Stderr, "  --strategy MODE       Pack strategy: terse|balanced|full (default: balanced)")
+	fmt.Fprintln(os.Stderr, "  --from-handoff PATH   Build from handoff JSON payload (use '-' for stdin)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
@@ -353,8 +360,34 @@ func helpSessionRoute() {
 	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: codex)")
 	fmt.Fprintln(os.Stderr, "  --prompt TEXT         Optional prompt override")
 	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model override")
+	fmt.Fprintln(os.Stderr, "  --budget N            Optional token budget hint for runbook/capture")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --emit-runbook        Include executable runbook JSON steps")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSessionAutopilot() {
+	fmt.Fprintln(os.Stderr, "lisa session autopilot — run spawn->monitor->capture->handoff orchestration")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session autopilot [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --goal GOAL           Orchestration goal: nested|analysis|exec (default: analysis)")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: codex)")
+	fmt.Fprintln(os.Stderr, "  --mode MODE           Optional mode override: interactive|exec")
+	fmt.Fprintln(os.Stderr, "  --nested-policy MODE  Optional nested policy override: auto|force|off")
+	fmt.Fprintln(os.Stderr, "  --nesting-intent MODE Optional nesting intent override: auto|nested|neutral")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Optional session name (must start with lisa-)")
+	fmt.Fprintln(os.Stderr, "  --prompt TEXT         Optional prompt override")
+	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model override")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --poll-interval N     Monitor poll interval seconds")
+	fmt.Fprintln(os.Stderr, "  --max-polls N         Monitor max polls")
+	fmt.Fprintln(os.Stderr, "  --capture-lines N     Raw capture lines for capture step")
+	fmt.Fprintln(os.Stderr, "  --summary             Capture summary instead of full raw output")
+	fmt.Fprintln(os.Stderr, "  --summary-style MODE  Summary style: terse|ops|debug (default: ops)")
+	fmt.Fprintln(os.Stderr, "  --token-budget N      Summary token budget when --summary is set")
+	fmt.Fprintln(os.Stderr, "  --kill-after BOOL     Kill session after handoff step (default: false)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -365,6 +398,7 @@ func helpSessionGuard() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --shared-tmux         Validate safety assumptions for shared tmux environments")
+	fmt.Fprintln(os.Stderr, "  --enforce             Escalate medium/high risk findings to hard failure")
 	fmt.Fprintln(os.Stderr, "  --command TEXT        Optional command string to risk-check")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
@@ -393,6 +427,8 @@ func helpSessionList() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --all-sockets         Discover active sessions across project sockets")
 	fmt.Fprintln(os.Stderr, "  --project-only        Only show sessions for current project")
+	fmt.Fprintln(os.Stderr, "  --active-only         Filter out sessions that resolve to not_found")
+	fmt.Fprintln(os.Stderr, "  --with-next-action    Include nextAction/status/sessionState per session")
 	fmt.Fprintln(os.Stderr, "  --stale               Include stale metadata-only session counts/list")
 	fmt.Fprintln(os.Stderr, "  --prune-preview       Include safe stale-session prune commands (requires --stale)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
@@ -427,6 +463,7 @@ func helpSessionSmoke() {
 	fmt.Fprintln(os.Stderr, "  --levels N            Nested depth (1-4, default: 3)")
 	fmt.Fprintln(os.Stderr, "  --prompt-style STYLE  Nested hint probe: none|dot-slash|spawn|nested|neutral")
 	fmt.Fprintln(os.Stderr, "  --matrix-file PATH    Prompt matrix file: mode|prompt (mode=bypass|full-auto|any)")
+	fmt.Fprintln(os.Stderr, "  --chaos MODE          Fault mode: none|delay|drop-marker|fail-child|mixed")
 	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model pin for smoke spawn sessions")
 	fmt.Fprintln(os.Stderr, "  --poll-interval N     Seconds between monitor polls (default: 1)")
 	fmt.Fprintln(os.Stderr, "  --max-polls N         Maximum polls per nested monitor (default: 180)")
@@ -555,5 +592,6 @@ func helpSkillsDoctor() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --repo-root PATH      Repo root that contains skills/ (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --deep                Include recursive content-hash drift checks")
+	fmt.Fprintln(os.Stderr, "  --explain-drift       Include remediation guidance for drift findings")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }

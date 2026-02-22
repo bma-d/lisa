@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,6 +29,42 @@ type contextPackStrategyConfig struct {
 	TokenBudget int
 }
 
+type sessionAutopilotStep struct {
+	OK       bool           `json:"ok"`
+	ExitCode int            `json:"exitCode,omitempty"`
+	Output   map[string]any `json:"output,omitempty"`
+	Error    string         `json:"error,omitempty"`
+}
+
+type sessionAutopilotSummary struct {
+	OK          bool                 `json:"ok"`
+	Goal        string               `json:"goal"`
+	Agent       string               `json:"agent"`
+	Mode        string               `json:"mode"`
+	ProjectRoot string               `json:"projectRoot"`
+	Session     string               `json:"session,omitempty"`
+	KillAfter   bool                 `json:"killAfter"`
+	Spawn       sessionAutopilotStep `json:"spawn"`
+	Monitor     sessionAutopilotStep `json:"monitor"`
+	Capture     sessionAutopilotStep `json:"capture"`
+	Handoff     sessionAutopilotStep `json:"handoff"`
+	Cleanup     sessionAutopilotStep `json:"cleanup,omitempty"`
+	ErrorCode   string               `json:"errorCode,omitempty"`
+	Error       string               `json:"error,omitempty"`
+	FailedStep  string               `json:"failedStep,omitempty"`
+}
+
+type handoffInputPayload struct {
+	Session      string               `json:"session"`
+	Status       string               `json:"status"`
+	SessionState string               `json:"sessionState"`
+	Reason       string               `json:"reason"`
+	NextAction   string               `json:"nextAction"`
+	NextOffset   int                  `json:"nextOffset"`
+	Recent       []sessionHandoffItem `json:"recent"`
+	CaptureTail  string               `json:"captureTail"`
+}
+
 func cmdSessionHandoff(args []string) int {
 	session := ""
 	projectRoot := getPWD()
@@ -36,6 +73,7 @@ func cmdSessionHandoff(args []string) int {
 	modeHint := "auto"
 	events := 8
 	deltaFrom := -1
+	cursorFile := ""
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 
@@ -88,6 +126,12 @@ func cmdSessionHandoff(args []string) int {
 			}
 			deltaFrom = offset
 			i++
+		case "--cursor-file":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --cursor-file")
+			}
+			cursorFile = strings.TrimSpace(args[i+1])
+			i++
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -100,6 +144,20 @@ func cmdSessionHandoff(args []string) int {
 
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
+	}
+	if cursorFile != "" {
+		cursorFileResolved, resolveErr := expandAndCleanPath(cursorFile)
+		if resolveErr != nil {
+			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", resolveErr)
+		}
+		cursorFile = cursorFileResolved
+		if deltaFrom < 0 {
+			cursorOffset, cursorErr := loadCursorOffset(cursorFile)
+			if cursorErr != nil {
+				return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", cursorErr)
+			}
+			deltaFrom = cursorOffset
+		}
 	}
 
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
@@ -126,11 +184,12 @@ func cmdSessionHandoff(args []string) int {
 	nextDeltaOffset := -1
 	if deltaFrom >= 0 {
 		deltaItems, deltaDropped, deltaNext, deltaErr := readSessionHandoffDelta(projectRoot, session, deltaFrom, events)
-		if deltaErr == nil {
-			items = deltaItems
-			droppedRecent = deltaDropped
-			nextDeltaOffset = deltaNext
+		if deltaErr != nil {
+			return commandErrorf(jsonOut, "handoff_delta_read_failed", "failed to read handoff delta: %v", deltaErr)
 		}
+		items = deltaItems
+		droppedRecent = deltaDropped
+		nextDeltaOffset = deltaNext
 	} else {
 		tail, _ := readSessionEventTailFn(projectRoot, session, events)
 		droppedRecent = tail.DroppedLines
@@ -148,6 +207,11 @@ func cmdSessionHandoff(args []string) int {
 	nextOffset := computeSessionCaptureNextOffset(session)
 	nextAction := nextActionForState(status.SessionState)
 	summary := fmt.Sprintf("state=%s reason=%s next=%s", status.SessionState, status.ClassificationReason, nextAction)
+	if cursorFile != "" && nextDeltaOffset >= 0 {
+		if writeErr := writeCursorOffset(cursorFile, nextDeltaOffset); writeErr != nil {
+			return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --cursor-file: %v", writeErr)
+		}
+	}
 
 	if jsonOut {
 		payload := map[string]any{
@@ -171,6 +235,9 @@ func cmdSessionHandoff(args []string) int {
 			if jsonMin {
 				payload["recent"] = items
 			}
+		}
+		if cursorFile != "" && !jsonMin {
+			payload["cursorFile"] = cursorFile
 		}
 		if status.SessionState == "not_found" {
 			payload["errorCode"] = "session_not_found"
@@ -208,6 +275,7 @@ func cmdSessionContextPack(args []string) int {
 	lines := 120
 	tokenBudget := 700
 	strategy := "balanced"
+	fromHandoff := ""
 	eventsSet := false
 	linesSet := false
 	tokenBudgetSet := false
@@ -282,6 +350,12 @@ func cmdSessionContextPack(args []string) int {
 			}
 			strategy = args[i+1]
 			i++
+		case "--from-handoff":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --from-handoff")
+			}
+			fromHandoff = strings.TrimSpace(args[i+1])
+			i++
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -292,9 +366,6 @@ func cmdSessionContextPack(args []string) int {
 		}
 	}
 
-	if session == "" {
-		return commandError(jsonOut, "missing_required_flag", "--for is required")
-	}
 	strategyConfig, err := parseContextPackStrategy(strategy)
 	if err != nil {
 		return commandError(jsonOut, "invalid_strategy", err.Error())
@@ -307,6 +378,22 @@ func cmdSessionContextPack(args []string) int {
 	}
 	if !tokenBudgetSet {
 		tokenBudget = strategyConfig.TokenBudget
+	}
+	var handoffInput *handoffInputPayload
+	if fromHandoff != "" {
+		handoffInput, err = loadHandoffInputPayload(fromHandoff)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_from_handoff", "failed to load --from-handoff: %v", err)
+		}
+		handoffSession := strings.TrimSpace(handoffInput.Session)
+		if session == "" {
+			session = handoffSession
+		} else if handoffSession != "" && session != handoffSession {
+			return commandErrorf(jsonOut, "from_handoff_session_mismatch", "session mismatch: --for=%s --from-handoff session=%s", session, handoffSession)
+		}
+	}
+	if session == "" {
+		return commandError(jsonOut, "missing_required_flag", "--for is required")
 	}
 
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
@@ -322,30 +409,61 @@ func cmdSessionContextPack(args []string) int {
 		return commandError(jsonOut, "invalid_mode_hint", err.Error())
 	}
 
-	status, err := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, false, 0)
-	if err != nil {
-		return commandError(jsonOut, "status_compute_failed", err.Error())
-	}
-	status = normalizeStatusForSessionStatusOutput(status)
-	tail, _ := readSessionEventTailFn(projectRoot, session, events)
-	recent := make([]string, 0, len(tail.Events))
-	for _, event := range tail.Events {
-		recent = append(recent, fmt.Sprintf("%s %s/%s %s", event.At, event.State, event.Status, event.Reason))
-	}
-
+	status := sessionStatus{Session: session}
+	recent := []string{}
 	captureTail := ""
-	if tmuxHasSessionFn(session) {
-		if capture, captureErr := tmuxCapturePaneFn(session, lines); captureErr == nil {
-			captureTail = strings.Join(trimLines(filterCaptureNoise(capture)), "\n")
+	droppedRecent := 0
+	nextOffset := 0
+	if handoffInput != nil {
+		status.Status = normalizeMonitorFinalStatus(handoffInput.SessionState, handoffInput.Status)
+		status.SessionState = strings.TrimSpace(handoffInput.SessionState)
+		status.ClassificationReason = strings.TrimSpace(handoffInput.Reason)
+		if status.Status == "" {
+			status.Status = strings.TrimSpace(handoffInput.Status)
 		}
-	}
-	if captureTail == "" {
-		captureTail = "(no live capture)"
+		if status.Status == "" {
+			status.Status = status.SessionState
+		}
+		if status.SessionState == "" {
+			status.SessionState = "in_progress"
+		}
+		if status.ClassificationReason == "" {
+			status.ClassificationReason = "from_handoff"
+		}
+		for _, item := range handoffInput.Recent {
+			recent = append(recent, fmt.Sprintf("%s %s/%s %s", item.At, item.State, item.Status, item.Reason))
+		}
+		captureTail = strings.TrimSpace(handoffInput.CaptureTail)
+		if captureTail == "" {
+			captureTail = "(from handoff: capture unavailable)"
+		}
+		nextOffset = handoffInput.NextOffset
+	} else {
+		statusComputed, statusErr := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, false, 0)
+		if statusErr != nil {
+			return commandError(jsonOut, "status_compute_failed", statusErr.Error())
+		}
+		status = normalizeStatusForSessionStatusOutput(statusComputed)
+		tail, _ := readSessionEventTailFn(projectRoot, session, events)
+		droppedRecent = tail.DroppedLines
+		recent = make([]string, 0, len(tail.Events))
+		for _, event := range tail.Events {
+			recent = append(recent, fmt.Sprintf("%s %s/%s %s", event.At, event.State, event.Status, event.Reason))
+		}
+
+		if tmuxHasSessionFn(session) {
+			if capture, captureErr := tmuxCapturePaneFn(session, lines); captureErr == nil {
+				captureTail = strings.Join(trimLines(filterCaptureNoise(capture)), "\n")
+			}
+		}
+		if captureTail == "" {
+			captureTail = "(no live capture)"
+		}
+		nextOffset = computeSessionCaptureNextOffset(session)
 	}
 
 	packRaw := buildContextPackRaw(strategyConfig.Name, session, status, recent, captureTail)
 	pack, truncated := truncateToTokenBudget(packRaw, tokenBudget)
-	nextOffset := computeSessionCaptureNextOffset(session)
 
 	if jsonOut {
 		payload := map[string]any{
@@ -363,7 +481,10 @@ func cmdSessionContextPack(args []string) int {
 		if !jsonMin {
 			payload["projectRoot"] = projectRoot
 			payload["events"] = len(recent)
-			payload["droppedRecent"] = tail.DroppedLines
+			payload["droppedRecent"] = droppedRecent
+			if fromHandoff != "" {
+				payload["fromHandoff"] = fromHandoff
+			}
 		}
 		if status.SessionState == "not_found" {
 			payload["errorCode"] = "session_not_found"
@@ -388,6 +509,7 @@ func cmdSessionRoute(args []string) int {
 	projectRoot := getPWD()
 	prompt := ""
 	model := ""
+	budget := 0
 	emitRunbook := false
 	jsonOut := hasJSONFlag(args)
 
@@ -424,6 +546,16 @@ func cmdSessionRoute(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --model")
 			}
 			model = args[i+1]
+			i++
+		case "--budget":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --budget")
+			}
+			n, parseErr := parsePositiveIntFlag(args[i+1], "--budget")
+			if parseErr != nil {
+				return commandError(jsonOut, "invalid_budget", parseErr.Error())
+			}
+			budget = n
 			i++
 		case "--emit-runbook":
 			emitRunbook = true
@@ -483,6 +615,9 @@ func cmdSessionRoute(args []string) int {
 	if detection.Reason != "" {
 		rationale = append(rationale, "nested_reason="+detection.Reason)
 	}
+	if budget > 0 {
+		rationale = append(rationale, fmt.Sprintf("budget=%d", budget))
+	}
 	monitorHint := "session monitor --expect terminal --json"
 	if mode == "interactive" {
 		monitorHint = "session monitor --stop-on-waiting true --json"
@@ -502,8 +637,11 @@ func cmdSessionRoute(args []string) int {
 		"nestedDetection": detection,
 		"rationale":       rationale,
 	}
+	if budget > 0 {
+		payload["budget"] = budget
+	}
 	if emitRunbook {
-		payload["runbook"] = buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model)
+		payload["runbook"] = buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model, budget)
 	}
 	if jsonOut {
 		writeJSON(payload)
@@ -515,6 +653,7 @@ func cmdSessionRoute(args []string) int {
 
 func cmdSessionGuard(args []string) int {
 	sharedTmux := false
+	enforce := false
 	commandText := ""
 	projectRoot := canonicalProjectRoot(getPWD())
 	jsonOut := hasJSONFlag(args)
@@ -525,6 +664,8 @@ func cmdSessionGuard(args []string) int {
 			return showHelp("session guard")
 		case "--shared-tmux":
 			sharedTmux = true
+		case "--enforce":
+			enforce = true
 		case "--command":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --command")
@@ -567,19 +708,51 @@ func cmdSessionGuard(args []string) int {
 	}
 
 	commandRisk := "low"
+	riskReasons := []string{}
 	lowerCommand := strings.ToLower(strings.TrimSpace(commandText))
 	if lowerCommand != "" {
 		if strings.Contains(lowerCommand, "cleanup") && strings.Contains(lowerCommand, "--include-tmux-default") {
 			commandRisk = "high"
 			warnings = append(warnings, "command targets tmux default server")
+			riskReasons = append(riskReasons, "cleanup_include_tmux_default")
 		}
 		if strings.Contains(lowerCommand, "session kill-all") && !strings.Contains(lowerCommand, "--project-only") {
 			commandRisk = "high"
 			warnings = append(warnings, "kill-all without --project-only can impact unrelated sessions")
+			riskReasons = append(riskReasons, "kill_all_without_project_only")
+		}
+		if strings.Contains(lowerCommand, "cleanup") && !strings.Contains(lowerCommand, "--dry-run") {
+			if commandRisk == "low" {
+				commandRisk = "medium"
+			}
+			warnings = append(warnings, "cleanup without --dry-run mutates runtime artifacts")
+			riskReasons = append(riskReasons, "cleanup_without_dry_run")
+		}
+		if strings.Contains(lowerCommand, "session kill") && !strings.Contains(lowerCommand, "--project-root") {
+			if commandRisk == "low" {
+				commandRisk = "medium"
+			}
+			warnings = append(warnings, "session kill without --project-root may target wrong project hash")
+			riskReasons = append(riskReasons, "kill_without_project_root")
 		}
 	}
 
 	safe := len(defaultSessions) == 0 && commandRisk != "high"
+	if enforce {
+		if len(defaultSessions) > 0 || commandRisk != "low" {
+			safe = false
+		}
+	}
+	remediation := []string{}
+	if !safe {
+		remediation = append(remediation, "use --project-only and --project-root for destructive session commands")
+		if strings.Contains(lowerCommand, "cleanup") {
+			remediation = append(remediation, "run cleanup with --dry-run before executing mutations")
+		}
+		if len(defaultSessions) > 0 {
+			remediation = append(remediation, "avoid touching default tmux server while shared sessions are active")
+		}
+	}
 	if jsonOut {
 		payload := map[string]any{
 			"sharedTmux":          true,
@@ -588,21 +761,418 @@ func cmdSessionGuard(args []string) int {
 			"defaultSessions":     defaultSessions,
 			"command":             commandText,
 			"commandRisk":         commandRisk,
+			"enforce":             enforce,
 			"safe":                safe,
 			"warnings":            warnings,
 		}
+		if len(riskReasons) > 0 {
+			payload["riskReasons"] = riskReasons
+		}
+		if len(remediation) > 0 {
+			payload["remediation"] = remediation
+		}
 		if !safe {
-			payload["errorCode"] = "shared_tmux_risk_detected"
+			if enforce {
+				payload["errorCode"] = "shared_tmux_guard_enforced"
+			} else {
+				payload["errorCode"] = "shared_tmux_risk_detected"
+			}
 		}
 		writeJSON(payload)
 		return boolExit(safe)
 	}
 
-	fmt.Printf("safe=%t default_sessions=%d command_risk=%s\n", safe, len(defaultSessions), commandRisk)
+	fmt.Printf("safe=%t enforce=%t default_sessions=%d command_risk=%s\n", safe, enforce, len(defaultSessions), commandRisk)
 	for _, warning := range warnings {
 		fmt.Printf("- %s\n", warning)
 	}
+	for _, line := range remediation {
+		fmt.Printf("- remediation: %s\n", line)
+	}
 	return boolExit(safe)
+}
+
+func cmdSessionAutopilot(args []string) int {
+	goal := "analysis"
+	agent := "codex"
+	modeOverride := ""
+	nestedPolicyOverride := ""
+	nestingIntentOverride := ""
+	projectRoot := getPWD()
+	session := ""
+	prompt := ""
+	model := ""
+	pollInterval := defaultPollIntervalSeconds
+	maxPolls := defaultMaxPolls
+	captureLines := 220
+	summary := false
+	summaryStyle := "ops"
+	tokenBudget := 320
+	killAfter := false
+	jsonOut := hasJSONFlag(args)
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session autopilot")
+		case "--goal":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --goal")
+			}
+			goal = args[i+1]
+			i++
+		case "--agent":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
+			}
+			agent = args[i+1]
+			i++
+		case "--mode":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --mode")
+			}
+			modeOverride = args[i+1]
+			i++
+		case "--nested-policy":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --nested-policy")
+			}
+			nestedPolicyOverride = args[i+1]
+			i++
+		case "--nesting-intent":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --nesting-intent")
+			}
+			nestingIntentOverride = args[i+1]
+			i++
+		case "--project-root":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
+			}
+			projectRoot = args[i+1]
+			i++
+		case "--session":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --session")
+			}
+			session = strings.TrimSpace(args[i+1])
+			i++
+		case "--prompt":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --prompt")
+			}
+			prompt = args[i+1]
+			i++
+		case "--model":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --model")
+			}
+			model = args[i+1]
+			i++
+		case "--poll-interval":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --poll-interval")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--poll-interval")
+			if err != nil {
+				return commandError(jsonOut, "invalid_poll_interval", err.Error())
+			}
+			pollInterval = n
+			i++
+		case "--max-polls":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --max-polls")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--max-polls")
+			if err != nil {
+				return commandError(jsonOut, "invalid_max_polls", err.Error())
+			}
+			maxPolls = n
+			i++
+		case "--capture-lines":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --capture-lines")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--capture-lines")
+			if err != nil {
+				return commandError(jsonOut, "invalid_capture_lines", err.Error())
+			}
+			captureLines = n
+			i++
+		case "--summary":
+			summary = true
+		case "--summary-style":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --summary-style")
+			}
+			summaryStyle = args[i+1]
+			i++
+		case "--token-budget":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --token-budget")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--token-budget")
+			if err != nil {
+				return commandError(jsonOut, "invalid_token_budget", err.Error())
+			}
+			tokenBudget = n
+			i++
+		case "--kill-after":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --kill-after")
+			}
+			parsed, err := parseBoolFlag(args[i+1])
+			if err != nil {
+				return commandErrorf(jsonOut, "invalid_kill_after", "invalid --kill-after: %s (expected true|false)", args[i+1])
+			}
+			killAfter = parsed
+			i++
+		case "--json":
+			jsonOut = true
+		default:
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
+		}
+	}
+
+	var err error
+	goal, err = parseSessionRouteGoal(goal)
+	if err != nil {
+		return commandError(jsonOut, "invalid_goal", err.Error())
+	}
+	agent, err = parseAgent(agent)
+	if err != nil {
+		return commandError(jsonOut, "invalid_agent", err.Error())
+	}
+	projectRoot = canonicalProjectRoot(projectRoot)
+	if session != "" && !strings.HasPrefix(session, "lisa-") {
+		return commandError(jsonOut, "invalid_session_name", `invalid --session: must start with "lisa-"`)
+	}
+	mode, nestedPolicy, nestingIntent, defaultPrompt, defaultModel := sessionRouteDefaults(goal)
+	if strings.TrimSpace(modeOverride) != "" {
+		mode, err = parseMode(modeOverride)
+		if err != nil {
+			return commandError(jsonOut, "invalid_mode", err.Error())
+		}
+	}
+	if strings.TrimSpace(nestedPolicyOverride) != "" {
+		nestedPolicy, err = parseNestedPolicy(nestedPolicyOverride)
+		if err != nil {
+			return commandError(jsonOut, "invalid_nested_policy", err.Error())
+		}
+	}
+	if strings.TrimSpace(nestingIntentOverride) != "" {
+		nestingIntent, err = parseNestingIntent(nestingIntentOverride)
+		if err != nil {
+			return commandError(jsonOut, "invalid_nesting_intent", err.Error())
+		}
+	}
+	if strings.TrimSpace(prompt) == "" {
+		prompt = defaultPrompt
+	}
+	if strings.TrimSpace(model) == "" {
+		model = defaultModel
+	}
+	model, err = parseModel(model)
+	if err != nil {
+		return commandError(jsonOut, "invalid_model", err.Error())
+	}
+	summaryStyle, err = parseCaptureSummaryStyle(summaryStyle)
+	if err != nil {
+		return commandError(jsonOut, "invalid_summary_style", err.Error())
+	}
+	if !summary && summaryStyle != "ops" {
+		return commandError(jsonOut, "summary_style_requires_summary", "--summary-style requires --summary")
+	}
+
+	binPath, err := osExecutableFn()
+	if err != nil {
+		return commandErrorf(jsonOut, "binary_path_resolve_failed", "failed to resolve lisa binary path: %v", err)
+	}
+	binPath = strings.TrimSpace(binPath)
+	if binPath == "" {
+		return commandError(jsonOut, "binary_path_empty", "failed to resolve lisa binary path")
+	}
+
+	summaryPayload := sessionAutopilotSummary{
+		OK:          false,
+		Goal:        goal,
+		Agent:       agent,
+		Mode:        mode,
+		ProjectRoot: projectRoot,
+		KillAfter:   killAfter,
+	}
+
+	runStep := func(stepName string, stepArgs []string) (map[string]any, int, string) {
+		stdout, stderrText, runErr := runLisaSubcommandFn(binPath, stepArgs...)
+		if runErr != nil {
+			exitCode := commandExitCode(runErr)
+			msg := strings.TrimSpace(stderrText)
+			if msg == "" {
+				msg = runErr.Error()
+			}
+			return nil, exitCode, msg
+		}
+		payload := map[string]any{}
+		if decodeErr := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &payload); decodeErr != nil {
+			return nil, 1, fmt.Sprintf("%s output parse failed: %v", stepName, decodeErr)
+		}
+		return payload, 0, ""
+	}
+
+	spawnArgs := []string{
+		"session", "spawn",
+		"--agent", agent,
+		"--mode", mode,
+		"--nested-policy", nestedPolicy,
+		"--nesting-intent", nestingIntent,
+		"--project-root", projectRoot,
+		"--prompt", prompt,
+		"--json",
+	}
+	if session != "" {
+		spawnArgs = append(spawnArgs, "--session", session)
+	}
+	if model != "" && agent == "codex" {
+		spawnArgs = append(spawnArgs, "--model", model)
+	}
+	spawnOutput, spawnCode, spawnErr := runStep("spawn", spawnArgs)
+	summaryPayload.Spawn = sessionAutopilotStep{
+		OK:       spawnCode == 0,
+		ExitCode: spawnCode,
+		Output:   spawnOutput,
+		Error:    spawnErr,
+	}
+	if spawnCode != 0 || spawnOutput == nil {
+		summaryPayload.ErrorCode = "autopilot_spawn_failed"
+		summaryPayload.Error = spawnErr
+		summaryPayload.FailedStep = "spawn"
+		if jsonOut {
+			writeJSON(summaryPayload)
+		} else {
+			fmt.Fprintf(os.Stderr, "autopilot spawn failed: %s\n", spawnErr)
+		}
+		if spawnCode == 0 {
+			return 1
+		}
+		return spawnCode
+	}
+	spawnedSession := strings.TrimSpace(fmt.Sprintf("%v", spawnOutput["session"]))
+	if spawnedSession == "" {
+		summaryPayload.ErrorCode = "autopilot_spawn_parse_failed"
+		summaryPayload.Error = "spawn payload missing session field"
+		summaryPayload.FailedStep = "spawn"
+		if jsonOut {
+			writeJSON(summaryPayload)
+		} else {
+			fmt.Fprintln(os.Stderr, "autopilot spawn failed: missing session in spawn output")
+		}
+		return 1
+	}
+	summaryPayload.Session = spawnedSession
+
+	monitorArgs := []string{
+		"session", "monitor",
+		"--session", spawnedSession,
+		"--project-root", projectRoot,
+		"--poll-interval", strconv.Itoa(pollInterval),
+		"--max-polls", strconv.Itoa(maxPolls),
+		"--json",
+	}
+	if mode == "interactive" {
+		monitorArgs = append(monitorArgs, "--stop-on-waiting", "true")
+	} else {
+		monitorArgs = append(monitorArgs, "--expect", "terminal")
+	}
+	monitorOutput, monitorCode, monitorErr := runStep("monitor", monitorArgs)
+	summaryPayload.Monitor = sessionAutopilotStep{
+		OK:       monitorCode == 0,
+		ExitCode: monitorCode,
+		Output:   monitorOutput,
+		Error:    monitorErr,
+	}
+
+	captureArgs := []string{
+		"session", "capture",
+		"--session", spawnedSession,
+		"--project-root", projectRoot,
+		"--raw",
+		"--lines", strconv.Itoa(captureLines),
+		"--json",
+	}
+	if summary {
+		captureArgs = append(captureArgs, "--summary", "--summary-style", summaryStyle, "--token-budget", strconv.Itoa(tokenBudget))
+	}
+	captureOutput, captureCode, captureErr := runStep("capture", captureArgs)
+	summaryPayload.Capture = sessionAutopilotStep{
+		OK:       captureCode == 0,
+		ExitCode: captureCode,
+		Output:   captureOutput,
+		Error:    captureErr,
+	}
+
+	handoffArgs := []string{
+		"session", "handoff",
+		"--session", spawnedSession,
+		"--project-root", projectRoot,
+		"--json",
+	}
+	handoffOutput, handoffCode, handoffErr := runStep("handoff", handoffArgs)
+	summaryPayload.Handoff = sessionAutopilotStep{
+		OK:       handoffCode == 0,
+		ExitCode: handoffCode,
+		Output:   handoffOutput,
+		Error:    handoffErr,
+	}
+
+	finalCode := 0
+	if monitorCode != 0 {
+		summaryPayload.ErrorCode = "autopilot_monitor_failed"
+		summaryPayload.Error = monitorErr
+		summaryPayload.FailedStep = "monitor"
+		finalCode = monitorCode
+	} else if captureCode != 0 {
+		summaryPayload.ErrorCode = "autopilot_capture_failed"
+		summaryPayload.Error = captureErr
+		summaryPayload.FailedStep = "capture"
+		finalCode = captureCode
+	} else if handoffCode != 0 {
+		summaryPayload.ErrorCode = "autopilot_handoff_failed"
+		summaryPayload.Error = handoffErr
+		summaryPayload.FailedStep = "handoff"
+		finalCode = handoffCode
+	}
+
+	if killAfter {
+		cleanupOutput, cleanupCode, cleanupErr := runStep("cleanup", []string{
+			"session", "kill",
+			"--session", spawnedSession,
+			"--project-root", projectRoot,
+			"--json",
+		})
+		summaryPayload.Cleanup = sessionAutopilotStep{
+			OK:       cleanupCode == 0,
+			ExitCode: cleanupCode,
+			Output:   cleanupOutput,
+			Error:    cleanupErr,
+		}
+		if finalCode == 0 && cleanupCode != 0 {
+			summaryPayload.ErrorCode = "autopilot_cleanup_failed"
+			summaryPayload.Error = cleanupErr
+			summaryPayload.FailedStep = "cleanup"
+			finalCode = cleanupCode
+		}
+	}
+
+	summaryPayload.OK = finalCode == 0
+	if jsonOut {
+		writeJSON(summaryPayload)
+	} else {
+		fmt.Printf("session=%s ok=%t\n", summaryPayload.Session, summaryPayload.OK)
+		if summaryPayload.Error != "" {
+			fmt.Fprintf(os.Stderr, "autopilot failed at %s: %s\n", summaryPayload.FailedStep, summaryPayload.Error)
+		}
+	}
+	return finalCode
 }
 
 func parseSessionRouteGoal(goal string) (string, error) {
@@ -755,7 +1325,7 @@ func parseNonNegativeIntFlag(raw, flag string) (int, error) {
 	return n, nil
 }
 
-func buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model string) map[string]any {
+func buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model string, budget int) map[string]any {
 	spawn := fmt.Sprintf("./lisa session spawn --agent %s --mode %s --nested-policy %s --nesting-intent %s --project-root %s --prompt %s --json",
 		agent, mode, nestedPolicy, nestingIntent, shellQuote(projectRoot), shellQuote(prompt))
 	if model != "" && agent == "codex" {
@@ -765,34 +1335,47 @@ func buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, pr
 	if mode == "interactive" {
 		monitor = "./lisa session monitor --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --stop-on-waiting true --json"
 	}
-	return map[string]any{
-		"steps": []map[string]any{
-			{
-				"id":      "preflight",
-				"command": "./lisa session preflight --agent " + agent + " --project-root " + shellQuote(projectRoot) + " --json",
-			},
-			{
-				"id":      "spawn",
-				"command": spawn,
-				"note":    "extract SESSION from spawn JSON payload",
-			},
-			{
-				"id":      "monitor",
-				"command": monitor,
-			},
-			{
-				"id":      "capture",
-				"command": "./lisa session capture --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --raw --json-min",
-			},
-			{
-				"id":      "handoff",
-				"command": "./lisa session handoff --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --json-min",
-			},
-			{
-				"id":      "cleanup",
-				"command": "./lisa session kill --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --json",
-			},
+	capture := "./lisa session capture --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --raw --json-min"
+	contextPack := ""
+	if budget > 0 {
+		capture = "./lisa session capture --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --raw --summary --summary-style ops --token-budget " + strconv.Itoa(budget) + " --json"
+		contextPack = "./lisa session context-pack --for \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --strategy balanced --token-budget " + strconv.Itoa(budget) + " --json-min"
+	}
+	steps := []map[string]any{
+		{
+			"id":      "preflight",
+			"command": "./lisa session preflight --agent " + agent + " --project-root " + shellQuote(projectRoot) + " --json",
 		},
+		{
+			"id":      "spawn",
+			"command": spawn,
+			"note":    "extract SESSION from spawn JSON payload",
+		},
+		{
+			"id":      "monitor",
+			"command": monitor,
+		},
+		{
+			"id":      "capture",
+			"command": capture,
+		},
+		{
+			"id":      "handoff",
+			"command": "./lisa session handoff --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --json-min",
+		},
+	}
+	if contextPack != "" {
+		steps = append(steps, map[string]any{
+			"id":      "context-pack",
+			"command": contextPack,
+		})
+	}
+	steps = append(steps, map[string]any{
+		"id":      "cleanup",
+		"command": "./lisa session kill --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --json",
+	})
+	return map[string]any{
+		"steps": steps,
 	}
 }
 
@@ -869,4 +1452,53 @@ func writeCursorOffset(path string, offset int) error {
 		return err
 	}
 	return writeFileAtomic(path, []byte(strconv.Itoa(offset)+"\n"))
+}
+
+func commandExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	type exitCoder interface {
+		ExitCode() int
+	}
+	if ec, ok := err.(exitCoder); ok {
+		code := ec.ExitCode()
+		if code >= 0 {
+			return code
+		}
+	}
+	return 1
+}
+
+func loadHandoffInputPayload(from string) (*handoffInputPayload, error) {
+	source := strings.TrimSpace(from)
+	if source == "" {
+		return nil, fmt.Errorf("empty handoff source")
+	}
+	var raw []byte
+	var err error
+	switch source {
+	case "-":
+		raw, err = io.ReadAll(os.Stdin)
+	default:
+		path, resolveErr := expandAndCleanPath(source)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		raw, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	payload := handoffInputPayload{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	payload.Session = strings.TrimSpace(payload.Session)
+	payload.Status = strings.TrimSpace(payload.Status)
+	payload.SessionState = strings.TrimSpace(payload.SessionState)
+	payload.Reason = strings.TrimSpace(payload.Reason)
+	payload.NextAction = strings.TrimSpace(payload.NextAction)
+	payload.CaptureTail = strings.TrimSpace(payload.CaptureTail)
+	return &payload, nil
 }
