@@ -49,6 +49,7 @@ lisa session capture
 lisa session handoff
 lisa session context-pack
 lisa session route
+lisa session autopilot
 lisa session guard
 lisa session tree
 lisa session smoke
@@ -481,6 +482,7 @@ Flags:
 - `--waiting-requires-turn-complete true|false` (default `false`)
 - `--until-marker TEXT`: stop successfully when raw pane output contains marker text
 - `--until-state STATE`: stop when session reaches target state (`waiting_input|completed|crashed|...`)
+- `--until-jsonpath EXPR`: stop when status JSON path expression resolves true/matches
 - `--expect any|terminal|marker` (default `any`)
 - `--json`
 - `--json-min` (minimal JSON: `session`, `finalState`, `exitReason`, `polls`)
@@ -594,6 +596,7 @@ Flags:
 - `--lines N` (default `120`)
 - `--token-budget N` (default `700`)
 - `--strategy`: `terse|balanced|full` (default `balanced`; adjusts default events/lines/token-budget)
+- `--from-handoff PATH`: build from handoff JSON payload (`-` for stdin)
 - `--json`
 - `--json-min`
 
@@ -611,8 +614,37 @@ Flags:
 - `--agent`: `claude|codex` (default `codex`)
 - `--prompt`: optional override
 - `--model`: optional codex model override
+- `--budget N`: optional token budget hint for runbook/capture
 - `--project-root`
 - `--emit-runbook`: include executable spawn/monitor/capture/handoff/cleanup plan JSON
+- `--json`
+
+### `session autopilot`
+
+Run end-to-end orchestration (`spawn -> monitor -> capture -> handoff`, optional cleanup).
+
+```bash
+lisa session autopilot --goal analysis --json
+```
+
+Flags:
+
+- `--goal`: `nested|analysis|exec` (default `analysis`)
+- `--agent`: `claude|codex` (default `codex`)
+- `--mode`: optional override `interactive|exec`
+- `--nested-policy`: optional override `auto|force|off`
+- `--nesting-intent`: optional override `auto|nested|neutral`
+- `--session NAME`: optional explicit session name (`lisa-*`)
+- `--prompt`: optional override
+- `--model`: optional codex model override
+- `--project-root`
+- `--poll-interval N`: monitor poll interval seconds (default `30`)
+- `--max-polls N`: monitor max polls (default `120`)
+- `--capture-lines N`: raw capture lines for capture step (default `220`)
+- `--summary`: capture summary instead of full raw output
+- `--summary-style`: `terse|ops|debug` (default `ops`; requires `--summary`)
+- `--token-budget N`: summary token budget when `--summary` is set (default `320`)
+- `--kill-after true|false`: kill session after handoff (default `false`)
 - `--json`
 
 ### `session guard`
@@ -621,12 +653,14 @@ Shared tmux safety guardrails before cleanup/kill-all.
 
 ```bash
 lisa session guard --shared-tmux --json
+lisa session guard --shared-tmux --enforce --json
 lisa session guard --shared-tmux --command "lisa cleanup --include-tmux-default" --json
 ```
 
 Flags:
 
 - `--shared-tmux` (required)
+- `--enforce`: escalate medium/high risk findings to hard failure (exit non-zero)
 - `--command`: optional command-risk check
 - `--project-root`
 - `--json`
@@ -716,6 +750,7 @@ Deterministic nested Lisa smoke test (`L1 -> ... -> LN`) with marker assertions.
 
 ```bash
 lisa session smoke --levels 3
+lisa session smoke --levels 4 --chaos mixed --json
 lisa session smoke --levels 4 --json
 ```
 
@@ -725,6 +760,7 @@ Flags:
 - `--levels N` (1-4, default `3`)
 - `--prompt-style STYLE` (`none|dot-slash|spawn|nested|neutral`, default `none`)
 - `--matrix-file PATH`: prompt regression matrix (`mode|prompt`, mode = `bypass|full-auto|any`)
+- `--chaos MODE`: fault mode (`none|delay|drop-marker|fail-child|mixed`, default `none`)
 - `--model NAME`: optional Codex model pin for smoke spawn sessions
 - `--poll-interval N` (default `1`)
 - `--max-polls N` (default `180`)
@@ -739,6 +775,12 @@ Behavior:
 - Returns non-zero on any missing marker, spawn/monitor failure, or timeout.
 - Optional `--prompt-style` runs a nested-wording probe (`session spawn --dry-run --detect-nested --json`) before smoke execution and records probe result in JSON summary.
 - Optional `--matrix-file` runs a multi-prompt regression sweep before smoke execution and fails on expectation mismatch.
+- `--chaos` modes:
+  - `none`: normal deterministic run
+  - `delay`: injects per-level sleep delays
+  - `drop-marker`: removes deepest-level done marker to force marker assertion failure
+  - `fail-child`: exits one child session non-zero to force monitor failure
+  - `mixed`: combines delay + deepest-level marker drop
 
 ### `session exists`
 
@@ -844,6 +886,7 @@ JSON support:
 - `session handoff`
 - `session context-pack`
 - `session route`
+- `session autopilot`
 - `session guard`
 - `session tree`
 - `session smoke`

@@ -25,6 +25,9 @@ func TestHelpExitZero(t *testing.T) {
 		{"session explain --help", []string{"session", "explain", "--help"}},
 		{"session monitor --help", []string{"session", "monitor", "--help"}},
 		{"session capture --help", []string{"session", "capture", "--help"}},
+		{"session context-pack --help", []string{"session", "context-pack", "--help"}},
+		{"session route --help", []string{"session", "route", "--help"}},
+		{"session autopilot --help", []string{"session", "autopilot", "--help"}},
 		{"session smoke --help", []string{"session", "smoke", "--help"}},
 		{"session preflight --help", []string{"session", "preflight", "--help"}},
 		{"session list --help", []string{"session", "list", "--help"}},
@@ -105,6 +108,26 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 			"session spawn",
 			[]string{"session", "spawn", "--help"},
 			[]string{"lisa session spawn", "--agent", "--mode", "--session", "--prompt", "--width", "--height", "--json"},
+		},
+		{
+			"session monitor",
+			[]string{"session", "monitor", "--help"},
+			[]string{"lisa session monitor", "--until-jsonpath", "--json"},
+		},
+		{
+			"session context-pack",
+			[]string{"session", "context-pack", "--help"},
+			[]string{"lisa session context-pack", "--from-handoff", "--token-budget", "--json"},
+		},
+		{
+			"session route",
+			[]string{"session", "route", "--help"},
+			[]string{"lisa session route", "--budget", "--emit-runbook", "--json"},
+		},
+		{
+			"session autopilot",
+			[]string{"session", "autopilot", "--help"},
+			[]string{"lisa session autopilot", "--capture-lines", "--kill-after", "--json"},
 		},
 		{
 			"session smoke",

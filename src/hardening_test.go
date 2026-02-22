@@ -643,6 +643,7 @@ func TestTmuxWrappersWithFakeBinary(t *testing.T) {
 		`log="${TMUX_LOG_FILE:-/tmp/tmux.log}"`,
 		`echo "$@" >> "$log"`,
 		`if [ -n "${TMUX:-}" ]; then echo "TMUX_ENV_SET" >> "$log"; else echo "TMUX_ENV_UNSET" >> "$log"; fi`,
+		`if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then echo "OAUTH_ENV_PRESENT" >> "$log"; fi`,
 		`sock=""`,
 		`if [ "$1" = "-S" ]; then`,
 		`  sock="$2"`,
@@ -680,11 +681,17 @@ func TestTmuxWrappersWithFakeBinary(t *testing.T) {
 	origLog := os.Getenv("TMUX_LOG_FILE")
 	origHas := os.Getenv("TMUX_HAS_SESSION")
 	origTMUX := os.Getenv("TMUX")
+	origManagedOAuth, hadManagedOAuth := os.LookupEnv(lisaClaudeOAuthTokenRuntimeEnv)
 	t.Cleanup(func() {
 		_ = os.Setenv("PATH", origPath)
 		_ = os.Setenv("TMUX_LOG_FILE", origLog)
 		_ = os.Setenv("TMUX_HAS_SESSION", origHas)
 		_ = os.Setenv("TMUX", origTMUX)
+		if hadManagedOAuth {
+			_ = os.Setenv(lisaClaudeOAuthTokenRuntimeEnv, origManagedOAuth)
+		} else {
+			_ = os.Unsetenv(lisaClaudeOAuthTokenRuntimeEnv)
+		}
 	})
 	if err := os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath); err != nil {
 		t.Fatalf("failed to set PATH: %v", err)
@@ -692,6 +699,7 @@ func TestTmuxWrappersWithFakeBinary(t *testing.T) {
 	_ = os.Setenv("TMUX_LOG_FILE", logPath)
 	_ = os.Setenv("TMUX_HAS_SESSION", "1")
 	_ = os.Setenv("TMUX", "/tmp/parent,123,1")
+	_ = os.Setenv(lisaClaudeOAuthTokenRuntimeEnv, "oauth-secret-token")
 
 	projectRoot := t.TempDir()
 	expectedSocket := tmuxSocketPathForProjectRoot(projectRoot)
@@ -758,6 +766,15 @@ func TestTmuxWrappersWithFakeBinary(t *testing.T) {
 	}
 	if !strings.Contains(logText, "TMUX_SOCKET:"+expectedSocket) {
 		t.Fatalf("expected tmux socket path marker in log: %s", logText)
+	}
+	if !strings.Contains(logText, "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Fatalf("expected new-session env export to include CLAUDE_CODE_OAUTH_TOKEN, log: %s", logText)
+	}
+	if strings.Contains(logText, "CLAUDE_CODE_OAUTH_TOKEN=oauth-secret-token") {
+		t.Fatalf("expected oauth token not to appear in tmux args, log: %s", logText)
+	}
+	if !strings.Contains(logText, "OAUTH_ENV_PRESENT") {
+		t.Fatalf("expected managed oauth token to be passed via process env, log: %s", logText)
 	}
 	if !strings.Contains(logText, "LISA_TMUX_SOCKET="+expectedSocket) {
 		t.Fatalf("expected spawned pane env to include LISA_TMUX_SOCKET, log: %s", logText)

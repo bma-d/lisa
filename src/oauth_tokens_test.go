@@ -2,9 +2,11 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -152,15 +154,17 @@ func TestSessionSpawnUsesManagedOAuthToken(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origNew := tmuxNewSessionWithStartupFn
 	origSaveMeta := saveSessionMetaFn
-	origSelect := selectClaudeOAuthTokenFn
-	origPeek := peekNextClaudeOAuthTokenFn
+	origReserve := reserveClaudeOAuthTokenForOwnerFn
+	origConsume := consumeReservedClaudeOAuthTokenForOwnerFn
+	origRelease := releaseClaudeOAuthTokenReservationForOwnerFn
 	origEnv := os.Getenv(lisaClaudeOAuthTokenRuntimeEnv)
 	t.Cleanup(func() {
 		tmuxHasSessionFn = origHas
 		tmuxNewSessionWithStartupFn = origNew
 		saveSessionMetaFn = origSaveMeta
-		selectClaudeOAuthTokenFn = origSelect
-		peekNextClaudeOAuthTokenFn = origPeek
+		reserveClaudeOAuthTokenForOwnerFn = origReserve
+		consumeReservedClaudeOAuthTokenForOwnerFn = origConsume
+		releaseClaudeOAuthTokenReservationForOwnerFn = origRelease
 		if origEnv == "" {
 			_ = os.Unsetenv(lisaClaudeOAuthTokenRuntimeEnv)
 		} else {
@@ -171,11 +175,27 @@ func TestSessionSpawnUsesManagedOAuthToken(t *testing.T) {
 	projectRoot := t.TempDir()
 	session := "lisa-oauth-managed-spawn"
 	tmuxHasSessionFn = func(string) bool { return false }
-	selectClaudeOAuthTokenFn = func() (claudeOAuthTokenSelection, bool, error) {
+	reserveClaudeOAuthTokenForOwnerFn = func(owner string) (claudeOAuthTokenSelection, bool, error) {
+		if owner == "" {
+			t.Fatalf("expected non-empty reservation owner")
+		}
 		return claudeOAuthTokenSelection{ID: "oauth-test-id", Token: "oauth-test-token"}, true, nil
 	}
-	peekNextClaudeOAuthTokenFn = func() (string, bool, error) {
-		return "oauth-test-id", true, nil
+	consumeCalls := 0
+	consumeReservedClaudeOAuthTokenForOwnerFn = func(owner, id string) (claudeOAuthTokenSelection, bool, error) {
+		consumeCalls++
+		if owner == "" {
+			t.Fatalf("expected non-empty consume owner")
+		}
+		if id != "oauth-test-id" {
+			t.Fatalf("unexpected consume id: %q", id)
+		}
+		return claudeOAuthTokenSelection{ID: "oauth-test-id", Token: "oauth-test-token"}, true, nil
+	}
+	releaseCalls := 0
+	releaseClaudeOAuthTokenReservationForOwnerFn = func(owner, id string) (bool, error) {
+		releaseCalls++
+		return true, nil
 	}
 
 	seenManagedEnv := ""
@@ -215,8 +235,269 @@ func TestSessionSpawnUsesManagedOAuthToken(t *testing.T) {
 	if capturedMeta.OAuthTokenID != "oauth-test-id" {
 		t.Fatalf("expected meta oauth token id, got %q", capturedMeta.OAuthTokenID)
 	}
+	if consumeCalls != 1 {
+		t.Fatalf("expected oauth consume once, got %d", consumeCalls)
+	}
+	if releaseCalls != 0 {
+		t.Fatalf("did not expect reservation release on successful consume, got %d", releaseCalls)
+	}
 	if got := os.Getenv(lisaClaudeOAuthTokenRuntimeEnv); got != origEnv {
 		t.Fatalf("expected managed env restored after spawn, got %q", got)
+	}
+}
+
+func TestSessionSpawnDryRunSkipsOAuthPreviewWhenSelectionFails(t *testing.T) {
+	origPreview := previewClaudeOAuthTokenSelectionFn
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionWithStartupFn
+	t.Cleanup(func() {
+		previewClaudeOAuthTokenSelectionFn = origPreview
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionWithStartupFn = origNew
+	})
+
+	previewClaudeOAuthTokenSelectionFn = func() (claudeOAuthTokenSelection, bool, error) {
+		return claudeOAuthTokenSelection{}, false, errors.New("lock timeout")
+	}
+	tmuxHasSessionFn = func(string) bool { return false }
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+		t.Fatalf("tmux new-session should not run in dry-run")
+		return nil
+	}
+
+	stdout, _ := captureOutput(t, func() {
+		code := cmdSessionSpawn([]string{
+			"--session", "lisa-oauth-dry-run-preview",
+			"--project-root", t.TempDir(),
+			"--agent", "claude",
+			"--mode", "interactive",
+			"--command", "echo ready",
+			"--dry-run",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected dry-run success, got %d", code)
+		}
+	})
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("failed parsing dry-run payload: %v (%q)", err, stdout)
+	}
+	if _, ok := payload["oauthTokenId"]; ok {
+		t.Fatalf("did not expect oauthTokenId in dry-run payload when selection preview fails: %v", payload)
+	}
+}
+
+func TestSessionSpawnDoesNotConsumeOAuthTokenWhenTmuxCreateFails(t *testing.T) {
+	origReserve := reserveClaudeOAuthTokenForOwnerFn
+	origConsume := consumeReservedClaudeOAuthTokenForOwnerFn
+	origRelease := releaseClaudeOAuthTokenReservationForOwnerFn
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionWithStartupFn
+	t.Cleanup(func() {
+		reserveClaudeOAuthTokenForOwnerFn = origReserve
+		consumeReservedClaudeOAuthTokenForOwnerFn = origConsume
+		releaseClaudeOAuthTokenReservationForOwnerFn = origRelease
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionWithStartupFn = origNew
+	})
+
+	reserveClaudeOAuthTokenForOwnerFn = func(owner string) (claudeOAuthTokenSelection, bool, error) {
+		return claudeOAuthTokenSelection{ID: "oauth-test-id", Token: "oauth-test-token"}, true, nil
+	}
+	consumeCalled := false
+	consumeReservedClaudeOAuthTokenForOwnerFn = func(owner, id string) (claudeOAuthTokenSelection, bool, error) {
+		consumeCalled = true
+		return claudeOAuthTokenSelection{ID: id, Token: "oauth-test-token"}, true, nil
+	}
+	releaseCalled := false
+	releaseClaudeOAuthTokenReservationForOwnerFn = func(owner, id string) (bool, error) {
+		releaseCalled = true
+		return true, nil
+	}
+	tmuxHasSessionFn = func(string) bool { return false }
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+		return errors.New("tmux create failed")
+	}
+
+	_, _ = captureOutput(t, func() {
+		code := cmdSessionSpawn([]string{
+			"--session", "lisa-oauth-no-consume-tmux-fail",
+			"--project-root", t.TempDir(),
+			"--agent", "claude",
+			"--mode", "interactive",
+			"--command", "echo ready",
+		})
+		if code == 0 {
+			t.Fatalf("expected spawn failure")
+		}
+	})
+	if consumeCalled {
+		t.Fatalf("did not expect oauth token consume on tmux create failure")
+	}
+	if !releaseCalled {
+		t.Fatalf("expected oauth reservation release on tmux create failure")
+	}
+}
+
+func TestSessionSpawnDoesNotConsumeOAuthTokenWhenMetaPersistFails(t *testing.T) {
+	origReserve := reserveClaudeOAuthTokenForOwnerFn
+	origConsume := consumeReservedClaudeOAuthTokenForOwnerFn
+	origRelease := releaseClaudeOAuthTokenReservationForOwnerFn
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionWithStartupFn
+	origSave := saveSessionMetaFn
+	origKill := tmuxKillSessionFn
+	t.Cleanup(func() {
+		reserveClaudeOAuthTokenForOwnerFn = origReserve
+		consumeReservedClaudeOAuthTokenForOwnerFn = origConsume
+		releaseClaudeOAuthTokenReservationForOwnerFn = origRelease
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionWithStartupFn = origNew
+		saveSessionMetaFn = origSave
+		tmuxKillSessionFn = origKill
+	})
+
+	reserveClaudeOAuthTokenForOwnerFn = func(owner string) (claudeOAuthTokenSelection, bool, error) {
+		return claudeOAuthTokenSelection{ID: "oauth-test-id", Token: "oauth-test-token"}, true, nil
+	}
+	consumeCalled := false
+	consumeReservedClaudeOAuthTokenForOwnerFn = func(owner, id string) (claudeOAuthTokenSelection, bool, error) {
+		consumeCalled = true
+		return claudeOAuthTokenSelection{ID: id, Token: "oauth-test-token"}, true, nil
+	}
+	releaseCalled := false
+	releaseClaudeOAuthTokenReservationForOwnerFn = func(owner, id string) (bool, error) {
+		releaseCalled = true
+		return true, nil
+	}
+	tmuxHasSessionFn = func(string) bool { return false }
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+		return nil
+	}
+	saveSessionMetaFn = func(projectRoot, session string, meta sessionMeta) error {
+		return errors.New("meta write failed")
+	}
+	tmuxKillSessionFn = func(string) error { return nil }
+
+	_, _ = captureOutput(t, func() {
+		code := cmdSessionSpawn([]string{
+			"--session", "lisa-oauth-no-consume-meta-fail",
+			"--project-root", t.TempDir(),
+			"--agent", "claude",
+			"--mode", "interactive",
+			"--command", "echo ready",
+		})
+		if code == 0 {
+			t.Fatalf("expected spawn failure")
+		}
+	})
+	if consumeCalled {
+		t.Fatalf("did not expect oauth token consume on metadata persist failure")
+	}
+	if !releaseCalled {
+		t.Fatalf("expected oauth reservation release on metadata persist failure")
+	}
+}
+
+func TestSessionSpawnConcurrentClaudeSpawnsReserveDistinctTokens(t *testing.T) {
+	origHome := oauthUserHomeDirFn
+	origHas := tmuxHasSessionFn
+	origNew := tmuxNewSessionWithStartupFn
+	origSave := saveSessionMetaFn
+	origReserve := reserveClaudeOAuthTokenForOwnerFn
+	origConsume := consumeReservedClaudeOAuthTokenForOwnerFn
+	origRelease := releaseClaudeOAuthTokenReservationForOwnerFn
+	t.Cleanup(func() {
+		oauthUserHomeDirFn = origHome
+		tmuxHasSessionFn = origHas
+		tmuxNewSessionWithStartupFn = origNew
+		saveSessionMetaFn = origSave
+		reserveClaudeOAuthTokenForOwnerFn = origReserve
+		consumeReservedClaudeOAuthTokenForOwnerFn = origConsume
+		releaseClaudeOAuthTokenReservationForOwnerFn = origRelease
+	})
+
+	home := t.TempDir()
+	oauthUserHomeDirFn = func() (string, error) { return home, nil }
+	if _, _, err := addClaudeOAuthToken("token-one"); err != nil {
+		t.Fatalf("failed adding token one: %v", err)
+	}
+	if _, _, err := addClaudeOAuthToken("token-two"); err != nil {
+		t.Fatalf("failed adding token two: %v", err)
+	}
+
+	reserveClaudeOAuthTokenForOwnerFn = reserveClaudeOAuthTokenForOwner
+	consumeReservedClaudeOAuthTokenForOwnerFn = consumeReservedClaudeOAuthTokenForOwner
+	releaseClaudeOAuthTokenReservationForOwnerFn = releaseClaudeOAuthTokenReservationForOwner
+
+	tmuxHasSessionFn = func(string) bool { return false }
+	started := make(chan struct{}, 2)
+	releaseNewSession := make(chan struct{})
+	tmuxNewSessionWithStartupFn = func(session, projectRoot, agent, mode string, width, height int, startupCommand string) error {
+		started <- struct{}{}
+		<-releaseNewSession
+		return nil
+	}
+
+	metaBySession := map[string]sessionMeta{}
+	var metaMu sync.Mutex
+	saveSessionMetaFn = func(projectRoot, session string, meta sessionMeta) error {
+		metaMu.Lock()
+		metaBySession[session] = meta
+		metaMu.Unlock()
+		return nil
+	}
+
+	projectRoot := t.TempDir()
+	sessions := []string{"lisa-oauth-concurrent-a", "lisa-oauth-concurrent-b"}
+	results := make(chan int, len(sessions))
+	_, _ = captureOutput(t, func() {
+		for _, session := range sessions {
+			go func(session string) {
+				code := cmdSessionSpawn([]string{
+					"--session", session,
+					"--project-root", projectRoot,
+					"--agent", "claude",
+					"--mode", "interactive",
+					"--command", "echo ready",
+				})
+				results <- code
+			}(session)
+		}
+		for range sessions {
+			select {
+			case <-started:
+			case <-time.After(3 * time.Second):
+				t.Fatalf("timed out waiting for concurrent spawn to reach tmux create")
+			}
+		}
+		close(releaseNewSession)
+		for range sessions {
+			select {
+			case code := <-results:
+				if code != 0 {
+					t.Fatalf("expected concurrent spawn success, got code %d", code)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatalf("timed out waiting for concurrent spawn result")
+			}
+		}
+	})
+
+	metaMu.Lock()
+	defer metaMu.Unlock()
+	if len(metaBySession) != len(sessions) {
+		t.Fatalf("expected %d saved metas, got %d", len(sessions), len(metaBySession))
+	}
+	idA := metaBySession[sessions[0]].OAuthTokenID
+	idB := metaBySession[sessions[1]].OAuthTokenID
+	if idA == "" || idB == "" {
+		t.Fatalf("expected oauth token ids in metadata, got %q and %q", idA, idB)
+	}
+	if idA == idB {
+		t.Fatalf("expected concurrent spawns to reserve distinct tokens, both got %q", idA)
 	}
 }
 

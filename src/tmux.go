@@ -61,7 +61,9 @@ func tmuxNewSessionWithStartup(session, projectRoot, agent, mode string, width, 
 	}
 	if agent == "claude" {
 		if oauthToken := strings.TrimSpace(os.Getenv(lisaClaudeOAuthTokenRuntimeEnv)); oauthToken != "" {
-			args = append(args, "-e", claudeOAuthTokenEnv+"="+oauthToken)
+			args = append(args, "-e", claudeOAuthTokenEnv)
+			restoreOAuth := setEnvScoped(claudeOAuthTokenEnv, oauthToken)
+			defer restoreOAuth()
 		}
 	}
 

@@ -13,15 +13,21 @@ import (
 )
 
 const (
-	claudeOAuthTokenEnv            = "CLAUDE_CODE_OAUTH_TOKEN"
-	lisaClaudeOAuthTokenRuntimeEnv = "LISA_CLAUDE_CODE_OAUTH_TOKEN"
-	claudeOAuthStoreVersion        = 1
+	claudeOAuthTokenEnv                     = "CLAUDE_CODE_OAUTH_TOKEN"
+	lisaClaudeOAuthTokenRuntimeEnv          = "LISA_CLAUDE_CODE_OAUTH_TOKEN"
+	claudeOAuthStoreVersion                 = 1
+	defaultClaudeOAuthReservationTTLSeconds = 300
 )
 
 var oauthUserHomeDirFn = os.UserHomeDir
 var oauthNowFn = time.Now
 var selectClaudeOAuthTokenFn = selectClaudeOAuthToken
 var peekNextClaudeOAuthTokenFn = peekNextClaudeOAuthToken
+var previewClaudeOAuthTokenSelectionFn = previewClaudeOAuthTokenSelection
+var consumeClaudeOAuthTokenByIDFn = consumeClaudeOAuthTokenByID
+var reserveClaudeOAuthTokenForOwnerFn = reserveClaudeOAuthTokenForOwner
+var consumeReservedClaudeOAuthTokenForOwnerFn = consumeReservedClaudeOAuthTokenForOwner
+var releaseClaudeOAuthTokenReservationForOwnerFn = releaseClaudeOAuthTokenReservationForOwner
 var removeClaudeOAuthTokenByIDFn = removeClaudeOAuthTokenByID
 
 type claudeOAuthTokenRecord struct {
@@ -30,6 +36,8 @@ type claudeOAuthTokenRecord struct {
 	AddedAt           string `json:"addedAt"`
 	LastUsedAt        string `json:"lastUsedAt,omitempty"`
 	UseCount          int    `json:"useCount,omitempty"`
+	ReservedBy        string `json:"reservedBy,omitempty"`
+	ReservedAt        string `json:"reservedAt,omitempty"`
 	LastFailureAt     string `json:"lastFailureAt,omitempty"`
 	LastFailureReason string `json:"lastFailureReason,omitempty"`
 }
@@ -67,6 +75,14 @@ func claudeOAuthStoreLockTimeoutMS() int {
 		timeout = defaultStateLockTimeoutMS
 	}
 	return timeout
+}
+
+func claudeOAuthReservationTTLSeconds() int {
+	ttl := getIntEnv("LISA_OAUTH_RESERVATION_TTL_SECONDS", defaultClaudeOAuthReservationTTLSeconds)
+	if ttl <= 0 {
+		ttl = defaultClaudeOAuthReservationTTLSeconds
+	}
+	return ttl
 }
 
 func loadClaudeOAuthStore(path string) (claudeOAuthTokenStore, error) {
@@ -130,6 +146,20 @@ func withClaudeOAuthStoreShared(fn func(store claudeOAuthTokenStore) error) erro
 		return err
 	}
 	return withSharedFileLock(path+".lock", claudeOAuthStoreLockTimeoutMS(), func() error {
+		store, loadErr := loadClaudeOAuthStore(path)
+		if loadErr != nil {
+			return loadErr
+		}
+		return fn(store)
+	})
+}
+
+func withClaudeOAuthStoreExclusiveRead(fn func(store claudeOAuthTokenStore) error) error {
+	path, err := claudeOAuthStorePath()
+	if err != nil {
+		return err
+	}
+	return withExclusiveFileLock(path+".lock", claudeOAuthStoreLockTimeoutMS(), func() error {
 		store, loadErr := loadClaudeOAuthStore(path)
 		if loadErr != nil {
 			return loadErr
@@ -224,49 +254,266 @@ func claudeOAuthTokenCount() (int, error) {
 	return count, err
 }
 
+func currentClaudeOAuthTokenSelection(store claudeOAuthTokenStore) (claudeOAuthTokenSelection, int, bool) {
+	if len(store.Tokens) == 0 {
+		return claudeOAuthTokenSelection{}, 0, false
+	}
+	idx := store.NextIndex
+	if idx < 0 || idx >= len(store.Tokens) {
+		idx = 0
+	}
+	token := strings.TrimSpace(store.Tokens[idx].Token)
+	if token == "" {
+		return claudeOAuthTokenSelection{}, idx, false
+	}
+	id := strings.TrimSpace(store.Tokens[idx].ID)
+	if id == "" {
+		id = claudeOAuthTokenID(token)
+	}
+	return claudeOAuthTokenSelection{ID: id, Token: token}, idx, true
+}
+
+func clearClaudeOAuthTokenReservation(token *claudeOAuthTokenRecord) {
+	token.ReservedBy = ""
+	token.ReservedAt = ""
+}
+
+func isClaudeOAuthTokenReservationActive(token claudeOAuthTokenRecord, now time.Time) bool {
+	if strings.TrimSpace(token.ReservedBy) == "" {
+		return false
+	}
+	reservedAt := strings.TrimSpace(token.ReservedAt)
+	if reservedAt == "" {
+		return false
+	}
+	ts, err := time.Parse(time.RFC3339, reservedAt)
+	if err != nil {
+		return false
+	}
+	if ts.After(now) {
+		return true
+	}
+	return now.Sub(ts) < time.Duration(claudeOAuthReservationTTLSeconds())*time.Second
+}
+
+func clearExpiredClaudeOAuthReservations(store *claudeOAuthTokenStore, now time.Time, preserveOwner string) {
+	preserveOwner = strings.TrimSpace(preserveOwner)
+	for idx := range store.Tokens {
+		reservedBy := strings.TrimSpace(store.Tokens[idx].ReservedBy)
+		if reservedBy == preserveOwner && preserveOwner != "" {
+			continue
+		}
+		if !isClaudeOAuthTokenReservationActive(store.Tokens[idx], now) {
+			clearClaudeOAuthTokenReservation(&store.Tokens[idx])
+		}
+	}
+}
+
+func nextAvailableClaudeOAuthTokenSelection(store claudeOAuthTokenStore, owner string, now time.Time) (claudeOAuthTokenSelection, int, bool) {
+	if len(store.Tokens) == 0 {
+		return claudeOAuthTokenSelection{}, 0, false
+	}
+	owner = strings.TrimSpace(owner)
+	start := store.NextIndex
+	if start < 0 || start >= len(store.Tokens) {
+		start = 0
+	}
+
+	if owner != "" {
+		for idx, token := range store.Tokens {
+			if strings.TrimSpace(token.ReservedBy) != owner {
+				continue
+			}
+			selection, _, ok := currentClaudeOAuthTokenSelection(claudeOAuthTokenStore{
+				NextIndex: idx,
+				Tokens:    store.Tokens,
+			})
+			if ok {
+				return selection, idx, true
+			}
+		}
+	}
+
+	for offset := 0; offset < len(store.Tokens); offset++ {
+		idx := (start + offset) % len(store.Tokens)
+		token := store.Tokens[idx]
+		reservedBy := strings.TrimSpace(token.ReservedBy)
+		if reservedBy != "" && reservedBy != owner && isClaudeOAuthTokenReservationActive(token, now) {
+			continue
+		}
+		selection, _, ok := currentClaudeOAuthTokenSelection(claudeOAuthTokenStore{
+			NextIndex: idx,
+			Tokens:    store.Tokens,
+		})
+		if ok {
+			return selection, idx, true
+		}
+	}
+	return claudeOAuthTokenSelection{}, start, false
+}
+
 func peekNextClaudeOAuthToken() (string, bool, error) {
 	nextID := ""
 	found := false
 	err := withClaudeOAuthStoreShared(func(store claudeOAuthTokenStore) error {
-		if len(store.Tokens) == 0 {
+		selection, _, ok := currentClaudeOAuthTokenSelection(store)
+		if !ok {
 			return nil
 		}
-		idx := store.NextIndex
-		if idx < 0 || idx >= len(store.Tokens) {
-			idx = 0
-		}
-		nextID = strings.TrimSpace(store.Tokens[idx].ID)
-		found = nextID != ""
+		nextID = selection.ID
+		found = true
 		return nil
 	})
 	return nextID, found, err
 }
 
-func selectClaudeOAuthToken() (claudeOAuthTokenSelection, bool, error) {
+func previewClaudeOAuthTokenSelection() (claudeOAuthTokenSelection, bool, error) {
 	selection := claudeOAuthTokenSelection{}
 	found := false
-	now := oauthNowFn().UTC().Format(time.RFC3339)
+	now := oauthNowFn().UTC()
+	err := withClaudeOAuthStoreExclusiveRead(func(store claudeOAuthTokenStore) error {
+		var ok bool
+		selection, _, ok = nextAvailableClaudeOAuthTokenSelection(store, "", now)
+		found = ok
+		return nil
+	})
+	return selection, found, err
+}
+
+func reserveClaudeOAuthTokenForOwner(owner string) (claudeOAuthTokenSelection, bool, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return claudeOAuthTokenSelection{}, false, fmt.Errorf("oauth token reservation owner cannot be empty")
+	}
+	selection := claudeOAuthTokenSelection{}
+	found := false
+	now := oauthNowFn().UTC()
 	err := withClaudeOAuthStoreExclusive(func(store *claudeOAuthTokenStore) error {
-		if len(store.Tokens) == 0 {
+		clearExpiredClaudeOAuthReservations(store, now, "")
+		current, idx, ok := nextAvailableClaudeOAuthTokenSelection(*store, owner, now)
+		if !ok {
 			return nil
 		}
-		idx := store.NextIndex
-		if idx < 0 || idx >= len(store.Tokens) {
-			idx = 0
+		token := store.Tokens[idx]
+		if strings.TrimSpace(token.ID) == "" {
+			token.ID = current.ID
+		}
+		token.ReservedBy = owner
+		token.ReservedAt = now.Format(time.RFC3339)
+		store.Tokens[idx] = token
+		selection = current
+		found = true
+		return nil
+	})
+	return selection, found, err
+}
+
+func consumeReservedClaudeOAuthTokenForOwner(owner, expectedID string) (claudeOAuthTokenSelection, bool, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return claudeOAuthTokenSelection{}, false, fmt.Errorf("oauth token reservation owner cannot be empty")
+	}
+	expectedID = strings.TrimSpace(expectedID)
+	selection := claudeOAuthTokenSelection{}
+	found := false
+	now := oauthNowFn().UTC()
+	nowRFC3339 := now.Format(time.RFC3339)
+	err := withClaudeOAuthStoreExclusive(func(store *claudeOAuthTokenStore) error {
+		clearExpiredClaudeOAuthReservations(store, now, owner)
+		for idx := range store.Tokens {
+			token := store.Tokens[idx]
+			if strings.TrimSpace(token.ReservedBy) != owner {
+				continue
+			}
+			if strings.TrimSpace(token.ID) == "" {
+				token.ID = claudeOAuthTokenID(strings.TrimSpace(token.Token))
+			}
+			if expectedID != "" && token.ID != expectedID {
+				return fmt.Errorf("oauth token reservation changed: expected %s got %s", expectedID, token.ID)
+			}
+			tokenText := strings.TrimSpace(token.Token)
+			if tokenText == "" {
+				clearClaudeOAuthTokenReservation(&token)
+				store.Tokens[idx] = token
+				return nil
+			}
+			token.LastUsedAt = nowRFC3339
+			token.UseCount++
+			clearClaudeOAuthTokenReservation(&token)
+			store.Tokens[idx] = token
+			store.NextIndex = (idx + 1) % len(store.Tokens)
+			selection = claudeOAuthTokenSelection{ID: token.ID, Token: tokenText}
+			found = true
+			return nil
+		}
+		return nil
+	})
+	return selection, found, err
+}
+
+func releaseClaudeOAuthTokenReservationForOwner(owner, expectedID string) (bool, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return false, fmt.Errorf("oauth token reservation owner cannot be empty")
+	}
+	expectedID = strings.TrimSpace(expectedID)
+	released := false
+	now := oauthNowFn().UTC()
+	err := withClaudeOAuthStoreExclusive(func(store *claudeOAuthTokenStore) error {
+		clearExpiredClaudeOAuthReservations(store, now, "")
+		for idx := range store.Tokens {
+			token := store.Tokens[idx]
+			if strings.TrimSpace(token.ReservedBy) != owner {
+				continue
+			}
+			if strings.TrimSpace(token.ID) == "" {
+				token.ID = claudeOAuthTokenID(strings.TrimSpace(token.Token))
+			}
+			if expectedID != "" && token.ID != expectedID {
+				continue
+			}
+			clearClaudeOAuthTokenReservation(&token)
+			store.Tokens[idx] = token
+			released = true
+			if expectedID != "" {
+				return nil
+			}
+		}
+		return nil
+	})
+	return released, err
+}
+
+func consumeClaudeOAuthTokenByID(expectedID string) (claudeOAuthTokenSelection, bool, error) {
+	selection := claudeOAuthTokenSelection{}
+	found := false
+	expectedID = strings.TrimSpace(expectedID)
+	now := oauthNowFn().UTC().Format(time.RFC3339)
+	err := withClaudeOAuthStoreExclusive(func(store *claudeOAuthTokenStore) error {
+		current, idx, ok := currentClaudeOAuthTokenSelection(*store)
+		if !ok {
+			return nil
+		}
+		if expectedID != "" && current.ID != expectedID {
+			return fmt.Errorf("oauth token selection changed: expected %s got %s", expectedID, current.ID)
 		}
 		token := store.Tokens[idx]
+		if strings.TrimSpace(token.ID) == "" {
+			token.ID = current.ID
+		}
 		token.LastUsedAt = now
 		token.UseCount++
 		store.Tokens[idx] = token
 		store.NextIndex = (idx + 1) % len(store.Tokens)
-		selection = claudeOAuthTokenSelection{
-			ID:    token.ID,
-			Token: token.Token,
-		}
-		found = strings.TrimSpace(token.Token) != ""
+		selection = current
+		found = true
 		return nil
 	})
 	return selection, found, err
+}
+
+func selectClaudeOAuthToken() (claudeOAuthTokenSelection, bool, error) {
+	return consumeClaudeOAuthTokenByID("")
 }
 
 func removeClaudeOAuthTokenByID(id, reason string) (bool, error) {

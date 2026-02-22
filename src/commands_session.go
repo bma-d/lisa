@@ -330,24 +330,44 @@ func cmdSessionSpawn(args []string) int {
 		commandToSend = wrapSessionCommand(commandToSend, runID)
 	}
 	oauthTokenID := ""
+	oauthTokenPreview := claudeOAuthTokenSelection{}
 	oauthTokenPreviewID := ""
+	oauthReservationOwner := ""
+	oauthReservationHeld := false
 	if agent == "claude" {
-		previewID, hasPreview, previewErr := peekNextClaudeOAuthTokenFn()
-		if previewErr != nil {
-			fmt.Fprintf(os.Stderr, "oauth warning: failed reading token pool: %v\n", previewErr)
-		} else if hasPreview {
-			oauthTokenPreviewID = previewID
-		}
-		if !dryRun {
-			selection, hasSelection, selectionErr := selectClaudeOAuthTokenFn()
-			if selectionErr != nil {
-				fmt.Fprintf(os.Stderr, "oauth warning: failed selecting token: %v\n", selectionErr)
-			} else if hasSelection {
-				oauthTokenID = selection.ID
-				restoreOAuth := setEnvScoped(lisaClaudeOAuthTokenRuntimeEnv, selection.Token)
-				defer restoreOAuth()
+		if dryRun {
+			previewSelection, hasPreview, previewErr := previewClaudeOAuthTokenSelectionFn()
+			if previewErr != nil {
+				fmt.Fprintf(os.Stderr, "oauth warning: failed reading token pool: %v\n", previewErr)
+			} else if hasPreview {
+				oauthTokenPreview = previewSelection
+				oauthTokenPreviewID = previewSelection.ID
+			}
+		} else {
+			oauthReservationOwner = runID
+			reservationSelection, hasReservation, reserveErr := reserveClaudeOAuthTokenForOwnerFn(oauthReservationOwner)
+			if reserveErr != nil {
+				fmt.Fprintf(os.Stderr, "oauth warning: failed reserving token: %v\n", reserveErr)
+			} else if hasReservation {
+				oauthTokenPreview = reservationSelection
+				oauthTokenPreviewID = reservationSelection.ID
+				oauthReservationHeld = true
 			}
 		}
+		if oauthTokenPreviewID != "" && !dryRun {
+			restoreOAuth := setEnvScoped(lisaClaudeOAuthTokenRuntimeEnv, oauthTokenPreview.Token)
+			defer restoreOAuth()
+		}
+	}
+	if oauthReservationHeld {
+		defer func() {
+			if !oauthReservationHeld {
+				return
+			}
+			if _, releaseErr := releaseClaudeOAuthTokenReservationForOwnerFn(oauthReservationOwner, oauthTokenPreviewID); releaseErr != nil {
+				fmt.Fprintf(os.Stderr, "oauth warning: failed releasing token reservation: %v\n", releaseErr)
+			}
+		}()
 	}
 
 	if dryRun {
@@ -429,7 +449,7 @@ func cmdSessionSpawn(args []string) int {
 		ParentSession: parentSessionFromEnv(session),
 		Agent:         agent,
 		Mode:          mode,
-		OAuthTokenID:  oauthTokenID,
+		OAuthTokenID:  oauthTokenPreviewID,
 		RunID:         runID,
 		ProjectRoot:   projectRoot,
 		StartCmd:      command,
@@ -448,6 +468,29 @@ func cmdSessionSpawn(args []string) int {
 		}
 		emitSpawnFailureEvent("spawn_meta_persist_error")
 		return commandError(jsonOut, "spawn_meta_persist_failed", msg)
+	}
+	if agent == "claude" && oauthReservationHeld {
+		selection, consumed, consumeErr := consumeReservedClaudeOAuthTokenForOwnerFn(oauthReservationOwner, oauthTokenPreviewID)
+		if consumeErr != nil || !consumed {
+			killErr := tmuxKillSessionFn(session)
+			cleanupErr := cleanupSessionArtifactsWithOptions(projectRoot, session, cleanupOpts)
+			msg := "failed to finalize oauth token selection"
+			if consumeErr != nil {
+				msg += fmt.Sprintf(": %v", consumeErr)
+			} else {
+				msg += fmt.Sprintf(": token %s no longer available", oauthTokenPreviewID)
+			}
+			if killErr != nil {
+				msg += fmt.Sprintf("; failed to kill session after oauth selection error: %v", killErr)
+			}
+			if cleanupErr != nil {
+				fmt.Fprintf(os.Stderr, "cleanup warning: %v\n", cleanupErr)
+			}
+			emitSpawnFailureEvent("spawn_oauth_selection_error")
+			return commandError(jsonOut, "spawn_oauth_selection_failed", msg)
+		}
+		oauthReservationHeld = false
+		oauthTokenID = selection.ID
 	}
 	_ = os.Remove(sessionStateFile(projectRoot, session))
 	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "spawned", "active", "spawn_success"); err != nil {

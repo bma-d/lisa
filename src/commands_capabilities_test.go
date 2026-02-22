@@ -138,3 +138,36 @@ func TestCommandCapabilitiesCommandSet(t *testing.T) {
 		t.Fatalf("unexpected capabilities command set\ngot:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+func TestCommandCapabilitiesCriticalFlagContracts(t *testing.T) {
+	required := map[string][]string{
+		"session monitor":      {"--until-jsonpath"},
+		"session context-pack": {"--from-handoff"},
+		"session route":        {"--budget"},
+		"session autopilot":    {"--json"},
+	}
+
+	flagsByCommand := map[string][]string{}
+	for _, entry := range commandCapabilities {
+		flagsByCommand[entry.Name] = entry.Flags
+	}
+
+	for command, requiredFlags := range required {
+		gotFlags, ok := flagsByCommand[command]
+		if !ok {
+			t.Fatalf("missing command %q in capabilities table", command)
+		}
+		for _, flag := range requiredFlags {
+			found := false
+			for _, got := range gotFlags {
+				if got == flag {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("command %q missing required flag %q in capabilities table: %#v", command, flag, gotFlags)
+			}
+		}
+	}
+}
