@@ -52,6 +52,8 @@ type sessionAutopilotSummary struct {
 	ErrorCode   string               `json:"errorCode,omitempty"`
 	Error       string               `json:"error,omitempty"`
 	FailedStep  string               `json:"failedStep,omitempty"`
+	ResumedFrom string               `json:"resumedFrom,omitempty"`
+	ResumeStep  string               `json:"resumeStep,omitempty"`
 }
 
 type handoffInputPayload struct {
@@ -63,6 +65,14 @@ type handoffInputPayload struct {
 	NextOffset   int                  `json:"nextOffset"`
 	Recent       []sessionHandoffItem `json:"recent"`
 	CaptureTail  string               `json:"captureTail"`
+}
+
+type routeStateInput struct {
+	Session      string `json:"session"`
+	Status       string `json:"status"`
+	SessionState string `json:"sessionState"`
+	Reason       string `json:"reason"`
+	NextAction   string `json:"nextAction"`
 }
 
 func cmdSessionHandoff(args []string) int {
@@ -511,6 +521,7 @@ func cmdSessionRoute(args []string) int {
 	model := ""
 	budget := 0
 	emitRunbook := false
+	fromState := ""
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -559,6 +570,12 @@ func cmdSessionRoute(args []string) int {
 			i++
 		case "--emit-runbook":
 			emitRunbook = true
+		case "--from-state":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --from-state")
+			}
+			fromState = strings.TrimSpace(args[i+1])
+			i++
 		case "--json":
 			jsonOut = true
 		default:
@@ -578,8 +595,18 @@ func cmdSessionRoute(args []string) int {
 	projectRoot = canonicalProjectRoot(projectRoot)
 
 	mode, nestedPolicy, nestingIntent, defaultPrompt, defaultModel := sessionRouteDefaults(goal)
+	var parsedFromState *routeStateInput
+	if fromState != "" {
+		parsedFromState, err = loadRouteStateInput(fromState)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_from_state", "failed to load --from-state: %v", err)
+		}
+	}
 	if strings.TrimSpace(prompt) == "" {
 		prompt = defaultPrompt
+		if parsedFromState != nil {
+			prompt = routePromptFromState(*parsedFromState, defaultPrompt)
+		}
 	}
 	if strings.TrimSpace(model) == "" {
 		model = defaultModel
@@ -640,6 +667,9 @@ func cmdSessionRoute(args []string) int {
 	if budget > 0 {
 		payload["budget"] = budget
 	}
+	if parsedFromState != nil {
+		payload["fromState"] = parsedFromState
+	}
 	if emitRunbook {
 		payload["runbook"] = buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model, budget)
 	}
@@ -654,6 +684,7 @@ func cmdSessionRoute(args []string) int {
 func cmdSessionGuard(args []string) int {
 	sharedTmux := false
 	enforce := false
+	adviceOnly := false
 	commandText := ""
 	projectRoot := canonicalProjectRoot(getPWD())
 	jsonOut := hasJSONFlag(args)
@@ -666,6 +697,8 @@ func cmdSessionGuard(args []string) int {
 			sharedTmux = true
 		case "--enforce":
 			enforce = true
+		case "--advice-only":
+			adviceOnly = true
 		case "--command":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --command")
@@ -762,6 +795,7 @@ func cmdSessionGuard(args []string) int {
 			"command":             commandText,
 			"commandRisk":         commandRisk,
 			"enforce":             enforce,
+			"adviceOnly":          adviceOnly,
 			"safe":                safe,
 			"warnings":            warnings,
 		}
@@ -771,7 +805,7 @@ func cmdSessionGuard(args []string) int {
 		if len(remediation) > 0 {
 			payload["remediation"] = remediation
 		}
-		if !safe {
+		if !safe && !adviceOnly {
 			if enforce {
 				payload["errorCode"] = "shared_tmux_guard_enforced"
 			} else {
@@ -779,15 +813,21 @@ func cmdSessionGuard(args []string) int {
 			}
 		}
 		writeJSON(payload)
+		if adviceOnly {
+			return 0
+		}
 		return boolExit(safe)
 	}
 
-	fmt.Printf("safe=%t enforce=%t default_sessions=%d command_risk=%s\n", safe, enforce, len(defaultSessions), commandRisk)
+	fmt.Printf("safe=%t enforce=%t advice_only=%t default_sessions=%d command_risk=%s\n", safe, enforce, adviceOnly, len(defaultSessions), commandRisk)
 	for _, warning := range warnings {
 		fmt.Printf("- %s\n", warning)
 	}
 	for _, line := range remediation {
 		fmt.Printf("- remediation: %s\n", line)
+	}
+	if adviceOnly {
+		return 0
 	}
 	return boolExit(safe)
 }
@@ -809,6 +849,8 @@ func cmdSessionAutopilot(args []string) int {
 	summaryStyle := "ops"
 	tokenBudget := 320
 	killAfter := false
+	killAfterExplicit := false
+	resumeFrom := ""
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -926,6 +968,13 @@ func cmdSessionAutopilot(args []string) int {
 				return commandErrorf(jsonOut, "invalid_kill_after", "invalid --kill-after: %s (expected true|false)", args[i+1])
 			}
 			killAfter = parsed
+			killAfterExplicit = true
+			i++
+		case "--resume-from":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --resume-from")
+			}
+			resumeFrom = strings.TrimSpace(args[i+1])
 			i++
 		case "--json":
 			jsonOut = true
@@ -983,6 +1032,25 @@ func cmdSessionAutopilot(args []string) int {
 	if !summary && summaryStyle != "ops" {
 		return commandError(jsonOut, "summary_style_requires_summary", "--summary-style requires --summary")
 	}
+	var resumePayload *sessionAutopilotSummary
+	resumeStep := ""
+	if resumeFrom != "" {
+		resumePayload, err = loadAutopilotSummaryInput(resumeFrom)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_resume_from", "failed to load --resume-from: %v", err)
+		}
+		if session == "" {
+			session = strings.TrimSpace(resumePayload.Session)
+		}
+		if session == "" && !resumePayload.Spawn.OK {
+			// spawn failed previously; resume can still proceed by spawning a fresh session.
+			session = ""
+		}
+		if !killAfterExplicit {
+			killAfter = resumePayload.KillAfter
+		}
+		resumeStep = autopilotFirstFailedStep(*resumePayload)
+	}
 
 	binPath, err := osExecutableFn()
 	if err != nil {
@@ -1000,6 +1068,10 @@ func cmdSessionAutopilot(args []string) int {
 		Mode:        mode,
 		ProjectRoot: projectRoot,
 		KillAfter:   killAfter,
+	}
+	if resumePayload != nil {
+		summaryPayload.ResumedFrom = resumeFrom
+		summaryPayload.ResumeStep = resumeStep
 	}
 
 	runStep := func(stepName string, stepArgs []string) (map[string]any, int, string) {
@@ -1019,109 +1091,175 @@ func cmdSessionAutopilot(args []string) int {
 		return payload, 0, ""
 	}
 
-	spawnArgs := []string{
-		"session", "spawn",
-		"--agent", agent,
-		"--mode", mode,
-		"--nested-policy", nestedPolicy,
-		"--nesting-intent", nestingIntent,
-		"--project-root", projectRoot,
-		"--prompt", prompt,
-		"--json",
-	}
-	if session != "" {
-		spawnArgs = append(spawnArgs, "--session", session)
-	}
-	if model != "" && agent == "codex" {
-		spawnArgs = append(spawnArgs, "--model", model)
-	}
-	spawnOutput, spawnCode, spawnErr := runStep("spawn", spawnArgs)
-	summaryPayload.Spawn = sessionAutopilotStep{
-		OK:       spawnCode == 0,
-		ExitCode: spawnCode,
-		Output:   spawnOutput,
-		Error:    spawnErr,
-	}
-	if spawnCode != 0 || spawnOutput == nil {
-		summaryPayload.ErrorCode = "autopilot_spawn_failed"
-		summaryPayload.Error = spawnErr
-		summaryPayload.FailedStep = "spawn"
-		if jsonOut {
-			writeJSON(summaryPayload)
-		} else {
-			fmt.Fprintf(os.Stderr, "autopilot spawn failed: %s\n", spawnErr)
+	spawnedSession := ""
+	startStep := "spawn"
+	if resumePayload != nil {
+		startStep = resumeStep
+		summaryPayload.Spawn = resumePayload.Spawn
+		summaryPayload.Monitor = resumePayload.Monitor
+		summaryPayload.Capture = resumePayload.Capture
+		summaryPayload.Handoff = resumePayload.Handoff
+		summaryPayload.Cleanup = resumePayload.Cleanup
+		if strings.TrimSpace(resumePayload.Session) != "" {
+			spawnedSession = strings.TrimSpace(resumePayload.Session)
+			summaryPayload.Session = spawnedSession
 		}
-		if spawnCode == 0 {
+		if startStep == "" {
+			summaryPayload.OK = true
+			if jsonOut {
+				writeJSON(summaryPayload)
+			} else {
+				fmt.Printf("session=%s ok=true (resume no-op)\n", summaryPayload.Session)
+			}
+			return 0
+		}
+	}
+	if startStep == "spawn" {
+		spawnArgs := []string{
+			"session", "spawn",
+			"--agent", agent,
+			"--mode", mode,
+			"--nested-policy", nestedPolicy,
+			"--nesting-intent", nestingIntent,
+			"--project-root", projectRoot,
+			"--prompt", prompt,
+			"--json",
+		}
+		if session != "" {
+			spawnArgs = append(spawnArgs, "--session", session)
+		}
+		if model != "" && agent == "codex" {
+			spawnArgs = append(spawnArgs, "--model", model)
+		}
+		spawnOutput, spawnCode, spawnErr := runStep("spawn", spawnArgs)
+		summaryPayload.Spawn = sessionAutopilotStep{
+			OK:       spawnCode == 0,
+			ExitCode: spawnCode,
+			Output:   spawnOutput,
+			Error:    spawnErr,
+		}
+		if spawnCode != 0 || spawnOutput == nil {
+			summaryPayload.ErrorCode = "autopilot_spawn_failed"
+			summaryPayload.Error = spawnErr
+			summaryPayload.FailedStep = "spawn"
+			if jsonOut {
+				writeJSON(summaryPayload)
+			} else {
+				fmt.Fprintf(os.Stderr, "autopilot spawn failed: %s\n", spawnErr)
+			}
+			if spawnCode == 0 {
+				return 1
+			}
+			return spawnCode
+		}
+		spawnedSession = strings.TrimSpace(fmt.Sprintf("%v", spawnOutput["session"]))
+		if spawnedSession == "" {
+			summaryPayload.ErrorCode = "autopilot_spawn_parse_failed"
+			summaryPayload.Error = "spawn payload missing session field"
+			summaryPayload.FailedStep = "spawn"
+			if jsonOut {
+				writeJSON(summaryPayload)
+			} else {
+				fmt.Fprintln(os.Stderr, "autopilot spawn failed: missing session in spawn output")
+			}
 			return 1
 		}
-		return spawnCode
+		summaryPayload.Session = spawnedSession
 	}
-	spawnedSession := strings.TrimSpace(fmt.Sprintf("%v", spawnOutput["session"]))
-	if spawnedSession == "" {
-		summaryPayload.ErrorCode = "autopilot_spawn_parse_failed"
-		summaryPayload.Error = "spawn payload missing session field"
-		summaryPayload.FailedStep = "spawn"
+	if strings.TrimSpace(spawnedSession) == "" {
+		summaryPayload.ErrorCode = "autopilot_resume_missing_session"
+		summaryPayload.Error = "resume payload missing session"
+		summaryPayload.FailedStep = startStep
 		if jsonOut {
 			writeJSON(summaryPayload)
 		} else {
-			fmt.Fprintln(os.Stderr, "autopilot spawn failed: missing session in spawn output")
+			fmt.Fprintln(os.Stderr, "autopilot resume failed: missing session")
 		}
 		return 1
 	}
-	summaryPayload.Session = spawnedSession
 
-	monitorArgs := []string{
-		"session", "monitor",
-		"--session", spawnedSession,
-		"--project-root", projectRoot,
-		"--poll-interval", strconv.Itoa(pollInterval),
-		"--max-polls", strconv.Itoa(maxPolls),
-		"--json",
+	stepOrder := []string{"spawn", "monitor", "capture", "handoff", "cleanup"}
+	stepIndex := map[string]int{}
+	for idx, step := range stepOrder {
+		stepIndex[step] = idx
 	}
-	if mode == "interactive" {
-		monitorArgs = append(monitorArgs, "--stop-on-waiting", "true")
-	} else {
-		monitorArgs = append(monitorArgs, "--expect", "terminal")
-	}
-	monitorOutput, monitorCode, monitorErr := runStep("monitor", monitorArgs)
-	summaryPayload.Monitor = sessionAutopilotStep{
-		OK:       monitorCode == 0,
-		ExitCode: monitorCode,
-		Output:   monitorOutput,
-		Error:    monitorErr,
+	shouldRunStep := func(step string) bool {
+		if startStep == "" {
+			return true
+		}
+		return stepIndex[step] >= stepIndex[startStep]
 	}
 
-	captureArgs := []string{
-		"session", "capture",
-		"--session", spawnedSession,
-		"--project-root", projectRoot,
-		"--raw",
-		"--lines", strconv.Itoa(captureLines),
-		"--json",
-	}
-	if summary {
-		captureArgs = append(captureArgs, "--summary", "--summary-style", summaryStyle, "--token-budget", strconv.Itoa(tokenBudget))
-	}
-	captureOutput, captureCode, captureErr := runStep("capture", captureArgs)
-	summaryPayload.Capture = sessionAutopilotStep{
-		OK:       captureCode == 0,
-		ExitCode: captureCode,
-		Output:   captureOutput,
-		Error:    captureErr,
+	monitorCode := summaryPayload.Monitor.ExitCode
+	monitorErr := summaryPayload.Monitor.Error
+	if shouldRunStep("monitor") {
+		monitorArgs := []string{
+			"session", "monitor",
+			"--session", spawnedSession,
+			"--project-root", projectRoot,
+			"--poll-interval", strconv.Itoa(pollInterval),
+			"--max-polls", strconv.Itoa(maxPolls),
+			"--json",
+		}
+		if mode == "interactive" {
+			monitorArgs = append(monitorArgs, "--stop-on-waiting", "true")
+		} else {
+			monitorArgs = append(monitorArgs, "--expect", "terminal")
+		}
+		monitorOutput, code, errText := runStep("monitor", monitorArgs)
+		monitorCode = code
+		monitorErr = errText
+		summaryPayload.Monitor = sessionAutopilotStep{
+			OK:       code == 0,
+			ExitCode: code,
+			Output:   monitorOutput,
+			Error:    errText,
+		}
 	}
 
-	handoffArgs := []string{
-		"session", "handoff",
-		"--session", spawnedSession,
-		"--project-root", projectRoot,
-		"--json",
+	captureCode := summaryPayload.Capture.ExitCode
+	captureErr := summaryPayload.Capture.Error
+	if shouldRunStep("capture") {
+		captureArgs := []string{
+			"session", "capture",
+			"--session", spawnedSession,
+			"--project-root", projectRoot,
+			"--raw",
+			"--lines", strconv.Itoa(captureLines),
+			"--json",
+		}
+		if summary {
+			captureArgs = append(captureArgs, "--summary", "--summary-style", summaryStyle, "--token-budget", strconv.Itoa(tokenBudget))
+		}
+		captureOutput, code, errText := runStep("capture", captureArgs)
+		captureCode = code
+		captureErr = errText
+		summaryPayload.Capture = sessionAutopilotStep{
+			OK:       code == 0,
+			ExitCode: code,
+			Output:   captureOutput,
+			Error:    errText,
+		}
 	}
-	handoffOutput, handoffCode, handoffErr := runStep("handoff", handoffArgs)
-	summaryPayload.Handoff = sessionAutopilotStep{
-		OK:       handoffCode == 0,
-		ExitCode: handoffCode,
-		Output:   handoffOutput,
-		Error:    handoffErr,
+
+	handoffCode := summaryPayload.Handoff.ExitCode
+	handoffErr := summaryPayload.Handoff.Error
+	if shouldRunStep("handoff") {
+		handoffArgs := []string{
+			"session", "handoff",
+			"--session", spawnedSession,
+			"--project-root", projectRoot,
+			"--json",
+		}
+		handoffOutput, code, errText := runStep("handoff", handoffArgs)
+		handoffCode = code
+		handoffErr = errText
+		summaryPayload.Handoff = sessionAutopilotStep{
+			OK:       code == 0,
+			ExitCode: code,
+			Output:   handoffOutput,
+			Error:    errText,
+		}
 	}
 
 	finalCode := 0
@@ -1142,7 +1280,7 @@ func cmdSessionAutopilot(args []string) int {
 		finalCode = handoffCode
 	}
 
-	if killAfter {
+	if killAfter && shouldRunStep("cleanup") {
 		cleanupOutput, cleanupCode, cleanupErr := runStep("cleanup", []string{
 			"session", "kill",
 			"--session", spawnedSession,
@@ -1470,6 +1608,60 @@ func commandExitCode(err error) int {
 	return 1
 }
 
+func autopilotFirstFailedStep(summary sessionAutopilotSummary) string {
+	step := strings.TrimSpace(summary.FailedStep)
+	switch step {
+	case "spawn", "monitor", "capture", "handoff", "cleanup":
+		return step
+	}
+	if !summary.Spawn.OK {
+		return "spawn"
+	}
+	if !summary.Monitor.OK {
+		return "monitor"
+	}
+	if !summary.Capture.OK {
+		return "capture"
+	}
+	if !summary.Handoff.OK {
+		return "handoff"
+	}
+	if summary.KillAfter && !summary.Cleanup.OK {
+		return "cleanup"
+	}
+	if summary.OK {
+		return ""
+	}
+	return "monitor"
+}
+
+func loadAutopilotSummaryInput(from string) (*sessionAutopilotSummary, error) {
+	source := strings.TrimSpace(from)
+	if source == "" {
+		return nil, fmt.Errorf("empty resume source")
+	}
+	var raw []byte
+	var err error
+	switch source {
+	case "-":
+		raw, err = io.ReadAll(os.Stdin)
+	default:
+		path, resolveErr := expandAndCleanPath(source)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		raw, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	summary := sessionAutopilotSummary{}
+	if err := json.Unmarshal(raw, &summary); err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
 func loadHandoffInputPayload(from string) (*handoffInputPayload, error) {
 	source := strings.TrimSpace(from)
 	if source == "" {
@@ -1501,4 +1693,87 @@ func loadHandoffInputPayload(from string) (*handoffInputPayload, error) {
 	payload.NextAction = strings.TrimSpace(payload.NextAction)
 	payload.CaptureTail = strings.TrimSpace(payload.CaptureTail)
 	return &payload, nil
+}
+
+func routePromptFromState(input routeStateInput, fallback string) string {
+	session := strings.TrimSpace(input.Session)
+	state := strings.TrimSpace(input.SessionState)
+	reason := strings.TrimSpace(input.Reason)
+	next := strings.TrimSpace(input.NextAction)
+	if session == "" && state == "" && reason == "" && next == "" {
+		return fallback
+	}
+	lines := []string{"Continue orchestration from existing state context."}
+	if session != "" {
+		lines = append(lines, "Session: "+session)
+	}
+	if state != "" {
+		lines = append(lines, "State: "+state)
+	}
+	if reason != "" {
+		lines = append(lines, "Reason: "+reason)
+	}
+	if next != "" {
+		lines = append(lines, "Recommended next action: "+next)
+	}
+	lines = append(lines, "Return concrete next steps.")
+	return strings.Join(lines, "\n")
+}
+
+func loadRouteStateInput(from string) (*routeStateInput, error) {
+	source := strings.TrimSpace(from)
+	if source == "" {
+		return nil, fmt.Errorf("empty from-state source")
+	}
+	var raw []byte
+	var err error
+	switch source {
+	case "-":
+		raw, err = io.ReadAll(os.Stdin)
+	default:
+		path, resolveErr := expandAndCleanPath(source)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		raw, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Accept both handoff/status payload shapes.
+	var generic map[string]any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		return nil, err
+	}
+	input := routeStateInput{
+		Session:      mapStringValue(generic, "session"),
+		Status:       mapStringValue(generic, "status"),
+		SessionState: mapStringValue(generic, "sessionState"),
+		Reason:       mapStringValue(generic, "reason"),
+		NextAction:   mapStringValue(generic, "nextAction"),
+	}
+	if input.Reason == "" {
+		input.Reason = mapStringValue(generic, "classificationReason")
+	}
+	if input.Status == "" && input.SessionState != "" {
+		input.Status = input.SessionState
+	}
+	if input.Session == "" && input.SessionState == "" && input.Reason == "" && input.NextAction == "" {
+		return nil, fmt.Errorf("from-state payload missing session/state fields")
+	}
+	return &input, nil
+}
+
+func mapStringValue(m map[string]any, key string) string {
+	value, ok := m[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", typed))
+	}
 }

@@ -82,6 +82,7 @@ Lifecycle:
 | `LISA_CLEANUP_ALL_HASHES` | `false` | Default cleanup across hash variants |
 | `LISA_PROJECT_ROOT` | internal | Canonical project-root routing value |
 | `LISA_TMUX_SOCKET` | internal (`/tmp/lisa-tmux-<slug>-<hash>.sock`) | tmux socket path used by Lisa runtime |
+| `LISA_TMUX_SOCKET_DIR` | `""` (`/tmp` fallback) | Base directory used when Lisa computes per-project tmux socket path |
 
 ## Operational Notes
 
@@ -103,7 +104,8 @@ Lifecycle:
 - `session tree` reads metadata graph and may include historical roots; use `session list` for active-only views.
 - `session tree --delta` reports added/removed edges compared to previous topology snapshot.
 - `session list --stale` reports metadata historical/stale counts relative to active tmux sessions.
-- Nested runs should always pass `--project-root`; use `lisa` in prompts by default and `./lisa` when repo-local binary is known to exist.
+- Nested runs should always pass `--project-root`; use `./lisa` in executable prompt wording when repo-local binary is known to exist.
+- Session commands recompute `LISA_TMUX_SOCKET` from project-root context; for custom socket placement, set `LISA_TMUX_SOCKET_DIR` (not `LISA_TMUX_SOCKET`) before invoking Lisa.
 - Use `--nested-policy force|off` to avoid prompt-heuristic ambiguity in Codex exec nesting.
 - Use `--nesting-intent nested|neutral` to explicitly override prompt heuristics.
 - Quote/doc prompt mentions (`The string './lisa' appears in docs only.`) are treated as non-executable for nested bypass.

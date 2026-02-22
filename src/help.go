@@ -23,6 +23,7 @@ var helpFuncs = map[string]func(){
 	"session explain":       helpSessionExplain,
 	"session monitor":       helpSessionMonitor,
 	"session capture":       helpSessionCapture,
+	"session packet":        helpSessionPacket,
 	"session handoff":       helpSessionHandoff,
 	"session context-pack":  helpSessionContextPack,
 	"session route":         helpSessionRoute,
@@ -74,6 +75,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session explain       Detailed session diagnostics")
 	fmt.Fprintln(os.Stderr, "  session monitor       Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  session capture       Capture session pane output or transcript")
+	fmt.Fprintln(os.Stderr, "  session packet        Build status+capture+handoff packet")
 	fmt.Fprintln(os.Stderr, "  session handoff       Build compact handoff payload for another agent")
 	fmt.Fprintln(os.Stderr, "  session context-pack  Build token-budgeted context packet")
 	fmt.Fprintln(os.Stderr, "  session route         Recommend mode/policy/model for orchestration goal")
@@ -133,6 +135,7 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  explain    Detailed session diagnostics")
 	fmt.Fprintln(os.Stderr, "  monitor    Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  capture    Capture session pane output or transcript")
+	fmt.Fprintln(os.Stderr, "  packet     Build status+capture+handoff packet")
 	fmt.Fprintln(os.Stderr, "  handoff    Build compact handoff payload for another agent")
 	fmt.Fprintln(os.Stderr, "  context-pack Build token-budgeted context packet")
 	fmt.Fprintln(os.Stderr, "  route      Recommend mode/policy/model for orchestration goal")
@@ -204,6 +207,7 @@ func helpSessionDetectNested() {
 	fmt.Fprintln(os.Stderr, "  --model NAME          Codex model name (for --agent codex)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --rewrite             Suggest trigger-safe prompt rewrites")
+	fmt.Fprintln(os.Stderr, "  --why                 Include hint-span reasoning payload")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -296,6 +300,7 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: session/finalState/exitReason/polls")
 	fmt.Fprintln(os.Stderr, "  --stream-json         Emit line-delimited JSON poll events before final result")
 	fmt.Fprintln(os.Stderr, "  --emit-handoff        Emit compact handoff JSON events on each poll (requires --stream-json)")
+	fmt.Fprintln(os.Stderr, "  --handoff-cursor-file PATH  Persist/reuse handoff delta offset in stream mode")
 	fmt.Fprintln(os.Stderr, "  --verbose             Print poll details to stderr")
 }
 
@@ -310,6 +315,7 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "  --delta-from VALUE    Delta start: offset integer, @unix timestamp, or RFC3339")
 	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Persist/reuse delta offset cursor (raw capture only)")
 	fmt.Fprintln(os.Stderr, "  --markers CSV         Marker-only extraction (comma-separated)")
+	fmt.Fprintln(os.Stderr, "  --markers-json        Include structured marker hit offsets/lines")
 	fmt.Fprintln(os.Stderr, "  --summary             Return bounded summary instead of full capture")
 	fmt.Fprintln(os.Stderr, "  --summary-style MODE  Summary style: terse|ops|debug (default: terse)")
 	fmt.Fprintln(os.Stderr, "  --token-budget N      Summary token budget (default: 320)")
@@ -319,6 +325,25 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output for compact polling workflows")
+}
+
+func helpSessionPacket() {
+	fmt.Fprintln(os.Stderr, "lisa session packet — build status+capture+handoff packet")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session packet [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          Agent hint: auto|claude|codex (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --mode MODE           Mode hint: auto|interactive|exec (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --lines N             Raw capture lines for summary (default: 120)")
+	fmt.Fprintln(os.Stderr, "  --events N            Recent handoff events to include (default: 8)")
+	fmt.Fprintln(os.Stderr, "  --token-budget N      Summary token budget (default: 320)")
+	fmt.Fprintln(os.Stderr, "  --summary-style MODE  Summary style: terse|ops|debug (default: ops)")
+	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Persist/reuse handoff delta offset")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
 
 func helpSessionHandoff() {
@@ -368,6 +393,7 @@ func helpSessionRoute() {
 	fmt.Fprintln(os.Stderr, "  --prompt TEXT         Optional prompt override")
 	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model override")
 	fmt.Fprintln(os.Stderr, "  --budget N            Optional token budget hint for runbook/capture")
+	fmt.Fprintln(os.Stderr, "  --from-state PATH     Route using handoff/status JSON (use '-' for stdin)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --emit-runbook        Include executable runbook JSON steps")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
@@ -395,6 +421,7 @@ func helpSessionAutopilot() {
 	fmt.Fprintln(os.Stderr, "  --summary-style MODE  Summary style: terse|ops|debug (default: ops)")
 	fmt.Fprintln(os.Stderr, "  --token-budget N      Summary token budget when --summary is set")
 	fmt.Fprintln(os.Stderr, "  --kill-after BOOL     Kill session after handoff step (default: false)")
+	fmt.Fprintln(os.Stderr, "  --resume-from PATH    Resume from previous autopilot JSON summary")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -406,6 +433,7 @@ func helpSessionGuard() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --shared-tmux         Validate safety assumptions for shared tmux environments")
 	fmt.Fprintln(os.Stderr, "  --enforce             Escalate medium/high risk findings to hard failure")
+	fmt.Fprintln(os.Stderr, "  --advice-only         Never exit non-zero; diagnostics only")
 	fmt.Fprintln(os.Stderr, "  --command TEXT        Optional command string to risk-check")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
@@ -423,6 +451,7 @@ func helpSessionPreflight() {
 	fmt.Fprintln(os.Stderr, "  --auto-model          Probe/select first supported model from candidate list")
 	fmt.Fprintln(os.Stderr, "  --auto-model-candidates CSV")
 	fmt.Fprintln(os.Stderr, "                        Candidate model list (default: gpt-5.3-codex,gpt-5-codex)")
+	fmt.Fprintln(os.Stderr, "  --fast                Run reduced high-risk contract checks only")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -438,6 +467,8 @@ func helpSessionList() {
 	fmt.Fprintln(os.Stderr, "  --with-next-action    Include nextAction/status/sessionState per session")
 	fmt.Fprintln(os.Stderr, "  --stale               Include stale metadata-only session counts/list")
 	fmt.Fprintln(os.Stderr, "  --prune-preview       Include safe stale-session prune commands (requires --stale)")
+	fmt.Fprintln(os.Stderr, "  --delta-json          Emit added/removed/changed since cursor snapshot")
+	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Cursor snapshot file for --delta-json")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: sessions/count")
@@ -457,7 +488,7 @@ func helpSessionTree() {
 	fmt.Fprintln(os.Stderr, "  --flat                Print machine-friendly parent/child rows")
 	fmt.Fprintln(os.Stderr, "  --with-state          Enrich rows with status/sessionState snapshots")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
-	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: nodeCount + session graph")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: nodeCount + total/filtered counts")
 }
 
 func helpSessionSmoke() {

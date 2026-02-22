@@ -22,3 +22,16 @@ Scoring: LLM-context impact out of 100.
 - `86/100` `session smoke --chaos`: deterministic failure-mode smoke coverage.
 - `85/100` `session guard --enforce`: explicit hard-fail policy for risky shared-tmux plans.
 - `84/100` `skills doctor --explain-drift`: remediation hints embedded in drift diagnostics.
+
+Additional round (2026-02-22):
+
+- `95/100` `session packet`: one-call status + capture summary + handoff events with optional delta cursor.
+- `94/100` `session monitor --handoff-cursor-file`: resume-safe incremental handoff stream packets.
+- `93/100` `session list --delta-json`: incremental added/removed/changed session queue for low-noise orchestration loops.
+- `92/100` `session autopilot --resume-from`: step-level resume from prior JSON summary (`resumedFrom`,`resumeStep`).
+- `91/100` `session route --from-state`: route computation from handoff/status payloads without re-querying live state.
+- `90/100` `session detect-nested --why`: hint-span explainability payload for nested bypass decisions.
+- `88/100` `session capture --markers-json`: structured marker hit offsets/lines/timestamps for parser-safe gates.
+- `87/100` `session guard --advice-only`: non-blocking safety diagnostics for high-churn orchestrator loops.
+- `85/100` `session preflight --fast`: reduced high-risk contract checks for tight startup budgets.
+- `83/100` `session tree --json-min` total/filtered counts: explicit topology cardinality for cheap health probes.

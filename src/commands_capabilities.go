@@ -62,7 +62,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session detect-nested",
-		Flags: []string{"--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--agent-args", "--model", "--project-root", "--rewrite", "--json"},
+		Flags: []string{"--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--agent-args", "--model", "--project-root", "--rewrite", "--why", "--json"},
 	},
 	{
 		Name:  "session send",
@@ -121,6 +121,7 @@ var commandCapabilities = []commandCapability{
 			"--json-min",
 			"--stream-json",
 			"--emit-handoff",
+			"--handoff-cursor-file",
 			"--verbose",
 		},
 	},
@@ -134,6 +135,7 @@ var commandCapabilities = []commandCapability{
 			"--delta-from",
 			"--cursor-file",
 			"--markers",
+			"--markers-json",
 			"--summary",
 			"--summary-style",
 			"--token-budget",
@@ -142,6 +144,10 @@ var commandCapabilities = []commandCapability{
 			"--json",
 			"--json-min",
 		},
+	},
+	{
+		Name:  "session packet",
+		Flags: []string{"--session", "--project-root", "--agent", "--mode", "--lines", "--events", "--token-budget", "--summary-style", "--cursor-file", "--json", "--json-min"},
 	},
 	{
 		Name:  "session handoff",
@@ -153,15 +159,15 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session route",
-		Flags: []string{"--goal", "--agent", "--prompt", "--model", "--budget", "--project-root", "--emit-runbook", "--json"},
+		Flags: []string{"--goal", "--agent", "--prompt", "--model", "--budget", "--from-state", "--project-root", "--emit-runbook", "--json"},
 	},
 	{
 		Name:  "session autopilot",
-		Flags: []string{"--goal", "--agent", "--mode", "--nested-policy", "--nesting-intent", "--session", "--prompt", "--model", "--project-root", "--poll-interval", "--max-polls", "--capture-lines", "--summary", "--summary-style", "--token-budget", "--kill-after", "--json"},
+		Flags: []string{"--goal", "--agent", "--mode", "--nested-policy", "--nesting-intent", "--session", "--prompt", "--model", "--project-root", "--poll-interval", "--max-polls", "--capture-lines", "--summary", "--summary-style", "--token-budget", "--kill-after", "--resume-from", "--json"},
 	},
 	{
 		Name:  "session guard",
-		Flags: []string{"--shared-tmux", "--enforce", "--command", "--project-root", "--json"},
+		Flags: []string{"--shared-tmux", "--enforce", "--advice-only", "--command", "--project-root", "--json"},
 	},
 	{
 		Name:  "session tree",
@@ -173,11 +179,11 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session preflight",
-		Flags: []string{"--project-root", "--agent", "--model", "--auto-model", "--auto-model-candidates", "--json"},
+		Flags: []string{"--project-root", "--agent", "--model", "--auto-model", "--auto-model-candidates", "--fast", "--json"},
 	},
 	{
 		Name:  "session list",
-		Flags: []string{"--all-sockets", "--project-only", "--active-only", "--with-next-action", "--stale", "--prune-preview", "--project-root", "--json", "--json-min"},
+		Flags: []string{"--all-sockets", "--project-only", "--active-only", "--with-next-action", "--stale", "--prune-preview", "--delta-json", "--cursor-file", "--project-root", "--json", "--json-min"},
 	},
 	{
 		Name:  "session exists",

@@ -1,11 +1,13 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type staleSessionInfo struct {
@@ -24,6 +26,11 @@ type sessionListItem struct {
 	ProjectRoot  string `json:"projectRoot,omitempty"`
 }
 
+type sessionListDeltaCursor struct {
+	UpdatedAt string                     `json:"updatedAt"`
+	Items     map[string]sessionListItem `json:"items"`
+}
+
 func cmdSessionList(args []string) int {
 	projectOnly := false
 	allSockets := false
@@ -31,6 +38,8 @@ func cmdSessionList(args []string) int {
 	withNextAction := false
 	stale := false
 	prunePreview := false
+	deltaJSON := false
+	cursorFile := ""
 	projectRoot := getPWD()
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
@@ -51,6 +60,15 @@ func cmdSessionList(args []string) int {
 			stale = true
 		case "--prune-preview":
 			prunePreview = true
+		case "--delta-json":
+			deltaJSON = true
+			jsonOut = true
+		case "--cursor-file":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --cursor-file")
+			}
+			cursorFile = strings.TrimSpace(args[i+1])
+			i++
 		case "--project-root":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
@@ -71,8 +89,21 @@ func cmdSessionList(args []string) int {
 	if prunePreview && !stale {
 		return commandError(jsonOut, "prune_preview_requires_stale", "--prune-preview requires --stale")
 	}
+	if deltaJSON && stale {
+		return commandError(jsonOut, "delta_json_incompatible_with_stale", "--delta-json cannot be combined with --stale")
+	}
 	if stale && activeOnly {
 		return commandError(jsonOut, "active_only_incompatible_with_stale", "--active-only cannot be combined with --stale")
+	}
+	if cursorFile != "" && !deltaJSON {
+		return commandError(jsonOut, "cursor_file_requires_delta_json", "--cursor-file requires --delta-json")
+	}
+	if deltaJSON && cursorFile != "" {
+		cursorFileResolved, err := expandAndCleanPath(cursorFile)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", err)
+		}
+		cursorFile = cursorFileResolved
 	}
 	list := []string{}
 	var err error
@@ -137,6 +168,55 @@ func cmdSessionList(args []string) int {
 		staleInfos = staleDetails
 		historicalCount = historyCount
 	}
+	deltaAdded := []sessionListItem{}
+	deltaRemoved := []sessionListItem{}
+	deltaChanged := []sessionListItem{}
+	if deltaJSON {
+		if cursorFile == "" {
+			cursorFile = sessionListDeltaCursorFile(projectRoot)
+		}
+		current := make(map[string]sessionListItem, len(list))
+		if withNextAction {
+			for _, item := range items {
+				current[item.Session] = item
+			}
+		} else {
+			for _, session := range list {
+				current[session] = sessionListItem{
+					Session:     session,
+					ProjectRoot: resolveSessionProjectRoot(session, projectRoot, false),
+				}
+			}
+		}
+		prev, prevErr := loadSessionListDeltaCursor(cursorFile)
+		if prevErr != nil {
+			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", prevErr)
+		}
+		for session, nowItem := range current {
+			prevItem, ok := prev.Items[session]
+			if !ok {
+				deltaAdded = append(deltaAdded, nowItem)
+				continue
+			}
+			if !sessionListItemsEqual(nowItem, prevItem) {
+				deltaChanged = append(deltaChanged, nowItem)
+			}
+		}
+		for session, prevItem := range prev.Items {
+			if _, ok := current[session]; !ok {
+				deltaRemoved = append(deltaRemoved, prevItem)
+			}
+		}
+		sort.Slice(deltaAdded, func(i, j int) bool { return deltaAdded[i].Session < deltaAdded[j].Session })
+		sort.Slice(deltaRemoved, func(i, j int) bool { return deltaRemoved[i].Session < deltaRemoved[j].Session })
+		sort.Slice(deltaChanged, func(i, j int) bool { return deltaChanged[i].Session < deltaChanged[j].Session })
+		if err := saveSessionListDeltaCursor(cursorFile, sessionListDeltaCursor{
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+			Items:     current,
+		}); err != nil {
+			return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --cursor-file: %v", err)
+		}
+	}
 	if jsonOut {
 		payload := map[string]any{
 			"sessions": list,
@@ -155,6 +235,15 @@ func cmdSessionList(args []string) int {
 				payload["staleSessions"] = staleSessions
 			}
 		}
+		if deltaJSON {
+			payload["delta"] = map[string]any{
+				"added":   deltaAdded,
+				"removed": deltaRemoved,
+				"changed": deltaChanged,
+				"count":   len(deltaAdded) + len(deltaRemoved) + len(deltaChanged),
+			}
+			payload["cursorFile"] = cursorFile
+		}
 		if !jsonMin {
 			payload["projectOnly"] = projectOnly
 			payload["allSockets"] = allSockets
@@ -163,6 +252,10 @@ func cmdSessionList(args []string) int {
 			payload["projectRoot"] = projectRoot
 		}
 		writeJSON(payload)
+		return 0
+	}
+	if deltaJSON {
+		fmt.Printf("delta added=%d removed=%d changed=%d cursor=%s\n", len(deltaAdded), len(deltaRemoved), len(deltaChanged), cursorFile)
 		return 0
 	}
 	if !stale {
@@ -293,6 +386,55 @@ func listSessionsAcrossSockets(projectRoot string, projectOnly bool) ([]string, 
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+func sessionListDeltaCursorFile(projectRoot string) string {
+	return fmt.Sprintf("/tmp/.lisa-%s-list-delta.json", projectHash(projectRoot))
+}
+
+func loadSessionListDeltaCursor(path string) (sessionListDeltaCursor, error) {
+	out := sessionListDeltaCursor{
+		Items: map[string]sessionListItem{},
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return out, err
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return out, nil
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return out, err
+	}
+	if out.Items == nil {
+		out.Items = map[string]sessionListItem{}
+	}
+	return out, nil
+}
+
+func saveSessionListDeltaCursor(path string, cursor sessionListDeltaCursor) error {
+	if cursor.Items == nil {
+		cursor.Items = map[string]sessionListItem{}
+	}
+	data, err := json.MarshalIndent(cursor, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return writeFileAtomic(path, data)
+}
+
+func sessionListItemsEqual(a, b sessionListItem) bool {
+	return a.Session == b.Session &&
+		a.Status == b.Status &&
+		a.SessionState == b.SessionState &&
+		a.NextAction == b.NextAction &&
+		a.ProjectRoot == b.ProjectRoot
 }
 
 func cmdSessionExists(args []string) int {

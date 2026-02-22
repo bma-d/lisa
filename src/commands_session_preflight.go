@@ -34,6 +34,7 @@ func cmdSessionPreflight(args []string) int {
 	model := ""
 	autoModel := false
 	autoModelCandidates := ""
+	fast := false
 	jsonOut := hasJSONFlag(args)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -65,6 +66,8 @@ func cmdSessionPreflight(args []string) int {
 			}
 			autoModelCandidates = args[i+1]
 			i++
+		case "--fast":
+			fast = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -105,7 +108,12 @@ func cmdSessionPreflight(args []string) int {
 
 	envChecks := collectDoctorChecks()
 	envReady := doctorReady(envChecks)
-	contractChecks := runSessionPreflightContractChecks()
+	contractChecks := []sessionPreflightContractCheck{}
+	if fast {
+		contractChecks = runSessionPreflightContractChecksFast()
+	} else {
+		contractChecks = runSessionPreflightContractChecks()
+	}
 	autoModelResult := sessionPreflightAutoModelResult{}
 	var modelCheck *sessionPreflightModelCheck
 	if autoModel {
@@ -172,6 +180,7 @@ func cmdSessionPreflight(args []string) int {
 			"projectRoot": projectRoot,
 			"environment": map[string]any{"ok": envReady, "checks": envChecks},
 			"contracts":   contractChecks,
+			"fast":        fast,
 			"version":     BuildVersion,
 			"commit":      BuildCommit,
 			"date":        BuildDate,
@@ -196,6 +205,7 @@ func cmdSessionPreflight(args []string) int {
 	}
 	fmt.Printf("session preflight: %s\n", state)
 	fmt.Printf("project_root: %s\n", projectRoot)
+	fmt.Printf("fast: %t\n", fast)
 	fmt.Println("environment:")
 	for _, c := range envChecks {
 		line := "missing"
@@ -270,69 +280,110 @@ func preflightErrorCode(ok bool) string {
 }
 
 func runSessionPreflightContractChecks() []sessionPreflightContractCheck {
+	return runSessionPreflightContractChecksFiltered(nil)
+}
+
+func runSessionPreflightContractChecksFast() []sessionPreflightContractCheck {
+	return runSessionPreflightContractChecksFiltered(map[string]bool{
+		"monitor_expect_marker_guard": true,
+		"capture_delta_offset_parse":  true,
+		"nested_prompt_auto_bypass":   true,
+		"nested_prompt_quote_guard":   true,
+		"nested_intent_nested_bypass": true,
+	})
+}
+
+func runSessionPreflightContractChecksFiltered(keep map[string]bool) []sessionPreflightContractCheck {
 	checks := []sessionPreflightContractCheck{}
 	add := func(name string, ok bool, detail string) {
 		checks = append(checks, sessionPreflightContractCheck{Name: name, OK: ok, Detail: strings.TrimSpace(detail)})
 	}
-
-	modeExecution, err := parseMode("execution")
-	add("mode_alias_execution", err == nil && modeExecution == "exec", fmt.Sprintf("mode=%s err=%v", modeExecution, err))
-
-	modeNonInteractive, err := parseMode("non-interactive")
-	add("mode_alias_non_interactive", err == nil && modeNonInteractive == "exec", fmt.Sprintf("mode=%s err=%v", modeNonInteractive, err))
-
-	_, err = parseMonitorExpect("marker")
-	add("monitor_expect_marker_parse", err == nil, fmt.Sprintf("err=%v", err))
-
-	err = validateMonitorExpectationConfig("marker", "")
-	add("monitor_expect_marker_guard", err != nil, fmt.Sprintf("err=%v", err))
-
-	err = validateMonitorExpectationConfig("marker", "DONE_MARKER")
-	add("monitor_expect_marker_until_marker", err == nil, fmt.Sprintf("err=%v", err))
-
-	offset, ok := parseCaptureOffset("42")
-	add("capture_delta_offset_parse", ok && offset == 42, fmt.Sprintf("offset=%d ok=%t", offset, ok))
-
-	_, err = parseCaptureTimestamp("@0")
-	add("capture_delta_unix_timestamp_parse", err == nil, fmt.Sprintf("err=%v", err))
-
-	_, err = parseCaptureTimestamp("2026-02-21T00:00:00Z")
-	add("capture_delta_rfc3339_parse", err == nil, fmt.Sprintf("err=%v", err))
-
-	autoDetection, autoArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "Use ./lisa for child orchestration.", "", "auto", "auto")
-	autoCmd := ""
-	if err == nil {
-		autoCmd, err = buildAgentCommandWithOptions("codex", "exec", "Use ./lisa for child orchestration.", autoArgs, true)
+	include := func(name string) bool {
+		return keep == nil || keep[name]
 	}
-	autoBypass := err == nil &&
-		autoDetection.AutoBypass &&
-		strings.Contains(autoCmd, "--dangerously-bypass-approvals-and-sandbox") &&
-		!strings.Contains(autoCmd, "--full-auto")
-	add("nested_prompt_auto_bypass", autoBypass, fmt.Sprintf("reason=%s err=%v", autoDetection.Reason, err))
 
-	neutralDetection, neutralArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "No nesting requested here.", "", "auto", "auto")
-	neutralCmd := ""
-	if err == nil {
-		neutralCmd, err = buildAgentCommandWithOptions("codex", "exec", "No nesting requested here.", neutralArgs, true)
+	if include("mode_alias_execution") {
+		modeExecution, err := parseMode("execution")
+		add("mode_alias_execution", err == nil && modeExecution == "exec", fmt.Sprintf("mode=%s err=%v", modeExecution, err))
 	}
-	neutralFullAuto := err == nil &&
-		!neutralDetection.AutoBypass &&
-		strings.Contains(neutralCmd, "--full-auto") &&
-		!strings.Contains(neutralCmd, "--dangerously-bypass-approvals-and-sandbox")
-	add("nested_prompt_neutral_full_auto", neutralFullAuto, fmt.Sprintf("reason=%s err=%v", neutralDetection.Reason, err))
 
-	quotedDetection, _, err := applyNestedPolicyToAgentArgs("codex", "exec", "The string './lisa' appears in docs only.", "", "auto", "auto")
-	add("nested_prompt_quote_guard", err == nil && !quotedDetection.AutoBypass, fmt.Sprintf("reason=%s err=%v", quotedDetection.Reason, err))
-
-	intentDetection, intentArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "No nesting requested here.", "", "auto", "nested")
-	intentCmd := ""
-	if err == nil {
-		intentCmd, err = buildAgentCommandWithOptions("codex", "exec", "No nesting requested here.", intentArgs, true)
+	if include("mode_alias_non_interactive") {
+		modeNonInteractive, err := parseMode("non-interactive")
+		add("mode_alias_non_interactive", err == nil && modeNonInteractive == "exec", fmt.Sprintf("mode=%s err=%v", modeNonInteractive, err))
 	}
-	intentBypass := err == nil &&
-		intentDetection.AutoBypass &&
-		strings.Contains(intentCmd, "--dangerously-bypass-approvals-and-sandbox")
-	add("nested_intent_nested_bypass", intentBypass, fmt.Sprintf("reason=%s err=%v", intentDetection.Reason, err))
+
+	if include("monitor_expect_marker_parse") {
+		_, err := parseMonitorExpect("marker")
+		add("monitor_expect_marker_parse", err == nil, fmt.Sprintf("err=%v", err))
+	}
+
+	if include("monitor_expect_marker_guard") {
+		err := validateMonitorExpectationConfig("marker", "")
+		add("monitor_expect_marker_guard", err != nil, fmt.Sprintf("err=%v", err))
+	}
+
+	if include("monitor_expect_marker_until_marker") {
+		err := validateMonitorExpectationConfig("marker", "DONE_MARKER")
+		add("monitor_expect_marker_until_marker", err == nil, fmt.Sprintf("err=%v", err))
+	}
+
+	if include("capture_delta_offset_parse") {
+		offset, ok := parseCaptureOffset("42")
+		add("capture_delta_offset_parse", ok && offset == 42, fmt.Sprintf("offset=%d ok=%t", offset, ok))
+	}
+
+	if include("capture_delta_unix_timestamp_parse") {
+		_, err := parseCaptureTimestamp("@0")
+		add("capture_delta_unix_timestamp_parse", err == nil, fmt.Sprintf("err=%v", err))
+	}
+
+	if include("capture_delta_rfc3339_parse") {
+		_, err := parseCaptureTimestamp("2026-02-21T00:00:00Z")
+		add("capture_delta_rfc3339_parse", err == nil, fmt.Sprintf("err=%v", err))
+	}
+
+	if include("nested_prompt_auto_bypass") {
+		autoDetection, autoArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "Use ./lisa for child orchestration.", "", "auto", "auto")
+		autoCmd := ""
+		if err == nil {
+			autoCmd, err = buildAgentCommandWithOptions("codex", "exec", "Use ./lisa for child orchestration.", autoArgs, true)
+		}
+		autoBypass := err == nil &&
+			autoDetection.AutoBypass &&
+			strings.Contains(autoCmd, "--dangerously-bypass-approvals-and-sandbox") &&
+			!strings.Contains(autoCmd, "--full-auto")
+		add("nested_prompt_auto_bypass", autoBypass, fmt.Sprintf("reason=%s err=%v", autoDetection.Reason, err))
+	}
+
+	if include("nested_prompt_neutral_full_auto") {
+		neutralDetection, neutralArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "No nesting requested here.", "", "auto", "auto")
+		neutralCmd := ""
+		if err == nil {
+			neutralCmd, err = buildAgentCommandWithOptions("codex", "exec", "No nesting requested here.", neutralArgs, true)
+		}
+		neutralFullAuto := err == nil &&
+			!neutralDetection.AutoBypass &&
+			strings.Contains(neutralCmd, "--full-auto") &&
+			!strings.Contains(neutralCmd, "--dangerously-bypass-approvals-and-sandbox")
+		add("nested_prompt_neutral_full_auto", neutralFullAuto, fmt.Sprintf("reason=%s err=%v", neutralDetection.Reason, err))
+	}
+
+	if include("nested_prompt_quote_guard") {
+		quotedDetection, _, err := applyNestedPolicyToAgentArgs("codex", "exec", "The string './lisa' appears in docs only.", "", "auto", "auto")
+		add("nested_prompt_quote_guard", err == nil && !quotedDetection.AutoBypass, fmt.Sprintf("reason=%s err=%v", quotedDetection.Reason, err))
+	}
+
+	if include("nested_intent_nested_bypass") {
+		intentDetection, intentArgs, err := applyNestedPolicyToAgentArgs("codex", "exec", "No nesting requested here.", "", "auto", "nested")
+		intentCmd := ""
+		if err == nil {
+			intentCmd, err = buildAgentCommandWithOptions("codex", "exec", "No nesting requested here.", intentArgs, true)
+		}
+		intentBypass := err == nil &&
+			intentDetection.AutoBypass &&
+			strings.Contains(intentCmd, "--dangerously-bypass-approvals-and-sandbox")
+		add("nested_intent_nested_bypass", intentBypass, fmt.Sprintf("reason=%s err=%v", intentDetection.Reason, err))
+	}
 
 	return checks
 }

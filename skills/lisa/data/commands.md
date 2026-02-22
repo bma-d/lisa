@@ -67,9 +67,10 @@ Inspect nested codex-bypass detection without creating sessions.
 | `--model` | `""` | Codex model name (supported when `--agent codex`) |
 | `--project-root` | cwd | Project directory |
 | `--rewrite` | false | Include trigger-safe prompt rewrite suggestions |
+| `--why` | false | Include hint-span reasoning payload |
 | `--json` | false | JSON output |
 
-JSON: `{"nestedPolicy","nestingIntent","nestedDetection","agentArgs","effectiveAgentArgs","rewrites?","command?"}`
+JSON: `{"nestedPolicy","nestingIntent","nestedDetection","agentArgs","effectiveAgentArgs","rewrites?","why?","command?"}`
 
 ## session send
 
@@ -151,6 +152,7 @@ Block until success/terminal condition per flags.
 | `--json-min` | false | Minimal JSON output (`session`,`finalState`,`exitReason`,`polls`,`nextOffset?`) |
 | `--stream-json` | false | Emit line-delimited JSON poll events before final payload |
 | `--emit-handoff` | false | Emit compact handoff packets per poll (`--stream-json` required) |
+| `--handoff-cursor-file` | `""` | Persist/reuse handoff delta offset (`--emit-handoff` required) |
 | `--verbose` | false | Progress details to stderr |
 | `--json` | false | JSON output |
 
@@ -164,17 +166,20 @@ Monitor nuance:
 - `marker_found` is success, often before terminal completion (`in_progress`/`active`).
 - `marker_found` can occur on echoed prompt text; use unique markers that are excluded from prompt content.
 - `--until-state` can stop on non-terminal states (for example `waiting_input` or `in_progress`) and returns that state as `exitReason`.
+- `--until-state` and `--until-jsonpath` matches are success paths (exit `0`) even when `finalState` is non-terminal.
 - `--waiting-requires-turn-complete true` can timeout whenever turn-complete cannot be inferred (common in Codex/non-transcript flows).
 - `--stream-json` emits one JSON poll object per loop (`type:"poll"`), then emits the standard final monitor payload.
 - `--emit-handoff` adds one `type:"handoff"` packet per poll with `reason`, `nextAction`, and optional `nextOffset`.
+- `--handoff-cursor-file` switches handoff stream events to incremental delta packets (`deltaFrom`,`nextDeltaOffset`,`deltaCount`,`recent`).
 - Final monitor payload includes `nextOffset` when pane capture is available.
 - `--emit-handoff` without `--stream-json` is a usage error (exit `1`).
+- `--handoff-cursor-file` without `--emit-handoff` is a usage error (exit `1`).
 - `--expect terminal` on marker/waiting success returns `expected_terminal_got_*` (exit `2`).
 - `--expect marker` when marker is not first success returns `expected_marker_got_*` (exit `2`).
 - `--expect marker` without `--until-marker` is a usage error (exit `1`).
 
 Monitor exits:
-- exit `0`: `completed`, `waiting_input`, `waiting_input_turn_complete`, `marker_found`
+- exit `0`: `completed`, `waiting_input`, `waiting_input_turn_complete`, `marker_found`, any `--until-state` match, any `--until-jsonpath` match (`exitReason:"jsonpath_matched"`)
 - exit `2`: `crashed`, `stuck`, `not_found`, `max_polls_exceeded`, `degraded_max_polls_exceeded`, `expected_*`
 
 ## session capture
@@ -189,6 +194,7 @@ Capture transcript (default for Claude) or raw pane output.
 | `--delta-from` | `""` | Delta start (`offset`, `@unix`, RFC3339); requires `--raw` |
 | `--cursor-file` | `""` | Persist/reuse raw capture offsets across polling loops (`--raw` only) |
 | `--markers` | `""` | Marker-only extraction mode (`A,B,C`) |
+| `--markers-json` | false | Include structured marker hits (`marker`,`start`,`end`,`line`,`at`) |
 | `--summary` | false | Return bounded summary instead of full capture |
 | `--summary-style` | `terse` | Summary style: `terse`, `ops`, `debug` (requires `--summary` when non-default) |
 | `--token-budget` | `320` | Summary token budget |
@@ -208,6 +214,7 @@ Capture behavior:
   - timestamp mode: `@unix` or RFC3339; returns full capture only if output changed after timestamp
   - JSON includes `deltaMode` + `nextOffset` for iterative polling (fields appear when `--delta-from` is provided)
 - Cursor files (`--cursor-file`) auto-load prior offset when `--delta-from` is omitted and write back `nextOffset` after capture.
+- Marker mode supports structured hits via `--markers-json` (JSON only).
 - `--summary` returns compact `summary` payloads (plus `tokenBudget`/`truncated`) instead of raw `capture`.
 - `--summary` cannot be combined with marker mode.
 
@@ -216,7 +223,7 @@ JSON:
 - raw: `{"session","capture"}`
 - transcript `--json-min`: `{"session","claudeSession","messageCount","capture"}`
 - raw `--json-min`: `{"session","capture"}` (+`nextOffset` when `--delta-from` is set)
-- marker mode: `{"session","markers","markerMatches","foundMarkers","missingMarkers"}` (plus `markerCounts` in non-min JSON)
+- marker mode: `{"session","markers","markerMatches","foundMarkers","missingMarkers"}` (plus `markerCounts` in non-min JSON, `markerHits` when `--markers-json`)
 
 ## session explain
 
@@ -234,6 +241,19 @@ Detailed diagnostics with recent event timeline.
 | `--json` | false | JSON output |
 
 JSON: `{"status":{...},"eventFile","events":[...],"droppedEventLines"}`
+
+## session packet
+
+One-shot status + summarized raw capture + handoff event packet.
+
+Flags: `--session` (required), `--project-root`, `--agent`, `--mode`, `--lines`, `--events`, `--token-budget`, `--summary-style`, `--cursor-file`, `--json`, `--json-min`.
+
+JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","summary","summaryStyle","tokenBudget","truncated","recent?"}`.
+
+Notes:
+- `--cursor-file` enables incremental handoff events (`deltaFrom`,`nextDeltaOffset`,`deltaCount`).
+- `--json-min` emits compact packet plus `recent` event list.
+- `session_not_found` returns JSON payload with `errorCode` and exit `1`.
 
 ## session handoff
 
@@ -255,32 +275,39 @@ JSON: `{"session","sessionState","status","reason","nextAction","nextOffset","st
 
 Recommend mode/policy/model defaults for orchestration goal.
 
-Flags: `--goal` (`nested|analysis|exec`), `--agent`, `--prompt`, `--model`, `--budget`, `--project-root`, `--emit-runbook`, `--json`.
+Flags: `--goal` (`nested|analysis|exec`), `--agent`, `--prompt`, `--model`, `--budget`, `--from-state`, `--project-root`, `--emit-runbook`, `--json`.
 
 JSON includes command preview + routing rationale:
-`{"goal","agent","mode","nestedPolicy","nestingIntent","model","command","monitorHint","nestedDetection","rationale","runbook?"}`.
+`{"goal","agent","mode","nestedPolicy","nestingIntent","model","command","monitorHint","nestedDetection","rationale","fromState?","runbook?"}`.
 
 ## session guard
 
 Shared tmux safety guard.
 
-Flags: `--shared-tmux` (required), `--enforce`, `--command`, `--project-root`, `--json`.
+Flags: `--shared-tmux` (required), `--enforce`, `--advice-only`, `--command`, `--project-root`, `--json`.
 
-JSON: `{"sharedTmux","enforce","defaultSessionCount","defaultSessions","commandRisk","safe","warnings","remediation?","riskReasons?"}`.
+JSON: `{"sharedTmux","enforce","adviceOnly","defaultSessionCount","defaultSessions","commandRisk","safe","warnings","remediation?","riskReasons?"}`.
+
+Guard semantics:
+- `--enforce` upgrades medium/high-risk findings to hard failure.
+- `--advice-only` forces exit `0` (diagnostics-only), while preserving `safe`/risk fields in payload.
 
 ## session autopilot
 
 Policy-driven end-to-end orchestration loop: spawn -> monitor -> capture -> handoff -> optional cleanup.
 
-Flags: `--goal`, `--agent`, `--mode`, `--nested-policy`, `--nesting-intent`, `--session`, `--prompt`, `--model`, `--project-root`, `--poll-interval`, `--max-polls`, `--capture-lines`, `--summary`, `--summary-style`, `--token-budget`, `--kill-after`, `--json`.
+Flags: `--goal`, `--agent`, `--mode`, `--nested-policy`, `--nesting-intent`, `--session`, `--prompt`, `--model`, `--project-root`, `--poll-interval`, `--max-polls`, `--capture-lines`, `--summary`, `--summary-style`, `--token-budget`, `--kill-after`, `--resume-from`, `--json`.
 
-JSON: `{"ok","failedStep?","errorCode?","session","spawn","monitor","capture","handoff","cleanup?"}`.
+JSON: `{"ok","failedStep?","errorCode?","session","resumedFrom?","resumeStep?","spawn","monitor","capture","handoff","cleanup?"}`.
+
+Resume input:
+- `--resume-from <PATH|->` loads prior autopilot JSON summary; `-` reads JSON from stdin.
 
 ## session list / exists / kill / kill-all / name
 
 | Command | Key Flags | Output |
 |---|---|---|
-| `session list` | `--all-sockets`, `--project-only`, `--active-only`, `--with-next-action`, `--stale`, `--prune-preview`, `--project-root`, `--json`, `--json-min` | names (text) or JSON |
+| `session list` | `--all-sockets`, `--project-only`, `--active-only`, `--with-next-action`, `--stale`, `--prune-preview`, `--delta-json`, `--cursor-file` (for `--delta-json`), `--project-root`, `--json`, `--json-min` | names (text) or JSON |
 | `session exists` | `--session`, `--project-root`, `--json` | `true`/`false` (exit 0/1) or JSON |
 | `session kill` | `--session`, `--project-root`, `--cleanup-all-hashes`, `--json` | `ok` or JSON (`found:false` + exit `1` when missing) |
 | `session kill-all` | `--project-only`, `--project-root`, `--cleanup-all-hashes`, `--json` | `killed N sessions` or JSON |
@@ -292,6 +319,9 @@ Scope/retention:
 - `session list --all-sockets` scans metadata-known project roots and returns active sessions only.
 - `session list --stale` adds metadata stale analysis (`historicalCount`, `staleCount`, and stale list in full JSON/text).
 - `session list --stale --prune-preview` adds safe stale-session cleanup plans (`prunePreview`).
+- `session list --delta-json` emits `delta.added|removed|changed` vs previous cursor snapshot.
+- `session list --cursor-file` is consumed/emitted only in `--delta-json` mode.
+- `session list --delta-json --cursor-file <PATH>` persists snapshot state for stable incremental diffing.
 
 ## session tree
 
@@ -306,10 +336,10 @@ Inspect metadata parent/child links for nested orchestration.
 | `--delta` | false | Emit added/removed topology edges since last tree snapshot |
 | `--flat` | false | Machine-friendly parent/child rows |
 | `--with-state` | false | Attach `status` + `sessionState` snapshots |
-| `--json-min` | false | Minimal JSON output (`nodeCount` + session graph) |
+| `--json-min` | false | Minimal JSON output (`nodeCount`,`totalNodeCount`,`filteredNodeCount` + rows/roots) |
 | `--json` | false | JSON output |
 
-JSON: `{"session","projectRoot","allHashes","nodeCount","roots":[{"session","parentSession","agent","mode","projectRoot","createdAt","children":[...]}]}`
+JSON: `{"session","projectRoot","allHashes","nodeCount","totalNodeCount","filteredNodeCount","roots":[{"session","parentSession","agent","mode","projectRoot","createdAt","children":[...]}]}`
 
 Tree semantics:
 - `session tree` is metadata-first and can show historical roots even when no active session exists.
@@ -334,11 +364,12 @@ Prompt-style JSON probe fields are under `promptProbe.detection.*` (not `promptP
 
 Validate environment + contract assumptions in one command.
 
-Flags: `--project-root`, `--agent`, `--model`, `--auto-model`, `--auto-model-candidates`, `--json`.
+Flags: `--project-root`, `--agent`, `--model`, `--auto-model`, `--auto-model-candidates`, `--fast`, `--json`.
 
 Behavior:
 - Runs doctor-equivalent environment checks (`tmux`, `claude`, `codex`).
 - Validates parser/contract assumptions (mode aliases, monitor marker guard, capture delta parsing, nested codex hint routing).
+- `--fast` runs reduced high-risk contract checks only.
 - Optional model probe: `--agent codex --model <NAME>` performs real model-availability check.
 - `--auto-model` probes candidate models and selects first supported (`gpt-5.3-codex,gpt-5-codex` by default).
 - Exit `0` when both environment + contracts are ready; otherwise exit `1`.
@@ -357,6 +388,24 @@ JSON: `{"dryRun","scanned","removed","wouldRemove","killedServers","wouldKillSer
 
 Non-JSON output: one-line summary. Exit `1` if any probe/kill/remove errors occurred.
 Safety: in shared tmux environments, run `session guard --shared-tmux --json` and `cleanup --dry-run` before any cleanup mutation.
+
+## oauth add
+
+Store a Claude OAuth token in Lisa's local pool.
+
+Flags: `--token`, `--stdin`, `--json`.
+
+## oauth list
+
+List managed Claude OAuth token ids and rotation metadata.
+
+Flags: `--json`.
+
+## oauth remove
+
+Remove a managed Claude OAuth token by id.
+
+Flags: `--id`, `--json`.
 
 ## Other commands
 
@@ -381,7 +430,7 @@ Aliases `execution` and `non-interactive` map to `exec`.
 
 ## JSON Surface
 
-`--json` exists on: `doctor`, `capabilities`, `cleanup`, `agent build-cmd`, `skills sync|doctor|install`, `session name|spawn|detect-nested|send|snapshot|status|explain|monitor|capture|handoff|context-pack|route|guard|tree|smoke|preflight|list|exists|kill|kill-all`.
+`--json` exists on: `doctor`, `capabilities`, `cleanup`, `agent build-cmd`, `skills sync|doctor|install`, `session name|spawn|detect-nested|send|snapshot|status|explain|monitor|capture|packet|handoff|context-pack|route|guard|tree|smoke|preflight|list|exists|kill|kill-all`.
 
 JSON error contract:
 - command/runtime failures emit `{"ok":false,"errorCode":"...","error":"..."}` when `--json` is enabled.

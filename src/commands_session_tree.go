@@ -21,17 +21,19 @@ type sessionTreeNode struct {
 }
 
 type sessionTreeResult struct {
-	Session     string            `json:"session,omitempty"`
-	ProjectRoot string            `json:"projectRoot"`
-	AllHashes   bool              `json:"allHashes"`
-	ActiveOnly  bool              `json:"activeOnly,omitempty"`
-	DeltaOnly   bool              `json:"delta,omitempty"`
-	Flat        bool              `json:"flat,omitempty"`
-	WithState   bool              `json:"withState,omitempty"`
-	NodeCount   int               `json:"nodeCount"`
-	Rows        []sessionTreeRow  `json:"rows,omitempty"`
-	Roots       []sessionTreeNode `json:"roots"`
-	Delta       *sessionTreeDelta `json:"deltaResult,omitempty"`
+	Session           string            `json:"session,omitempty"`
+	ProjectRoot       string            `json:"projectRoot"`
+	AllHashes         bool              `json:"allHashes"`
+	ActiveOnly        bool              `json:"activeOnly,omitempty"`
+	DeltaOnly         bool              `json:"delta,omitempty"`
+	Flat              bool              `json:"flat,omitempty"`
+	WithState         bool              `json:"withState,omitempty"`
+	NodeCount         int               `json:"nodeCount"`
+	TotalNodeCount    int               `json:"totalNodeCount,omitempty"`
+	FilteredNodeCount int               `json:"filteredNodeCount,omitempty"`
+	Rows              []sessionTreeRow  `json:"rows,omitempty"`
+	Roots             []sessionTreeNode `json:"roots"`
+	Delta             *sessionTreeDelta `json:"deltaResult,omitempty"`
 }
 
 type sessionTreeRow struct {
@@ -103,6 +105,14 @@ func cmdSessionTree(args []string) int {
 	if err != nil {
 		return commandErrorf(jsonOut, "session_tree_build_failed", "failed to build session tree: %v", err)
 	}
+	totalSessions := map[string]struct{}{}
+	for _, meta := range metas {
+		session := strings.TrimSpace(meta.Session)
+		if session != "" {
+			totalSessions[session] = struct{}{}
+		}
+	}
+	totalNodeCount := len(totalSessions)
 	if activeOnly {
 		metas = filterActiveTreeMetas(projectRoot, metas)
 	}
@@ -147,21 +157,28 @@ func cmdSessionTree(args []string) int {
 		roots = append(roots, buildSessionTreeNode(root, nodesBySession, childrenByParent, map[string]bool{}))
 	}
 
-	result := sessionTreeResult{
-		Session:     sessionFilter,
-		ProjectRoot: projectRoot,
-		AllHashes:   allHashes,
-		ActiveOnly:  activeOnly,
-		DeltaOnly:   delta,
-		Flat:        flat,
-		WithState:   withState,
-		NodeCount:   len(nodesBySession),
-		Roots:       roots,
-	}
 	rows := flattenSessionTreeRows(roots)
 	if withState {
 		rows = enrichSessionTreeRowsWithState(projectRoot, rows)
-		result.Roots = applyRowsToTreeRoots(result.Roots, rows)
+		roots = applyRowsToTreeRoots(roots, rows)
+	}
+	nodeCount := len(rows)
+	filteredNodeCount := totalNodeCount - nodeCount
+	if filteredNodeCount < 0 {
+		filteredNodeCount = 0
+	}
+	result := sessionTreeResult{
+		Session:           sessionFilter,
+		ProjectRoot:       projectRoot,
+		AllHashes:         allHashes,
+		ActiveOnly:        activeOnly,
+		DeltaOnly:         delta,
+		Flat:              flat,
+		WithState:         withState,
+		NodeCount:         nodeCount,
+		TotalNodeCount:    totalNodeCount,
+		FilteredNodeCount: filteredNodeCount,
+		Roots:             roots,
 	}
 	if flat || withState {
 		result.Rows = rows
@@ -177,7 +194,9 @@ func cmdSessionTree(args []string) int {
 	if jsonOut {
 		if jsonMin {
 			payload := map[string]any{
-				"nodeCount": result.NodeCount,
+				"nodeCount":         result.NodeCount,
+				"totalNodeCount":    result.TotalNodeCount,
+				"filteredNodeCount": result.FilteredNodeCount,
 			}
 			if delta && result.Delta != nil {
 				payload["added"] = flattenSessionTreeRowsMin(result.Delta.Added)

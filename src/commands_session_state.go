@@ -240,6 +240,36 @@ func writeMonitorStreamHandoff(status sessionStatus, poll int, jsonMin bool) {
 	writeJSON(payload)
 }
 
+func writeMonitorStreamHandoffDelta(status sessionStatus, poll int, jsonMin bool, projectRoot string, deltaFrom int) (int, error) {
+	items, _, nextDeltaOffset, err := readSessionHandoffDelta(projectRoot, status.Session, deltaFrom, 8)
+	if err != nil {
+		return deltaFrom, err
+	}
+	nextOffset := computeSessionCaptureNextOffset(status.Session)
+	nextAction := nextActionForState(status.SessionState)
+	payload := map[string]any{
+		"type":            "handoff",
+		"poll":            poll,
+		"session":         status.Session,
+		"status":          normalizeMonitorFinalStatus(status.SessionState, status.Status),
+		"sessionState":    status.SessionState,
+		"reason":          status.ClassificationReason,
+		"nextAction":      nextAction,
+		"deltaFrom":       deltaFrom,
+		"nextDeltaOffset": nextDeltaOffset,
+		"deltaCount":      len(items),
+		"recent":          items,
+	}
+	if nextOffset > 0 {
+		payload["nextOffset"] = nextOffset
+	}
+	if !jsonMin {
+		payload["summary"] = fmt.Sprintf("state=%s reason=%s next=%s", status.SessionState, status.ClassificationReason, nextAction)
+	}
+	writeJSON(payload)
+	return nextDeltaOffset, nil
+}
+
 func normalizeMonitorFinalStatus(finalState, finalStatus string) string {
 	switch finalState {
 	case "completed", "crashed", "stuck", "not_found":
@@ -414,6 +444,7 @@ func cmdSessionMonitor(args []string) int {
 	jsonMin := false
 	streamJSON := false
 	emitHandoff := false
+	handoffCursorFile := ""
 	verbose := false
 
 	for i := 0; i < len(args); i++ {
@@ -506,7 +537,7 @@ func cmdSessionMonitor(args []string) int {
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --until-state")
 			}
-			parsedState, parseErr := parseMonitorUntilState(args[i+1])
+			parsedState, parseErr := parseMonitorUntilStateRuntime(args[i+1])
 			if parseErr != nil {
 				return commandError(jsonOut, "invalid_until_state", parseErr.Error())
 			}
@@ -529,6 +560,12 @@ func cmdSessionMonitor(args []string) int {
 		case "--emit-handoff":
 			emitHandoff = true
 			jsonOut = true
+		case "--handoff-cursor-file":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --handoff-cursor-file")
+			}
+			handoffCursorFile = strings.TrimSpace(args[i+1])
+			i++
 		case "--verbose":
 			verbose = true
 		default:
@@ -555,6 +592,16 @@ func cmdSessionMonitor(args []string) int {
 	if emitHandoff && !streamJSON {
 		return commandError(jsonOut, "emit_handoff_requires_stream_json", "--emit-handoff requires --stream-json")
 	}
+	if handoffCursorFile != "" && !emitHandoff {
+		return commandError(jsonOut, "handoff_cursor_requires_emit_handoff", "--handoff-cursor-file requires --emit-handoff")
+	}
+	if handoffCursorFile != "" {
+		expandedCursor, expandErr := expandAndCleanPath(handoffCursorFile)
+		if expandErr != nil {
+			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --handoff-cursor-file: %v", expandErr)
+		}
+		handoffCursorFile = expandedCursor
+	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
@@ -565,6 +612,14 @@ func cmdSessionMonitor(args []string) int {
 	modeHint, err = parseModeHint(modeHint)
 	if err != nil {
 		return commandError(jsonOut, "invalid_mode_hint", err.Error())
+	}
+	handoffDeltaOffset := 0
+	if handoffCursorFile != "" {
+		offset, offsetErr := loadCursorOffset(handoffCursorFile)
+		if offsetErr != nil {
+			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --handoff-cursor-file: %v", offsetErr)
+		}
+		handoffDeltaOffset = offset
 	}
 
 	last := sessionStatus{}
@@ -587,7 +642,18 @@ func cmdSessionMonitor(args []string) int {
 		if streamJSON {
 			writeMonitorStreamPoll(status, poll, jsonMin)
 			if emitHandoff {
-				writeMonitorStreamHandoff(status, poll, jsonMin)
+				if handoffCursorFile != "" {
+					nextOffset, streamErr := writeMonitorStreamHandoffDelta(status, poll, jsonMin, projectRoot, handoffDeltaOffset)
+					if streamErr != nil {
+						return commandErrorf(jsonOut, "handoff_stream_failed", "failed emitting handoff delta: %v", streamErr)
+					}
+					handoffDeltaOffset = nextOffset
+					if writeErr := writeCursorOffset(handoffCursorFile, handoffDeltaOffset); writeErr != nil {
+						return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --handoff-cursor-file: %v", writeErr)
+					}
+				} else {
+					writeMonitorStreamHandoff(status, poll, jsonMin)
+				}
 			}
 		}
 
@@ -900,6 +966,7 @@ func cmdSessionCapture(args []string) int {
 	deltaFrom := ""
 	cursorFile := ""
 	markersRaw := ""
+	markersJSON := false
 	tokenBudget := 320
 	summaryStyle := "terse"
 	stripNoise := true
@@ -953,6 +1020,9 @@ func cmdSessionCapture(args []string) int {
 			}
 			markersRaw = args[i+1]
 			i++
+		case "--markers-json":
+			markersJSON = true
+			jsonOut = true
 		case "--token-budget":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --token-budget")
@@ -994,6 +1064,9 @@ func cmdSessionCapture(args []string) int {
 	}
 	if summary && len(markersRaw) > 0 {
 		return commandError(jsonOut, "summary_incompatible_with_markers", "--summary cannot be combined with --markers")
+	}
+	if markersJSON && len(strings.TrimSpace(markersRaw)) == 0 {
+		return commandError(jsonOut, "markers_json_requires_markers", "--markers-json requires --markers")
 	}
 	parsedSummaryStyle, parseErr := parseCaptureSummaryStyle(summaryStyle)
 	if parseErr != nil {
@@ -1100,8 +1173,12 @@ func cmdSessionCapture(args []string) int {
 	}
 
 	markerSummary := captureMarkerSummary{}
+	markerHits := []captureMarkerHit{}
 	if len(markers) > 0 {
 		markerSummary = buildCaptureMarkerSummary(capture, markers)
+		if markersJSON {
+			markerHits = buildCaptureMarkerHits(capture, markers)
+		}
 	}
 	summaryText := ""
 	summaryTruncated := false
@@ -1128,6 +1205,9 @@ func cmdSessionCapture(args []string) int {
 			payload["missingMarkers"] = markerSummary.Missing
 			if !jsonMin {
 				payload["markerCounts"] = markerSummary.Counts
+			}
+			if markersJSON {
+				payload["markerHits"] = markerHits
 			}
 		}
 		if deltaFrom != "" {
@@ -1533,6 +1613,18 @@ func parseMonitorExpect(expect string) (string, error) {
 		return value, nil
 	default:
 		return "", fmt.Errorf("invalid --expect: %s (expected any|terminal|marker)", expect)
+	}
+}
+
+func parseMonitorUntilStateRuntime(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	switch value {
+	case "":
+		return "", nil
+	case "just_started", "waiting_input", "completed", "crashed", "stuck", "not_found", "in_progress", "degraded":
+		return value, nil
+	default:
+		return "", fmt.Errorf("invalid --until-state: %s (expected just_started|waiting_input|completed|crashed|stuck|not_found|in_progress|degraded)", raw)
 	}
 }
 

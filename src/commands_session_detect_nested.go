@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -15,6 +16,7 @@ func cmdSessionDetectNested(args []string) int {
 	model := ""
 	projectRoot := getPWD()
 	rewrite := false
+	why := false
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -71,6 +73,8 @@ func cmdSessionDetectNested(args []string) int {
 			i++
 		case "--rewrite":
 			rewrite = true
+		case "--why":
+			why = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -127,6 +131,9 @@ func cmdSessionDetectNested(args []string) int {
 	if rewrite {
 		payload["rewrites"] = nestedRewriteSuggestions(prompt, detection)
 	}
+	if why {
+		payload["why"] = buildNestedDetectionWhy(prompt, detection)
+	}
 	if command, buildErr := buildAgentCommandWithOptions(agent, mode, prompt, effectiveAgentArgs, true); buildErr == nil {
 		payload["command"] = command
 	}
@@ -147,6 +154,9 @@ func cmdSessionDetectNested(args []string) int {
 				fmt.Printf("- %s\n", line)
 			}
 		}
+	}
+	if why {
+		fmt.Printf("why: %v\n", payload["why"])
 	}
 	return 0
 }
@@ -189,4 +199,66 @@ func nestedRewriteSuggestions(prompt string, detection nestedCodexDetection) []s
 		add(prefix + " " + base)
 	}
 	return out
+}
+
+type nestedDetectionWhySpan struct {
+	Hint         string `json:"hint"`
+	Start        int    `json:"start"`
+	End          int    `json:"end"`
+	Context      string `json:"context"`
+	DocContext   bool   `json:"docContext"`
+	ActionCtx    bool   `json:"actionContext"`
+	NonExec      bool   `json:"nonExecutable"`
+	MatchedHint  bool   `json:"matchedHint"`
+}
+
+func buildNestedDetectionWhy(prompt string, detection nestedCodexDetection) map[string]any {
+	lower := strings.ToLower(prompt)
+	hints := []string{"./lisa", "lisa session spawn", "nested lisa"}
+	spans := make([]nestedDetectionWhySpan, 0, 4)
+	for _, hint := range hints {
+		for _, idx := range findAllSubstringIndices(lower, hint) {
+			start := idx - 48
+			if start < 0 {
+				start = 0
+			}
+			end := idx + len(hint) + 48
+			if end > len(lower) {
+				end = len(lower)
+			}
+			window := lower[start:end]
+			docCtx := containsAnyKeyword(window, []string{
+				"docs", "documentation", "readme", "string", "literal", "quote", "quoted",
+				"mention", "mentions", "example", "examples", "appears", "appear", "shown", "text",
+			})
+			actionCtx := containsAnyKeyword(window, []string{
+				"run", "use", "invoke", "spawn", "execute", "launch", "call",
+			})
+			spans = append(spans, nestedDetectionWhySpan{
+				Hint:        hint,
+				Start:       idx,
+				End:         idx + len(hint),
+				Context:     strings.TrimSpace(prompt[start:end]),
+				DocContext:  docCtx,
+				ActionCtx:   actionCtx,
+				NonExec:     docCtx && !actionCtx,
+				MatchedHint: strings.EqualFold(strings.TrimSpace(detection.MatchedHint), strings.TrimSpace(hint)),
+			})
+		}
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i].Start == spans[j].Start {
+			return spans[i].Hint < spans[j].Hint
+		}
+		return spans[i].Start < spans[j].Start
+	})
+	return map[string]any{
+		"eligible":      detection.Eligible,
+		"reason":        detection.Reason,
+		"autoBypass":    detection.AutoBypass,
+		"matchedHint":   detection.MatchedHint,
+		"hasBypassArg":  detection.HasBypassArg,
+		"hasFullAutoArg": detection.HasFullAutoArg,
+		"spans":         spans,
+	}
 }

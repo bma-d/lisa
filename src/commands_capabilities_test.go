@@ -119,6 +119,7 @@ func TestCommandCapabilitiesCommandSet(t *testing.T) {
 		"session list",
 		"session monitor",
 		"session name",
+		"session packet",
 		"session preflight",
 		"session route",
 		"session send",

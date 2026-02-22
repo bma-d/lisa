@@ -43,6 +43,8 @@ func cmdSession(args []string) int {
 		return cmdSessionMonitor(args[1:])
 	case "capture":
 		return cmdSessionCapture(args[1:])
+	case "packet":
+		return cmdSessionPacket(args[1:])
 	case "handoff":
 		return cmdSessionHandoff(args[1:])
 	case "context-pack":

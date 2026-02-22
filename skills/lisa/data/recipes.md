@@ -2,6 +2,7 @@
 
 Repo-local validation should pin to `./lisa` only:
 `test -x ./lisa || { echo "missing ./lisa"; exit 1; }; LISA_BIN=./lisa`.
+For isolated socket placement, prefer `LISA_TMUX_SOCKET_DIR=/tmp/lisa-tmux-<tag>` (Lisa computes per-project socket path).
 
 ## Core Pattern
 
@@ -39,6 +40,7 @@ Use before complex orchestration to lock command assumptions:
 ```bash
 $LISA_BIN doctor --json
 $LISA_BIN session preflight --json
+$LISA_BIN session preflight --fast --json
 MODEL="${MODEL:-gpt-5.3-codex-spark}"
 $LISA_BIN session preflight --agent codex --auto-model --json || \
   echo "auto-model probe failed; set --model explicitly"
@@ -134,9 +136,14 @@ $LISA_BIN session monitor --session "$S" --project-root . --json-min --stream-js
 
 # line-delimited poll + handoff packets
 $LISA_BIN session monitor --session "$S" --project-root . --json-min --stream-json --emit-handoff
+$LISA_BIN session monitor --session "$S" --project-root . --json-min --stream-json --emit-handoff --handoff-cursor-file /tmp/lisa.monitor.cursor
 
 # one-shot compact status+capture payload
 $LISA_BIN session snapshot --session "$S" --project-root . --json-min
+
+# one-shot status + summary + handoff packet
+$LISA_BIN session packet --session "$S" --project-root . --json-min
+$LISA_BIN session packet --session "$S" --project-root . --cursor-file /tmp/lisa.packet.cursor --json-min
 
 # compact handoff packet for another orchestrator
 $LISA_BIN session handoff --session "$S" --project-root . --json-min
@@ -160,6 +167,7 @@ $LISA_BIN session monitor --session "$S" --project-root . \
 # explicit state gate (non-terminal allowed)
 $LISA_BIN session monitor --session "$S" --project-root . \
   --until-state waiting_input --json
+# contract: exits 0 when gate matches (non-terminal state allowed)
 ```
 
 Marker hygiene:
@@ -173,7 +181,10 @@ $LISA_BIN session kill-all --project-only --project-root .
 $LISA_BIN session kill-all --cleanup-all-hashes
 
 $LISA_BIN session guard --shared-tmux --json
+$LISA_BIN session guard --shared-tmux --advice-only --command "./lisa cleanup --include-tmux-default" --json
 $LISA_BIN session guard --shared-tmux --command "./lisa cleanup --include-tmux-default" --json
+$LISA_BIN session list --project-root . --delta-json --cursor-file /tmp/lisa.list.cursor --json-min
+# contract: `--cursor-file` is for `--delta-json` snapshot diffs
 
 $LISA_BIN cleanup --dry-run
 $LISA_BIN cleanup
@@ -258,6 +269,8 @@ $LISA_BIN session detect-nested --agent codex --mode exec \
   --prompt "The string './lisa' appears in docs only." --json
 $LISA_BIN session detect-nested --agent codex --mode exec \
   --prompt "Use lisa inside of lisa inside as well." --rewrite --json
+$LISA_BIN session detect-nested --agent codex --mode exec \
+  --prompt "Use lisa inside of lisa inside as well." --why --json
 ```
 
 Deterministic nested validation:
@@ -325,6 +338,12 @@ $LISA_BIN session autopilot \
   --summary --summary-style ops --token-budget 320 \
   --kill-after true \
   --json
+
+# resume from saved summary piped on stdin
+cat /tmp/lisa.autopilot.json | $LISA_BIN session autopilot \
+  --project-root "$(pwd)" \
+  --resume-from - \
+  --json
 ```
 
 ## JSONPath-Gated Monitor
@@ -333,6 +352,7 @@ $LISA_BIN session autopilot \
 $LISA_BIN session monitor --session "$S" --project-root . \
   --until-jsonpath '$.sessionState=waiting_input' \
   --max-polls 60 --poll-interval 1 --json-min
+# contract: jsonpath gate match is success exit 0 (can be non-terminal)
 ```
 
 ## Handoff Cursor + Repack
