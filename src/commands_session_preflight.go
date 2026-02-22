@@ -12,12 +12,28 @@ type sessionPreflightContractCheck struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+type sessionPreflightAutoModelAttempt struct {
+	Model     string `json:"model"`
+	OK        bool   `json:"ok"`
+	Detail    string `json:"detail,omitempty"`
+	ErrorCode string `json:"errorCode,omitempty"`
+}
+
+type sessionPreflightAutoModelResult struct {
+	Enabled    bool                               `json:"enabled"`
+	Candidates []string                           `json:"candidates"`
+	Selected   string                             `json:"selected,omitempty"`
+	Attempts   []sessionPreflightAutoModelAttempt `json:"attempts"`
+}
+
 var sessionPreflightModelCheckFn = runSessionPreflightModelCheck
 
 func cmdSessionPreflight(args []string) int {
 	projectRoot := getPWD()
 	agent := ""
 	model := ""
+	autoModel := false
+	autoModelCandidates := ""
 	jsonOut := hasJSONFlag(args)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -41,6 +57,14 @@ func cmdSessionPreflight(args []string) int {
 			}
 			model = args[i+1]
 			i++
+		case "--auto-model":
+			autoModel = true
+		case "--auto-model-candidates":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --auto-model-candidates")
+			}
+			autoModelCandidates = args[i+1]
+			i++
 		case "--json":
 			jsonOut = true
 		default:
@@ -55,6 +79,12 @@ func cmdSessionPreflight(args []string) int {
 	agent = strings.TrimSpace(agent)
 	model = strings.TrimSpace(model)
 	if model != "" && agent == "" {
+		agent = "codex"
+	}
+	if autoModel && strings.TrimSpace(model) != "" {
+		return commandError(jsonOut, "model_auto_model_conflict", "cannot combine --model with --auto-model")
+	}
+	if autoModel && agent == "" {
 		agent = "codex"
 	}
 	if agent != "" {
@@ -76,8 +106,49 @@ func cmdSessionPreflight(args []string) int {
 	envChecks := collectDoctorChecks()
 	envReady := doctorReady(envChecks)
 	contractChecks := runSessionPreflightContractChecks()
+	autoModelResult := sessionPreflightAutoModelResult{}
 	var modelCheck *sessionPreflightModelCheck
-	if model != "" {
+	if autoModel {
+		autoModelResult.Enabled = true
+		autoModelResult.Candidates = preflightAutoModelCandidates(autoModelCandidates)
+		for _, candidate := range autoModelResult.Candidates {
+			parsedModel, parseErr := parseModel(candidate)
+			if parseErr != nil {
+				autoModelResult.Attempts = append(autoModelResult.Attempts, sessionPreflightAutoModelAttempt{
+					Model:     candidate,
+					OK:        false,
+					Detail:    parseErr.Error(),
+					ErrorCode: "invalid_model",
+				})
+				continue
+			}
+			probe := sessionPreflightModelCheckFn(agent, parsedModel)
+			autoModelResult.Attempts = append(autoModelResult.Attempts, sessionPreflightAutoModelAttempt{
+				Model:     parsedModel,
+				OK:        probe.OK,
+				Detail:    probe.Detail,
+				ErrorCode: probe.ErrorCode,
+			})
+			if probe.OK {
+				autoModelResult.Selected = parsedModel
+				model = parsedModel
+				modelCheck = &probe
+				break
+			}
+			probeCopy := probe
+			modelCheck = &probeCopy
+		}
+		if modelCheck == nil {
+			modelCheck = &sessionPreflightModelCheck{
+				Agent:     agent,
+				Model:     "",
+				OK:        false,
+				Detail:    "no auto-model candidates evaluated",
+				ErrorCode: "preflight_auto_model_empty",
+			}
+		}
+	}
+	if model != "" && !autoModel {
 		probe := sessionPreflightModelCheckFn(agent, model)
 		modelCheck = &probe
 	}
@@ -108,6 +179,9 @@ func cmdSessionPreflight(args []string) int {
 		}
 		if modelCheck != nil {
 			payload["modelCheck"] = modelCheck
+		}
+		if autoModel {
+			payload["autoModel"] = autoModelResult
 		}
 		if code := preflightErrorCode(ok); code != "" {
 			payload["errorCode"] = code
@@ -151,7 +225,41 @@ func cmdSessionPreflight(args []string) int {
 		}
 		fmt.Printf("model_check: %s agent=%s model=%s detail=%s\n", line, modelCheck.Agent, modelCheck.Model, modelCheck.Detail)
 	}
+	if autoModel {
+		fmt.Printf("auto_model_selected: %s\n", strings.TrimSpace(autoModelResult.Selected))
+		for _, attempt := range autoModelResult.Attempts {
+			state := "ok"
+			if !attempt.OK {
+				state = "fail"
+			}
+			fmt.Printf("auto_model_attempt: %s model=%s detail=%s\n", state, attempt.Model, attempt.Detail)
+		}
+	}
 	return boolExit(ok)
+}
+
+func preflightAutoModelCandidates(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return []string{"gpt-5.3-codex", "gpt-5-codex"}
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		model := strings.TrimSpace(part)
+		if model == "" {
+			continue
+		}
+		if seen[model] {
+			continue
+		}
+		seen[model] = true
+		out = append(out, model)
+	}
+	if len(out) == 0 {
+		return []string{"gpt-5.3-codex", "gpt-5-codex"}
+	}
+	return out
 }
 
 func preflightErrorCode(ok bool) string {

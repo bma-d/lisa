@@ -17,6 +17,7 @@ Classifier is process-first:
 | `not_found` | Session absent in tmux | Yes |
 
 - `*` Monitor can stop on `waiting_input` when `--stop-on-waiting true`.
+- Monitor can also stop on explicit `--until-state <STATE>` gates.
 - `**` `degraded` is retried; prolonged degradation yields `degraded_max_polls_exceeded`.
 
 ## Exit Codes
@@ -52,6 +53,7 @@ Stored in `/tmp/`, keyed by project-root hash (first 8 chars of MD5 of canonical
 /tmp/.lisa-{hash}-session-{id}-done.txt         # completion marker: {runId}:{exitCode}
 /tmp/.lisa-{hash}-session-{id}-heartbeat.txt    # liveness signal (mtime)
 /tmp/.lisa-{hash}-session-{id}-events.jsonl     # event log (auto-trim: 1MB / 2000 lines)
+/tmp/.lisa-{hash}-tree-delta.json               # previous tree topology snapshot for `session tree --delta`
 /tmp/lisa-{hash}-output-{id}.txt                # terminal pane capture
 /tmp/lisa-cmd-{hash}-{id}-{nanos}.sh            # temp script for long command payloads (>500 chars)
 ```
@@ -93,14 +95,18 @@ Lifecycle:
 - Runtime sets tmux env vars: `LISA_SESSION`, `LISA_SESSION_NAME`, `LISA_AGENT`, `LISA_MODE`, `LISA_PROJECT_HASH`, `LISA_HEARTBEAT_FILE`, `LISA_DONE_FILE`.
 - Raw pane capture filters MCP startup/auth noise by default; opt out with `--keep-noise`.
 - Raw capture `--delta-from` supports offset/timestamp incremental fetch; JSON responses include `nextOffset` for polling loops.
+- Raw capture `--cursor-file` persists/reuses offsets for resume-safe incremental polling.
 - `session capture --markers` / `session snapshot --markers` return compact marker-only summaries for gating.
 - `session monitor` final payload includes `nextOffset` when capture is available.
+- `session handoff` and `session context-pack` provide compressed transfer payloads for multi-agent orchestration loops.
 - `session exists` supports `--project-root` for cross-root checks.
 - `session tree` reads metadata graph and may include historical roots; use `session list` for active-only views.
+- `session tree --delta` reports added/removed edges compared to previous topology snapshot.
 - `session list --stale` reports metadata historical/stale counts relative to active tmux sessions.
 - Nested runs should always pass `--project-root`; use `lisa` in prompts by default and `./lisa` when repo-local binary is known to exist.
 - Use `--nested-policy force|off` to avoid prompt-heuristic ambiguity in Codex exec nesting.
 - Use `--nesting-intent nested|neutral` to explicitly override prompt heuristics.
 - Quote/doc prompt mentions (`The string './lisa' appears in docs only.`) are treated as non-executable for nested bypass.
+- `Use lisa inside of lisa inside as well.` is a known non-trigger phrase (`reason=no_nested_hint`).
 - JSON payloads include `stderrPolicy` so orchestrators can classify stderr as diagnostics channel.
-- After nested runs, perform cleanup (`cleanup --dry-run` first in shared environments).
+- In shared tmux environments, run `session guard --shared-tmux` before cleanup/kill-all; then run `cleanup --dry-run` first.

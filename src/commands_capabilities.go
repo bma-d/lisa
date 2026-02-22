@@ -114,6 +114,7 @@ var commandCapabilities = []commandCapability{
 			"--stop-on-waiting",
 			"--waiting-requires-turn-complete",
 			"--until-marker",
+			"--until-state",
 			"--expect",
 			"--json",
 			"--json-min",
@@ -129,6 +130,7 @@ var commandCapabilities = []commandCapability{
 			"--lines",
 			"--raw",
 			"--delta-from",
+			"--cursor-file",
 			"--markers",
 			"--keep-noise",
 			"--strip-noise",
@@ -137,16 +139,32 @@ var commandCapabilities = []commandCapability{
 		},
 	},
 	{
+		Name:  "session handoff",
+		Flags: []string{"--session", "--project-root", "--agent", "--mode", "--events", "--json", "--json-min"},
+	},
+	{
+		Name:  "session context-pack",
+		Flags: []string{"--for", "--session", "--project-root", "--agent", "--mode", "--events", "--lines", "--token-budget", "--json", "--json-min"},
+	},
+	{
+		Name:  "session route",
+		Flags: []string{"--goal", "--agent", "--prompt", "--model", "--project-root", "--json"},
+	},
+	{
+		Name:  "session guard",
+		Flags: []string{"--shared-tmux", "--command", "--project-root", "--json"},
+	},
+	{
 		Name:  "session tree",
-		Flags: []string{"--session", "--project-root", "--all-hashes", "--active-only", "--flat", "--json", "--json-min"},
+		Flags: []string{"--session", "--project-root", "--all-hashes", "--active-only", "--delta", "--flat", "--json", "--json-min"},
 	},
 	{
 		Name:  "session smoke",
-		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--poll-interval", "--max-polls", "--keep-sessions", "--json"},
+		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--model", "--poll-interval", "--max-polls", "--keep-sessions", "--json"},
 	},
 	{
 		Name:  "session preflight",
-		Flags: []string{"--project-root", "--agent", "--model", "--json"},
+		Flags: []string{"--project-root", "--agent", "--model", "--auto-model", "--auto-model-candidates", "--json"},
 	},
 	{
 		Name:  "session list",
@@ -171,6 +189,10 @@ var commandCapabilities = []commandCapability{
 	{
 		Name:  "skills sync",
 		Flags: []string{"--from", "--path", "--repo-root", "--json"},
+	},
+	{
+		Name:  "skills doctor",
+		Flags: []string{"--repo-root", "--json"},
 	},
 	{
 		Name:  "skills install",

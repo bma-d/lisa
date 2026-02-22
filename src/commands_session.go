@@ -43,6 +43,14 @@ func cmdSession(args []string) int {
 		return cmdSessionMonitor(args[1:])
 	case "capture":
 		return cmdSessionCapture(args[1:])
+	case "handoff":
+		return cmdSessionHandoff(args[1:])
+	case "context-pack":
+		return cmdSessionContextPack(args[1:])
+	case "route":
+		return cmdSessionRoute(args[1:])
+	case "guard":
+		return cmdSessionGuard(args[1:])
 	case "tree":
 		return cmdSessionTree(args[1:])
 	case "smoke":
@@ -418,14 +426,14 @@ func cmdSessionSpawn(args []string) int {
 
 	if jsonOut {
 		payload := map[string]any{
-			"session":      session,
-			"agent":        agent,
-			"mode":         mode,
-			"nestedPolicy": nestedPolicy,
+			"session":       session,
+			"agent":         agent,
+			"mode":          mode,
+			"nestedPolicy":  nestedPolicy,
 			"nestingIntent": nestingIntent,
-			"runId":        runID,
-			"projectRoot":  projectRoot,
-			"command":      command,
+			"runId":         runID,
+			"projectRoot":   projectRoot,
+			"command":       command,
 		}
 		if detectNested {
 			payload["nestedDetection"] = nestedDetection

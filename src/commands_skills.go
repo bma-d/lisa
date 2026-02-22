@@ -1,6 +1,8 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +35,26 @@ type skillsInstallBatchSummary struct {
 	Installs []skillsCopySummary `json:"installs"`
 }
 
+type skillsDoctorTarget struct {
+	Target          string   `json:"target"`
+	Path            string   `json:"path"`
+	Exists          bool     `json:"exists"`
+	Version         string   `json:"version,omitempty"`
+	Status          string   `json:"status"`
+	MissingCommands []string `json:"missingCommands,omitempty"`
+	Detail          string   `json:"detail,omitempty"`
+}
+
+type skillsDoctorSummary struct {
+	OK             bool                 `json:"ok"`
+	RepoRoot       string               `json:"repoRoot"`
+	RepoSkillPath  string               `json:"repoSkillPath"`
+	RepoVersion    string               `json:"repoVersion,omitempty"`
+	CapabilityHash string               `json:"capabilityHash"`
+	Targets        []skillsDoctorTarget `json:"targets"`
+	ErrorCode      string               `json:"errorCode,omitempty"`
+}
+
 func cmdSkills(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: lisa skills <subcommand>")
@@ -50,6 +72,8 @@ func cmdSkills(args []string) int {
 	switch args[0] {
 	case "sync":
 		return cmdSkillsSync(args[1:])
+	case "doctor":
+		return cmdSkillsDoctor(args[1:])
 	case "install":
 		return cmdSkillsInstall(args[1:])
 	default:
@@ -192,6 +216,123 @@ func cmdSkillsInstall(args []string) int {
 	return 0
 }
 
+func cmdSkillsDoctor(args []string) int {
+	repoRoot := getPWD()
+	jsonOut := hasJSONFlag(args)
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--help", "-h":
+			return showHelp("skills doctor")
+		case "--repo-root":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --repo-root")
+			}
+			repoRoot = args[i+1]
+			i++
+		case "--json":
+			jsonOut = true
+		default:
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
+		}
+	}
+
+	repoSkillPath, err := repoSkillPath(repoRoot)
+	if err != nil {
+		return commandError(jsonOut, "skills_doctor_repo_path_failed", err.Error())
+	}
+	repoVersion, repoErr := readSkillVersion(filepath.Join(repoSkillPath, "SKILL.md"))
+	if repoErr != nil {
+		return commandErrorf(jsonOut, "skills_doctor_repo_read_failed", "failed reading repo skill: %v", repoErr)
+	}
+	requiredCommands := requiredSkillCommandNames()
+	capHash := capabilityContractHash()
+	targets := make([]skillsDoctorTarget, 0, 2)
+
+	for _, target := range []string{"codex", "claude"} {
+		path, pathErr := defaultSkillInstallPath(target)
+		if pathErr != nil {
+			targets = append(targets, skillsDoctorTarget{
+				Target: target,
+				Path:   "",
+				Status: "error",
+				Detail: pathErr.Error(),
+			})
+			continue
+		}
+		info := skillsDoctorTarget{
+			Target: target,
+			Path:   path,
+		}
+		if !pathExists(path) {
+			info.Status = "missing"
+			info.Detail = "skill directory not found"
+			targets = append(targets, info)
+			continue
+		}
+		info.Exists = true
+		version, versionErr := readSkillVersion(filepath.Join(path, "SKILL.md"))
+		if versionErr != nil {
+			info.Status = "error"
+			info.Detail = versionErr.Error()
+			targets = append(targets, info)
+			continue
+		}
+		info.Version = version
+		info.MissingCommands = detectMissingSkillCommands(filepath.Join(path, "data", "commands.md"), requiredCommands)
+		if version == repoVersion && len(info.MissingCommands) == 0 {
+			info.Status = "up_to_date"
+		} else {
+			info.Status = "outdated"
+			if version != repoVersion {
+				info.Detail = fmt.Sprintf("version drift: repo=%s installed=%s", repoVersion, version)
+			}
+			if len(info.MissingCommands) > 0 {
+				if info.Detail != "" {
+					info.Detail += "; "
+				}
+				info.Detail += "command contract drift"
+			}
+		}
+		targets = append(targets, info)
+	}
+
+	ok := true
+	for _, target := range targets {
+		if target.Status != "up_to_date" && target.Status != "missing" {
+			ok = false
+			break
+		}
+	}
+	summary := skillsDoctorSummary{
+		OK:             ok,
+		RepoRoot:       canonicalProjectRoot(repoRoot),
+		RepoSkillPath:  repoSkillPath,
+		RepoVersion:    repoVersion,
+		CapabilityHash: capHash,
+		Targets:        targets,
+	}
+	if !ok {
+		summary.ErrorCode = "skills_doctor_drift_detected"
+	}
+
+	if jsonOut {
+		writeJSON(summary)
+		return boolExit(ok)
+	}
+	fmt.Printf("repo_version=%s capability_hash=%s ok=%t\n", summary.RepoVersion, summary.CapabilityHash, summary.OK)
+	for _, target := range summary.Targets {
+		fmt.Printf("- %s status=%s version=%s path=%s\n", target.Target, target.Status, target.Version, target.Path)
+		if target.Detail != "" {
+			fmt.Printf("  detail: %s\n", target.Detail)
+		}
+		if len(target.MissingCommands) > 0 {
+			fmt.Printf("  missing: %s\n", strings.Join(target.MissingCommands, ", "))
+		}
+	}
+	return boolExit(ok)
+}
+
 func resolveSkillsSourcePath(from, fromPath string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(from)) {
 	case "codex":
@@ -323,6 +464,56 @@ func discoverDefaultInstallTargets() ([]string, error) {
 		return nil, errors.New("no default install targets found (expected ~/.codex and/or ~/.claude); pass --to or --path")
 	}
 	return targets, nil
+}
+
+func readSkillVersion(skillPath string) (string, error) {
+	raw, err := os.ReadFile(skillPath)
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(string(raw), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "version:") {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, "version:")), nil
+		}
+	}
+	return "", fmt.Errorf("version field not found in %s", skillPath)
+}
+
+func requiredSkillCommandNames() []string {
+	names := make([]string, 0, len(commandCapabilities))
+	for _, cmd := range commandCapabilities {
+		names = append(names, cmd.Name)
+	}
+	return names
+}
+
+func capabilityContractHash() string {
+	builder := strings.Builder{}
+	for _, cmd := range commandCapabilities {
+		builder.WriteString(cmd.Name)
+		builder.WriteString("|")
+		builder.WriteString(strings.Join(cmd.Flags, ","))
+		builder.WriteString("\n")
+	}
+	sum := sha256.Sum256([]byte(builder.String()))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+func detectMissingSkillCommands(commandsPath string, required []string) []string {
+	raw, err := os.ReadFile(commandsPath)
+	if err != nil {
+		return append([]string{}, required...)
+	}
+	text := string(raw)
+	missing := []string{}
+	for _, name := range required {
+		if !strings.Contains(text, name) {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 func pathExists(path string) bool {

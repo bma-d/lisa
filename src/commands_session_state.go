@@ -355,6 +355,7 @@ func cmdSessionMonitor(args []string) int {
 	waitingRequiresTurnComplete := false
 	untilMarker := ""
 	untilMarkerSet := false
+	untilState := ""
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 	streamJSON := false
@@ -446,6 +447,16 @@ func cmdSessionMonitor(args []string) int {
 			untilMarkerSet = true
 			untilMarker = strings.TrimSpace(args[i+1])
 			i++
+		case "--until-state":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --until-state")
+			}
+			parsedState, parseErr := parseMonitorUntilState(args[i+1])
+			if parseErr != nil {
+				return commandError(jsonOut, "invalid_until_state", parseErr.Error())
+			}
+			untilState = parsedState
+			i++
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -504,6 +515,10 @@ func cmdSessionMonitor(args []string) int {
 		}
 
 		reason := ""
+		untilStateMatched := untilState != "" && status.SessionState == untilState
+		if untilStateMatched {
+			reason = status.SessionState
+		}
 		if untilMarker != "" {
 			capture, captureErr := tmuxCapturePaneFn(session, 320)
 			if captureErr == nil && strings.Contains(capture, untilMarker) {
@@ -565,7 +580,7 @@ func cmdSessionMonitor(args []string) int {
 				errorCode := ""
 				if !expectationMet {
 					errorCode = "monitor_expectation_mismatch"
-				} else if !(reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input")) {
+				} else if !untilStateMatched && !(reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input")) {
 					errorCode = "monitor_" + reason
 				}
 				writeMonitorJSON(result, jsonMin, errorCode)
@@ -589,7 +604,7 @@ func cmdSessionMonitor(args []string) int {
 			if !expectationMet {
 				return 2
 			}
-			if reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input") {
+			if reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input") || untilStateMatched {
 				return 0
 			}
 			return 2
@@ -794,6 +809,7 @@ func cmdSessionCapture(args []string) int {
 	jsonMin := false
 	raw := false
 	deltaFrom := ""
+	cursorFile := ""
 	markersRaw := ""
 	stripNoise := true
 	projectRoot := getPWD()
@@ -825,6 +841,12 @@ func cmdSessionCapture(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --delta-from")
 			}
 			deltaFrom = strings.TrimSpace(args[i+1])
+			i++
+		case "--cursor-file":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --cursor-file")
+			}
+			cursorFile = strings.TrimSpace(args[i+1])
 			i++
 		case "--markers":
 			if i+1 >= len(args) {
@@ -858,9 +880,25 @@ func cmdSessionCapture(args []string) int {
 	if deltaFrom != "" && !raw {
 		return commandError(jsonOut, "delta_requires_raw_capture", "--delta-from requires --raw")
 	}
+	if cursorFile != "" && !raw {
+		return commandError(jsonOut, "cursor_file_requires_raw_capture", "--cursor-file requires --raw")
+	}
 	markers, err := parseCaptureMarkersFlag(markersRaw)
 	if err != nil {
 		return commandError(jsonOut, "invalid_markers", err.Error())
+	}
+	if cursorFile != "" {
+		cursorFile, err = expandAndCleanPath(cursorFile)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", err)
+		}
+		if deltaFrom == "" {
+			offset, offsetErr := loadCursorOffset(cursorFile)
+			if offsetErr != nil {
+				return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", offsetErr)
+			}
+			deltaFrom = strconv.Itoa(offset)
+		}
 	}
 
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
@@ -913,6 +951,14 @@ func cmdSessionCapture(args []string) int {
 			return commandError(jsonOut, "invalid_delta_from", err.Error())
 		}
 	}
+	if cursorFile != "" {
+		if deltaFrom == "" {
+			nextOffset = len(capture)
+		}
+		if err := writeCursorOffset(cursorFile, nextOffset); err != nil {
+			return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --cursor-file: %v", err)
+		}
+	}
 
 	markerSummary := captureMarkerSummary{}
 	if len(markers) > 0 {
@@ -937,6 +983,9 @@ func cmdSessionCapture(args []string) int {
 				payload["deltaMode"] = deltaMode
 			}
 			payload["nextOffset"] = nextOffset
+		}
+		if cursorFile != "" && !jsonMin {
+			payload["cursorFile"] = cursorFile
 		}
 		writeJSON(payload)
 		return 0

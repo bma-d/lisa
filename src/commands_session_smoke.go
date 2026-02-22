@@ -27,6 +27,7 @@ type sessionSmokeSummary struct {
 	OK             bool               `json:"ok"`
 	ProjectRoot    string             `json:"projectRoot"`
 	Levels         int                `json:"levels"`
+	Model          string             `json:"model,omitempty"`
 	PromptStyle    string             `json:"promptStyle,omitempty"`
 	PromptProbe    *smokePromptProbe  `json:"promptProbe,omitempty"`
 	PromptMatrix   []smokeMatrixProbe `json:"promptMatrix,omitempty"`
@@ -56,6 +57,7 @@ func cmdSessionSmoke(args []string) int {
 	levels := 3
 	promptStyle := "none"
 	matrixFile := ""
+	model := ""
 	maxPolls := 180
 	pollInterval := 1
 	keepSessions := false
@@ -93,6 +95,12 @@ func cmdSessionSmoke(args []string) int {
 			}
 			matrixFile = args[i+1]
 			i++
+		case "--model":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --model")
+			}
+			model = args[i+1]
+			i++
 		case "--max-polls":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --max-polls")
@@ -129,6 +137,10 @@ func cmdSessionSmoke(args []string) int {
 	promptStyle, err = parseSmokePromptStyle(promptStyle)
 	if err != nil {
 		return commandError(jsonOut, "invalid_prompt_style", err.Error())
+	}
+	model, err = parseModel(model)
+	if err != nil {
+		return commandError(jsonOut, "invalid_model", err.Error())
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
@@ -168,6 +180,7 @@ func cmdSessionSmoke(args []string) int {
 		OK:           false,
 		ProjectRoot:  projectRoot,
 		Levels:       levels,
+		Model:        model,
 		PromptStyle:  promptStyle,
 		WorkDir:      workDir,
 		KeepSessions: keepSessions,
@@ -182,14 +195,14 @@ func cmdSessionSmoke(args []string) int {
 	}
 
 	if promptStyle != "none" {
-		probe, probeErr := runSmokePromptStyleProbe(binPath, projectRoot, promptStyle)
+		probe, probeErr := runSmokePromptStyleProbe(binPath, projectRoot, promptStyle, model)
 		if probeErr != nil {
 			return emitSmokeFailure(jsonOut, &summary, "smoke_prompt_style_probe_failed", probeErr.Error())
 		}
 		summary.PromptProbe = probe
 	}
 	if strings.TrimSpace(matrixFile) != "" {
-		matrixProbes, matrixErr := runSmokePromptMatrixProbe(binPath, projectRoot, matrixFile)
+		matrixProbes, matrixErr := runSmokePromptMatrixProbe(binPath, projectRoot, matrixFile, model)
 		summary.PromptMatrix = matrixProbes
 		if matrixErr != nil {
 			return emitSmokeFailure(jsonOut, &summary, "smoke_prompt_matrix_assertion_failed", matrixErr.Error())
@@ -207,11 +220,14 @@ func cmdSessionSmoke(args []string) int {
 		if idx < levels-1 {
 			child := sessions[idx+1]
 			childScript := scripts[idx+1]
-			lines = append(lines,
-				fmt.Sprintf(`"$BIN" session spawn --agent codex --mode interactive --project-root "$ROOT" --session %s --command %s --json`,
-					shellQuote(child),
-					shellQuote("/bin/bash "+childScript),
-				),
+			spawnLine := fmt.Sprintf(`"$BIN" session spawn --agent codex --mode interactive --project-root "$ROOT" --session %s --command %s --json`,
+				shellQuote(child),
+				shellQuote("/bin/bash "+childScript),
+			)
+			if model != "" {
+				spawnLine = strings.TrimSuffix(spawnLine, " --json") + " --model " + shellQuote(model) + " --json"
+			}
+			lines = append(lines, spawnLine,
 				fmt.Sprintf(`"$BIN" session monitor --session %s --project-root "$ROOT" --poll-interval %d --max-polls %d --expect terminal --json`,
 					shellQuote(child), pollInterval, maxPolls),
 				fmt.Sprintf(`"$BIN" session capture --session %s --project-root "$ROOT" --raw --lines %d`,
@@ -231,15 +247,19 @@ func cmdSessionSmoke(args []string) int {
 	}
 
 	rootSession := sessions[0]
-	if _, stderr, err := runLisaSubcommandFn(binPath,
+	rootSpawnArgs := []string{
 		"session", "spawn",
 		"--agent", "codex",
 		"--mode", "interactive",
 		"--project-root", projectRoot,
 		"--session", rootSession,
-		"--command", "/bin/bash "+scripts[0],
-		"--json",
-	); err != nil {
+		"--command", "/bin/bash " + scripts[0],
+	}
+	if model != "" {
+		rootSpawnArgs = append(rootSpawnArgs, "--model", model)
+	}
+	rootSpawnArgs = append(rootSpawnArgs, "--json")
+	if _, stderr, err := runLisaSubcommandFn(binPath, rootSpawnArgs...); err != nil {
 		return emitSmokeFailure(jsonOut, &summary, "smoke_spawn_failed", formatSmokeSubcommandError("failed to spawn L1 smoke session", err, stderr))
 	}
 
@@ -415,14 +435,18 @@ func parseSmokePromptMatrixFile(path string) ([]smokePromptMatrixCase, error) {
 	return cases, nil
 }
 
-func runSmokePromptMatrixProbe(binPath, projectRoot, matrixFile string) ([]smokeMatrixProbe, error) {
+func runSmokePromptMatrixProbe(binPath, projectRoot, matrixFile string, modelOptional ...string) ([]smokeMatrixProbe, error) {
+	model := ""
+	if len(modelOptional) > 0 {
+		model = modelOptional[0]
+	}
 	cases, err := parseSmokePromptMatrixFile(matrixFile)
 	if err != nil {
 		return nil, err
 	}
 	probes := make([]smokeMatrixProbe, 0, len(cases))
 	for _, matrixCase := range cases {
-		raw, stderrText, runErr := runLisaSubcommandFn(binPath,
+		args := []string{
 			"session", "spawn",
 			"--agent", "codex",
 			"--mode", "exec",
@@ -430,8 +454,12 @@ func runSmokePromptMatrixProbe(binPath, projectRoot, matrixFile string) ([]smoke
 			"--prompt", matrixCase.Prompt,
 			"--dry-run",
 			"--detect-nested",
-			"--json",
-		)
+		}
+		if strings.TrimSpace(model) != "" {
+			args = append(args, "--model", model)
+		}
+		args = append(args, "--json")
+		raw, stderrText, runErr := runLisaSubcommandFn(binPath, args...)
 		if runErr != nil {
 			return probes, fmt.Errorf("matrix probe failed: %s", formatSmokeSubcommandError("session spawn dry-run", runErr, stderrText))
 		}
@@ -482,12 +510,16 @@ func smokePromptForStyle(style string) (string, bool) {
 	}
 }
 
-func runSmokePromptStyleProbe(binPath, projectRoot, style string) (*smokePromptProbe, error) {
+func runSmokePromptStyleProbe(binPath, projectRoot, style string, modelOptional ...string) (*smokePromptProbe, error) {
+	model := ""
+	if len(modelOptional) > 0 {
+		model = modelOptional[0]
+	}
 	prompt, expectedBypass := smokePromptForStyle(style)
 	if prompt == "" {
 		return nil, nil
 	}
-	raw, stderrText, err := runLisaSubcommandFn(binPath,
+	args := []string{
 		"session", "spawn",
 		"--agent", "codex",
 		"--mode", "exec",
@@ -495,8 +527,12 @@ func runSmokePromptStyleProbe(binPath, projectRoot, style string) (*smokePromptP
 		"--prompt", prompt,
 		"--dry-run",
 		"--detect-nested",
-		"--json",
-	)
+	}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", model)
+	}
+	args = append(args, "--json")
+	raw, stderrText, err := runLisaSubcommandFn(binPath, args...)
 	if err != nil {
 		return nil, fmt.Errorf("prompt probe failed: %s", formatSmokeSubcommandError("session spawn dry-run", err, stderrText))
 	}

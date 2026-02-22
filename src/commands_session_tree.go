@@ -1,7 +1,9 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 )
@@ -21,10 +23,12 @@ type sessionTreeResult struct {
 	ProjectRoot string            `json:"projectRoot"`
 	AllHashes   bool              `json:"allHashes"`
 	ActiveOnly  bool              `json:"activeOnly,omitempty"`
+	DeltaOnly   bool              `json:"delta,omitempty"`
 	Flat        bool              `json:"flat,omitempty"`
 	NodeCount   int               `json:"nodeCount"`
 	Rows        []sessionTreeRow  `json:"rows,omitempty"`
 	Roots       []sessionTreeNode `json:"roots"`
+	Delta       *sessionTreeDelta `json:"deltaResult,omitempty"`
 }
 
 type sessionTreeRow struct {
@@ -36,11 +40,18 @@ type sessionTreeRow struct {
 	CreatedAt     string `json:"createdAt,omitempty"`
 }
 
+type sessionTreeDelta struct {
+	Added   []sessionTreeRow `json:"added,omitempty"`
+	Removed []sessionTreeRow `json:"removed,omitempty"`
+	Count   int              `json:"count"`
+}
+
 func cmdSessionTree(args []string) int {
 	projectRoot := getPWD()
 	sessionFilter := ""
 	allHashes := false
 	activeOnly := false
+	delta := false
 	flat := false
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
@@ -65,6 +76,8 @@ func cmdSessionTree(args []string) int {
 			allHashes = true
 		case "--active-only":
 			activeOnly = true
+		case "--delta":
+			delta = true
 		case "--flat":
 			flat = true
 		case "--json":
@@ -131,12 +144,21 @@ func cmdSessionTree(args []string) int {
 		ProjectRoot: projectRoot,
 		AllHashes:   allHashes,
 		ActiveOnly:  activeOnly,
+		DeltaOnly:   delta,
 		Flat:        flat,
 		NodeCount:   len(nodesBySession),
 		Roots:       roots,
 	}
+	rows := flattenSessionTreeRows(roots)
 	if flat {
-		result.Rows = flattenSessionTreeRows(roots)
+		result.Rows = rows
+	}
+	if delta {
+		deltaResult, deltaErr := computeSessionTreeDelta(projectRoot, rows)
+		if deltaErr != nil {
+			return commandErrorf(jsonOut, "session_tree_delta_failed", "failed to compute --delta: %v", deltaErr)
+		}
+		result.Delta = deltaResult
 	}
 
 	if jsonOut {
@@ -144,7 +166,11 @@ func cmdSessionTree(args []string) int {
 			payload := map[string]any{
 				"nodeCount": result.NodeCount,
 			}
-			if flat {
+			if delta && result.Delta != nil {
+				payload["added"] = flattenSessionTreeRowsMin(result.Delta.Added)
+				payload["removed"] = flattenSessionTreeRowsMin(result.Delta.Removed)
+				payload["deltaCount"] = result.Delta.Count
+			} else if flat {
 				payload["rows"] = flattenSessionTreeRowsMin(result.Rows)
 			} else {
 				payload["roots"] = minimizeSessionTreeRoots(result.Roots)
@@ -169,11 +195,88 @@ func cmdSessionTree(args []string) int {
 		}
 		return 0
 	}
+	if delta && result.Delta != nil {
+		fmt.Printf("delta_count=%d\n", result.Delta.Count)
+		for _, row := range result.Delta.Added {
+			fmt.Printf("+\t%s\t%s\n", row.Session, row.ParentSession)
+		}
+		for _, row := range result.Delta.Removed {
+			fmt.Printf("-\t%s\t%s\n", row.Session, row.ParentSession)
+		}
+		return 0
+	}
 
 	for _, root := range roots {
 		printSessionTreeNode(root, "")
 	}
 	return 0
+}
+
+func computeSessionTreeDelta(projectRoot string, rows []sessionTreeRow) (*sessionTreeDelta, error) {
+	path := sessionTreeDeltaStateFile(projectRoot)
+	prev := sessionTreeDeltaState{Rows: map[string]string{}}
+	if raw, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(raw, &prev)
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if prev.Rows == nil {
+		prev.Rows = map[string]string{}
+	}
+
+	currentRows := make(map[string]string, len(rows))
+	currentByKey := make(map[string]sessionTreeRow, len(rows))
+	for _, row := range rows {
+		parent := strings.TrimSpace(row.ParentSession)
+		currentRows[row.Session] = parent
+		key := row.Session + "|" + parent
+		currentByKey[key] = row
+	}
+	prevByKey := make(map[string]sessionTreeRow, len(prev.Rows))
+	for session, parent := range prev.Rows {
+		prevByKey[session+"|"+parent] = sessionTreeRow{
+			Session:       session,
+			ParentSession: parent,
+		}
+	}
+
+	added := make([]sessionTreeRow, 0)
+	removed := make([]sessionTreeRow, 0)
+	for key, row := range currentByKey {
+		if _, ok := prevByKey[key]; !ok {
+			added = append(added, row)
+		}
+	}
+	for key, row := range prevByKey {
+		if _, ok := currentByKey[key]; !ok {
+			removed = append(removed, row)
+		}
+	}
+	sort.Slice(added, func(i, j int) bool {
+		return added[i].Session < added[j].Session
+	})
+	sort.Slice(removed, func(i, j int) bool {
+		return removed[i].Session < removed[j].Session
+	})
+
+	state := sessionTreeDeltaState{Rows: currentRows}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := writeFileAtomic(path, data); err != nil {
+		return nil, err
+	}
+
+	return &sessionTreeDelta{
+		Added:   added,
+		Removed: removed,
+		Count:   len(added) + len(removed),
+	}, nil
+}
+
+func sessionTreeDeltaStateFile(projectRoot string) string {
+	return fmt.Sprintf("/tmp/.lisa-%s-tree-delta.json", projectHash(projectRoot))
 }
 
 func flattenSessionTreeRowsMin(rows []sessionTreeRow) []map[string]any {

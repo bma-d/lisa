@@ -40,8 +40,8 @@ Use before complex orchestration to lock command assumptions:
 $LISA_BIN doctor --json
 $LISA_BIN session preflight --json
 MODEL="${MODEL:-gpt-5-codex}"
-$LISA_BIN session preflight --agent codex --model "$MODEL" --json || \
-  echo "model preflight probe failed; choose a supported model or omit --model"
+$LISA_BIN session preflight --agent codex --auto-model --json || \
+  echo "auto-model probe failed; set --model explicitly"
 $LISA_BIN session spawn --help
 $LISA_BIN session monitor --help
 $LISA_BIN session tree --help
@@ -89,6 +89,9 @@ $LISA_BIN session capture --session "$S" --raw --delta-from 0 --json
 # use returned nextOffset for subsequent polls
 $LISA_BIN session capture --session "$S" --raw --delta-from "$NEXT_OFFSET" --json
 
+# Cursor-file polling (persists nextOffset between loops/restarts)
+$LISA_BIN session capture --session "$S" --raw --cursor-file /tmp/lisa.cursor --json-min
+
 # Compact JSON payload variants
 $LISA_BIN session capture --session "$S" --json-min
 $LISA_BIN session capture --session "$S" --raw --delta-from "$NEXT_OFFSET" --json-min
@@ -131,6 +134,12 @@ $LISA_BIN session monitor --session "$S" --project-root . --json-min --stream-js
 
 # one-shot compact status+capture payload
 $LISA_BIN session snapshot --session "$S" --project-root . --json-min
+
+# compact handoff packet for another orchestrator
+$LISA_BIN session handoff --session "$S" --project-root . --json-min
+
+# token-budgeted context packet
+$LISA_BIN session context-pack --for "$S" --project-root . --token-budget 700 --json-min
 ```
 
 Expectation patterns:
@@ -142,6 +151,10 @@ $LISA_BIN session monitor --session "$S" --project-root . --expect terminal --js
 # marker-gated success (requires --until-marker)
 $LISA_BIN session monitor --session "$S" --project-root . \
   --until-marker "DONE_MARKER" --expect marker --json
+
+# explicit state gate (non-terminal allowed)
+$LISA_BIN session monitor --session "$S" --project-root . \
+  --until-state waiting_input --json
 ```
 
 Marker hygiene:
@@ -154,12 +167,15 @@ $LISA_BIN session kill --session "$S" --project-root .
 $LISA_BIN session kill-all --project-only --project-root .
 $LISA_BIN session kill-all --cleanup-all-hashes
 
+$LISA_BIN session guard --shared-tmux --json
+$LISA_BIN session guard --shared-tmux --command "lisa cleanup --include-tmux-default" --json
+
 $LISA_BIN cleanup --dry-run
 $LISA_BIN cleanup
 $LISA_BIN cleanup --include-tmux-default
 ```
 
-Safety: prefer `cleanup --dry-run` first in shared tmux environments.
+Safety: in shared tmux environments, run `session guard --shared-tmux` and `cleanup --dry-run` before mutation.
 
 ## Nested Orchestration (Lisa-in-Lisa)
 
@@ -240,6 +256,7 @@ Deterministic nested validation:
 
 ```bash
 $LISA_BIN session smoke --project-root "$(pwd)" --levels 4 --json
+$LISA_BIN session smoke --project-root "$(pwd)" --levels 4 --model "$MODEL" --json
 ./smoke-nested --project-root "$(pwd)" --max-polls 120
 
 # include nested wording probe in smoke summary
@@ -253,7 +270,7 @@ Four-level matrix (quick confidence loop):
 
 ```bash
 for L in 1 2 3 4; do
-  $LISA_BIN session smoke --project-root "$(pwd)" --levels "$L" --json
+  $LISA_BIN session smoke --project-root "$(pwd)" --levels "$L" --model "$MODEL" --json
 done
 ```
 
@@ -278,6 +295,9 @@ Build-command preview with model pin:
 $LISA_BIN agent build-cmd --agent codex --mode exec \
   --model "$MODEL" \
   --prompt "Run tests" --json
+
+# route recommendation helper for nested orchestration
+$LISA_BIN session route --goal nested --project-root "$(pwd)" --json
 ```
 
 JSON parsing hygiene:

@@ -18,7 +18,7 @@ Project conventions and patterns used across the Lisa codebase.
 - **Atomic file writes**: temp file + `os.Rename` via `writeFileAtomic()`
 - **Manual flag parsing**: hand-rolled `for i := 0; i < len(args)` loops (no flag library)
 - **tmux detachment**: Lisa unsets `TMUX` and routes tmux via a project socket (`/tmp/lisa-tmux-<slug>-<hash>.sock`) to avoid nested-client context issues
-- **JSON output**: `doctor`, `agent build-cmd`, and `session spawn|send|status|monitor|capture` support `--json`; `session name|list|exists|kill|kill-all` remain text-only
+- **JSON output**: `doctor`, `cleanup`, `agent build-cmd`, `skills sync|doctor|install`, and major session commands (`name|spawn|detect-nested|send|snapshot|status|explain|monitor|capture|handoff|context-pack|route|guard|tree|smoke|preflight|list|exists|kill|kill-all`) support `--json`
 - **CSV-style text output**: comma-separated fields for human/script consumption
 - **Shell quoting**: single-quote wrapping with `'"'"'` escapes by default; ANSI-C `$'...'` quoting when control chars are present (preserves multiline prompts without raw control chars in JSON payloads)
 

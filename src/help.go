@@ -10,32 +10,37 @@ func isHelpFlag(arg string) bool {
 }
 
 var helpFuncs = map[string]func(){
-	"":                  helpTop,
-	"doctor":            helpDoctor,
-	"cleanup":           helpCleanup,
-	"session":           helpSession,
-	"session name":      helpSessionName,
-	"session spawn":     helpSessionSpawn,
+	"":                      helpTop,
+	"doctor":                helpDoctor,
+	"cleanup":               helpCleanup,
+	"session":               helpSession,
+	"session name":          helpSessionName,
+	"session spawn":         helpSessionSpawn,
 	"session detect-nested": helpSessionDetectNested,
-	"session send":      helpSessionSend,
-	"session snapshot":  helpSessionSnapshot,
-	"session status":    helpSessionStatus,
-	"session explain":   helpSessionExplain,
-	"session monitor":   helpSessionMonitor,
-	"session capture":   helpSessionCapture,
-	"session tree":      helpSessionTree,
-	"session smoke":     helpSessionSmoke,
-	"session preflight": helpSessionPreflight,
-	"session exists":    helpSessionExists,
-	"session kill":      helpSessionKill,
-	"session kill-all":  helpSessionKillAll,
-	"agent":             helpAgent,
-	"agent build-cmd":   helpAgentBuildCmd,
-	"skills":            helpSkills,
-	"skills sync":       helpSkillsSync,
-	"session list":      helpSessionList,
-	"capabilities":      helpCapabilities,
-	"skills install":    helpSkillsInstall,
+	"session send":          helpSessionSend,
+	"session snapshot":      helpSessionSnapshot,
+	"session status":        helpSessionStatus,
+	"session explain":       helpSessionExplain,
+	"session monitor":       helpSessionMonitor,
+	"session capture":       helpSessionCapture,
+	"session handoff":       helpSessionHandoff,
+	"session context-pack":  helpSessionContextPack,
+	"session route":         helpSessionRoute,
+	"session guard":         helpSessionGuard,
+	"session tree":          helpSessionTree,
+	"session smoke":         helpSessionSmoke,
+	"session preflight":     helpSessionPreflight,
+	"session exists":        helpSessionExists,
+	"session kill":          helpSessionKill,
+	"session kill-all":      helpSessionKillAll,
+	"agent":                 helpAgent,
+	"agent build-cmd":       helpAgentBuildCmd,
+	"skills":                helpSkills,
+	"skills sync":           helpSkillsSync,
+	"skills doctor":         helpSkillsDoctor,
+	"session list":          helpSessionList,
+	"capabilities":          helpCapabilities,
+	"skills install":        helpSkillsInstall,
 }
 
 func showHelp(cmdPath string) int {
@@ -64,6 +69,10 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session explain       Detailed session diagnostics")
 	fmt.Fprintln(os.Stderr, "  session monitor       Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  session capture       Capture session pane output or transcript")
+	fmt.Fprintln(os.Stderr, "  session handoff       Build compact handoff payload for another agent")
+	fmt.Fprintln(os.Stderr, "  session context-pack  Build token-budgeted context packet")
+	fmt.Fprintln(os.Stderr, "  session route         Recommend mode/policy/model for orchestration goal")
+	fmt.Fprintln(os.Stderr, "  session guard         Shared-tmux safety guardrails")
 	fmt.Fprintln(os.Stderr, "  session tree          Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  session smoke         Run deterministic nested smoke test")
 	fmt.Fprintln(os.Stderr, "  session preflight     Validate env + contract assumptions")
@@ -74,6 +83,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  capabilities          Describe lisa CLI commands and flags")
 	fmt.Fprintln(os.Stderr, "  agent build-cmd       Build agent CLI command string")
 	fmt.Fprintln(os.Stderr, "  skills sync           Sync lisa skill into repo skills/lisa")
+	fmt.Fprintln(os.Stderr, "  skills doctor         Verify installed lisa skill drift")
 	fmt.Fprintln(os.Stderr, "  skills install        Install repo lisa skill to codex/claude/project")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Run 'lisa <command> --help' for details on a specific command.")
@@ -114,6 +124,10 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  explain    Detailed session diagnostics")
 	fmt.Fprintln(os.Stderr, "  monitor    Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  capture    Capture session pane output or transcript")
+	fmt.Fprintln(os.Stderr, "  handoff    Build compact handoff payload for another agent")
+	fmt.Fprintln(os.Stderr, "  context-pack Build token-budgeted context packet")
+	fmt.Fprintln(os.Stderr, "  route      Recommend mode/policy/model for orchestration goal")
+	fmt.Fprintln(os.Stderr, "  guard      Shared-tmux safety guardrails")
 	fmt.Fprintln(os.Stderr, "  tree       Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  smoke      Run deterministic nested smoke test")
 	fmt.Fprintln(os.Stderr, "  preflight  Validate env + contract assumptions")
@@ -264,6 +278,7 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --stop-on-waiting BOOL  Stop on waiting_input (default: true)")
 	fmt.Fprintln(os.Stderr, "  --waiting-requires-turn-complete BOOL  Require transcript turn-complete before stopping on waiting_input (default: false)")
 	fmt.Fprintln(os.Stderr, "  --until-marker TEXT   Stop when raw pane output contains marker text")
+	fmt.Fprintln(os.Stderr, "  --until-state STATE   Stop when session state is reached")
 	fmt.Fprintln(os.Stderr, "  --expect MODE         Success expectation: any|terminal|marker (default: any)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: session/finalState/exitReason/polls")
@@ -280,6 +295,7 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
 	fmt.Fprintln(os.Stderr, "  --raw                 Raw tmux pane capture instead of transcript")
 	fmt.Fprintln(os.Stderr, "  --delta-from VALUE    Delta start: offset integer, @unix timestamp, or RFC3339")
+	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Persist/reuse delta offset cursor (raw capture only)")
 	fmt.Fprintln(os.Stderr, "  --markers CSV         Marker-only extraction (comma-separated)")
 	fmt.Fprintln(os.Stderr, "  --keep-noise          Keep Codex/MCP startup noise in pane capture")
 	fmt.Fprintln(os.Stderr, "  --strip-noise         Compatibility alias for default noise filtering")
@@ -287,6 +303,64 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output for compact polling workflows")
+}
+
+func helpSessionHandoff() {
+	fmt.Fprintln(os.Stderr, "lisa session handoff — build compact handoff payload")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session handoff [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          Agent hint: auto|claude|codex (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --mode MODE           Mode hint: auto|interactive|exec (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --events N            Number of recent events to include (default: 8)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
+}
+
+func helpSessionContextPack() {
+	fmt.Fprintln(os.Stderr, "lisa session context-pack — build token-budgeted context packet")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session context-pack [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --for NAME            Session name (required; alias: --session)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          Agent hint: auto|claude|codex (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --mode MODE           Mode hint: auto|interactive|exec (default: auto)")
+	fmt.Fprintln(os.Stderr, "  --events N            Number of recent events to include (default: 8)")
+	fmt.Fprintln(os.Stderr, "  --lines N             Raw capture lines for context tail (default: 120)")
+	fmt.Fprintln(os.Stderr, "  --token-budget N      Approx token budget for pack body (default: 700)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
+}
+
+func helpSessionRoute() {
+	fmt.Fprintln(os.Stderr, "lisa session route — recommend orchestration route")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session route [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --goal GOAL           Orchestration goal: nested|analysis|exec (default: analysis)")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: codex)")
+	fmt.Fprintln(os.Stderr, "  --prompt TEXT         Optional prompt override")
+	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model override")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSessionGuard() {
+	fmt.Fprintln(os.Stderr, "lisa session guard — shared tmux safety guardrails")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session guard [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --shared-tmux         Validate safety assumptions for shared tmux environments")
+	fmt.Fprintln(os.Stderr, "  --command TEXT        Optional command string to risk-check")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
 func helpSessionPreflight() {
@@ -298,6 +372,9 @@ func helpSessionPreflight() {
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --agent NAME          Optional model-probe agent (codex)")
 	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model probe")
+	fmt.Fprintln(os.Stderr, "  --auto-model          Probe/select first supported model from candidate list")
+	fmt.Fprintln(os.Stderr, "  --auto-model-candidates CSV")
+	fmt.Fprintln(os.Stderr, "                        Candidate model list (default: gpt-5.3-codex,gpt-5-codex)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -325,6 +402,7 @@ func helpSessionTree() {
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --all-hashes          Include metadata from all project hashes")
 	fmt.Fprintln(os.Stderr, "  --active-only         Include only sessions currently active in tmux")
+	fmt.Fprintln(os.Stderr, "  --delta               Output topology changes since previous tree snapshot")
 	fmt.Fprintln(os.Stderr, "  --flat                Print machine-friendly parent/child rows")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output: nodeCount + session graph")
@@ -340,6 +418,7 @@ func helpSessionSmoke() {
 	fmt.Fprintln(os.Stderr, "  --levels N            Nested depth (1-4, default: 3)")
 	fmt.Fprintln(os.Stderr, "  --prompt-style STYLE  Nested hint probe: none|dot-slash|spawn|nested|neutral")
 	fmt.Fprintln(os.Stderr, "  --matrix-file PATH    Prompt matrix file: mode|prompt (mode=bypass|full-auto|any)")
+	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model pin for smoke spawn sessions")
 	fmt.Fprintln(os.Stderr, "  --poll-interval N     Seconds between monitor polls (default: 1)")
 	fmt.Fprintln(os.Stderr, "  --max-polls N         Maximum polls per nested monitor (default: 180)")
 	fmt.Fprintln(os.Stderr, "  --keep-sessions       Keep spawned smoke sessions for inspection")
@@ -425,6 +504,7 @@ func helpSkills() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
 	fmt.Fprintln(os.Stderr, "  sync      Copy skill from codex/claude/path into repo skills/lisa")
+	fmt.Fprintln(os.Stderr, "  doctor    Verify installed skill versions + command contract drift")
 	fmt.Fprintln(os.Stderr, "  install   Copy repo skills/lisa into codex/claude/project path")
 }
 
@@ -454,5 +534,15 @@ func helpSkillsInstall() {
 	fmt.Fprintln(os.Stderr, "                        ~/.claude targets")
 	fmt.Fprintln(os.Stderr, "  note                  Source is repo skills/lisa for dev builds; tagged")
 	fmt.Fprintln(os.Stderr, "                        release builds fetch skill from GitHub by version")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSkillsDoctor() {
+	fmt.Fprintln(os.Stderr, "lisa skills doctor — verify skill install drift and command contract")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa skills doctor [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --repo-root PATH      Repo root that contains skills/ (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }

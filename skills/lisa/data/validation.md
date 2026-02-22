@@ -13,12 +13,16 @@ Validated: 2026-02-21
 - `session status` returns exit `0` on `not_found` unless `--fail-not-found` is set.
 - Low-token polling path: `session monitor --json-min` (optional `--stream-json`) and `session snapshot --json-min`.
 - Low-token incremental capture path: `session capture --raw --delta-from <offset|@unix|rfc3339> --json-min`; reuse returned `nextOffset`.
+- Cursor-file polling path: `session capture --raw --cursor-file /tmp/lisa.cursor --json-min`.
+- State-gated polling path: `session monitor --until-state waiting_input|completed|crashed --json`.
 - `session monitor` final payload includes `nextOffset` when capture is available.
+- `session handoff --json-min` and `session context-pack --json-min` provide compact transfer payloads for multi-agent loops.
 - Nested diagnostics path: `session spawn --dry-run --detect-nested --json` or `session detect-nested --json`.
 - Deterministic nested override: `--nested-policy auto|force|off` and `--nesting-intent auto|nested|neutral`.
 - Quote/doc mentions like `The string "./lisa" appears in docs only.` are treated as non-executable nested hints.
 - Codex model pinning: `--model <NAME>` on `session spawn` / `agent build-cmd`; verify support with `session preflight --agent codex --model <NAME> --json`.
 - Model preflight probe can fail (`errorCode:"preflight_model_not_supported"`) for unknown aliases; treat this as capability signal, not parser failure.
+- `session preflight --auto-model --json` selects first supported candidate model (`gpt-5.3-codex`, then `gpt-5-codex` by default).
 
 ## Observed Behaviors
 
@@ -26,6 +30,7 @@ Validated: 2026-02-21
 - `session monitor --until-marker` can match marker text echoed from prompt input; keep markers unique and out of prompt text.
 - `session exists` prints `false` and exits `1` when session is absent.
 - Nested wording detection is case-insensitive (`./LISA` matches `./lisa` hint).
+- `Use lisa inside of lisa inside as well.` returns `nestedDetection.reason:"no_nested_hint"` (does not trigger bypass).
 - `session smoke --levels 1..4 --json` passed in this repository with marker assertions.
 
 ## Fast Confidence Loop
@@ -37,14 +42,15 @@ LISA_BIN=./lisa
 
 $LISA_BIN session preflight --json
 MODEL="${MODEL:-gpt-5-codex}"
-$LISA_BIN session preflight --agent codex --model "$MODEL" --json || \
-  echo "model probe failed; continue without --model or pick supported model"
+$LISA_BIN session preflight --agent codex --auto-model --json || \
+  echo "auto-model probe failed; continue with explicit --model"
 $LISA_BIN session detect-nested --prompt "Use ./lisa for child orchestration." --json
 
 for p in \
   "Use ./lisa for child workers" \
   "Run lisa session spawn for child workers" \
   "Create nested lisa inside lisa inside lisa and report" \
+  "Use lisa inside of lisa inside as well." \
   "Run ./LISA for children" \
   "No nesting requested here."
 do
@@ -53,5 +59,6 @@ do
 done
 
 $LISA_BIN session smoke --project-root "$ROOT" --levels 4 --json
+$LISA_BIN session smoke --project-root "$ROOT" --levels 4 --model "$MODEL" --json
 $LISA_BIN session smoke --project-root "$ROOT" --matrix-file ./nested-matrix.txt --json
 ```

@@ -43,6 +43,10 @@ lisa session status
 lisa session explain
 lisa session monitor
 lisa session capture
+lisa session handoff
+lisa session context-pack
+lisa session route
+lisa session guard
 lisa session tree
 lisa session smoke
 lisa session preflight
@@ -52,6 +56,7 @@ lisa session kill
 lisa session kill-all
 lisa agent build-cmd
 lisa skills sync
+lisa skills doctor
 lisa skills install
 ```
 
@@ -203,6 +208,20 @@ Source behavior:
 - local/dev builds (`version=dev`) read from repo `skills/lisa`
 - tagged release builds fetch `skills/lisa` from GitHub tag matching the binary version (fallback: `main`)
 
+### `skills doctor`
+
+Check installed Codex/Claude Lisa skill drift against repo version + capability contract.
+
+```bash
+lisa skills doctor --repo-root /path/to/lisa-repo
+lisa skills doctor --json
+```
+
+Flags:
+
+- `--repo-root`: repo root containing `skills/` (default cwd)
+- `--json`: JSON summary output
+
 ### `session name`
 
 Generate a unique session name for project+agent+mode (timestamp-based).
@@ -245,7 +264,7 @@ Flags:
 - `--prompt`: startup prompt
 - `--command`: full command override (skips agent command builder)
 - `--agent-args`: extra args appended to agent CLI
-- `--model`: Codex model name (supported with `--agent codex`; e.g. `GPT-5.3-Codex-Spark`)
+- `--model`: Codex model name (supported with `--agent codex`; e.g. `gpt-5.3-codex`)
 - `--project-root`: project isolation root (default cwd)
 - `--width`: tmux width (default `220`)
 - `--height`: tmux height (default `60`)
@@ -406,6 +425,7 @@ Flags:
 - `--stop-on-waiting true|false` (default `true`)
 - `--waiting-requires-turn-complete true|false` (default `false`)
 - `--until-marker TEXT`: stop successfully when raw pane output contains marker text
+- `--until-state STATE`: stop when session reaches target state (`waiting_input|completed|crashed|...`)
 - `--expect any|terminal|marker` (default `any`)
 - `--json`
 - `--json-min` (minimal JSON: `session`, `finalState`, `exitReason`, `polls`)
@@ -449,13 +469,12 @@ Flags:
 - `--session` (required)
 - `--raw`: force tmux pane capture
 - `--delta-from VALUE`: delta start (`offset` integer, `@unix` timestamp, or RFC3339 timestamp; requires `--raw`)
+- `--cursor-file PATH`: persist/reuse raw capture offsets (`--raw` only)
 - `--markers CSV`: marker-only extraction mode (comma-separated markers)
 - `--keep-noise`: keep Codex/MCP startup noise in pane capture
 - `--strip-noise`: compatibility alias to force default noise filtering
 - `--lines N`: pane lines for raw capture (default `200`)
 - `--project-root`
-- `--agent` (optional model-probe agent; currently `codex`)
-- `--model` (optional codex model probe)
 - `--json`
 - `--json-min` (compact JSON payloads for polling workflows)
 
@@ -470,7 +489,79 @@ Behavior:
   - offset mode (`--delta-from 1200`): returns capture bytes after offset
   - timestamp mode (`--delta-from @1700000000` or RFC3339): returns full capture only if output changed after timestamp
   - JSON capture includes `deltaMode` and `nextOffset` for subsequent polls
+- `--cursor-file` auto-loads prior offset when `--delta-from` is omitted and writes back `nextOffset`.
 - `--json-min` keeps compact capture payloads (and includes `nextOffset` for delta polling).
+
+### `session handoff`
+
+Build compact handoff payload for multi-agent orchestration.
+
+```bash
+lisa session handoff --session <NAME> --json-min
+```
+
+Flags:
+
+- `--session` (required)
+- `--project-root`
+- `--agent`: `auto|claude|codex`
+- `--mode`: `auto|interactive|exec`
+- `--events N` (default `8`)
+- `--json`
+- `--json-min`
+
+### `session context-pack`
+
+Build token-budgeted context packet (`state + recent events + capture tail`).
+
+```bash
+lisa session context-pack --for <NAME> --token-budget 700 --json-min
+```
+
+Flags:
+
+- `--for` / `--session` (required)
+- `--project-root`
+- `--agent`: `auto|claude|codex`
+- `--mode`: `auto|interactive|exec`
+- `--events N` (default `8`)
+- `--lines N` (default `120`)
+- `--token-budget N` (default `700`)
+- `--json`
+- `--json-min`
+
+### `session route`
+
+Recommend session mode/policy/model for orchestration goal.
+
+```bash
+lisa session route --goal nested --json
+```
+
+Flags:
+
+- `--goal`: `nested|analysis|exec` (default `analysis`)
+- `--agent`: `claude|codex` (default `codex`)
+- `--prompt`: optional override
+- `--model`: optional codex model override
+- `--project-root`
+- `--json`
+
+### `session guard`
+
+Shared tmux safety guardrails before cleanup/kill-all.
+
+```bash
+lisa session guard --shared-tmux --json
+lisa session guard --shared-tmux --command "lisa cleanup --include-tmux-default" --json
+```
+
+Flags:
+
+- `--shared-tmux` (required)
+- `--command`: optional command-risk check
+- `--project-root`
+- `--json`
 
 ### `session preflight`
 
@@ -484,6 +575,10 @@ lisa session preflight --json
 Flags:
 
 - `--project-root`
+- `--agent` (optional model-probe agent; currently `codex`)
+- `--model` (optional codex model probe)
+- `--auto-model` (probe candidate models and select first supported)
+- `--auto-model-candidates CSV` (default `gpt-5.3-codex,gpt-5-codex`)
 - `--json`
 
 Behavior:
@@ -491,6 +586,7 @@ Behavior:
 - Runs doctor-equivalent environment checks (`tmux`, `claude`, `codex`).
 - Validates critical parser/contract assumptions (mode aliases, monitor marker guard, capture delta parsing, nested codex hint routing).
 - Optional model probe: `--agent codex --model <NAME>` runs a real Codex model-availability check.
+- Optional auto-model probe: `--auto-model` runs candidate model probes and selects first supported.
 - Returns exit `0` when both environment and contract checks pass; else exit `1`.
 
 ### `session list`
@@ -534,6 +630,7 @@ Flags:
 - `--project-root`
 - `--all-hashes` (scan metadata across all project hashes)
 - `--active-only` (include only sessions currently active in tmux)
+- `--delta` (emit added/removed topology edges since previous tree snapshot)
 - `--flat` (machine-friendly parent/child rows)
 - `--json`
 - `--json-min`: minimal JSON (`nodeCount` plus session graph rows/roots)
@@ -558,6 +655,7 @@ Flags:
 - `--levels N` (1-4, default `3`)
 - `--prompt-style STYLE` (`none|dot-slash|spawn|nested|neutral`, default `none`)
 - `--matrix-file PATH`: prompt regression matrix (`mode|prompt`, mode = `bypass|full-auto|any`)
+- `--model NAME`: optional Codex model pin for smoke spawn sessions
 - `--poll-interval N` (default `1`)
 - `--max-polls N` (default `180`)
 - `--keep-sessions`
@@ -658,19 +756,27 @@ Flags:
 JSON support:
 
 - `doctor`
+- `capabilities`
 - `cleanup`
 - `agent build-cmd`
+- `skills sync`
+- `skills doctor`
+- `skills install`
 - `session spawn`
+- `session detect-nested`
 - `session send`
 - `session snapshot`
 - `session status`
 - `session explain`
 - `session monitor`
 - `session capture`
+- `session handoff`
+- `session context-pack`
+- `session route`
+- `session guard`
 - `session tree`
 - `session smoke`
 - `session preflight`
-- `session detect-nested`
 - `session name`
 - `session list`
 - `session exists`

@@ -143,6 +143,7 @@ Block until success/terminal condition per flags.
 | `--stop-on-waiting` | `true` | Stop on `waiting_input` |
 | `--waiting-requires-turn-complete` | `false` | Require transcript turn-complete before waiting stop |
 | `--until-marker` | `""` | Stop on marker text in raw pane output |
+| `--until-state` | `""` | Stop when session reaches a target state |
 | `--expect` | `any` | `any`, `terminal`, `marker` (`marker` requires `--until-marker`) |
 | `--json-min` | false | Minimal JSON output (`session`,`finalState`,`exitReason`,`polls`,`nextOffset?`) |
 | `--stream-json` | false | Emit line-delimited JSON poll events before final payload |
@@ -158,6 +159,7 @@ Monitor nuance:
 - Timeout returns `finalState:"timeout"`, `exitReason:"max_polls_exceeded"`, `finalStatus:"timeout"`.
 - `marker_found` is success, often before terminal completion (`in_progress`/`active`).
 - `marker_found` can occur on echoed prompt text; use unique markers that are excluded from prompt content.
+- `--until-state` can stop on non-terminal states (for example `waiting_input` or `in_progress`) and returns that state as `exitReason`.
 - `--waiting-requires-turn-complete true` can timeout whenever turn-complete cannot be inferred (common in Codex/non-transcript flows).
 - `--stream-json` emits one JSON poll object per loop (`type:"poll"`), then emits the standard final monitor payload.
 - Final monitor payload includes `nextOffset` when pane capture is available.
@@ -179,6 +181,7 @@ Capture transcript (default for Claude) or raw pane output.
 | `--lines` | `200` | Pane lines for raw capture |
 | `--raw` | false | Force raw tmux capture |
 | `--delta-from` | `""` | Delta start (`offset`, `@unix`, RFC3339); requires `--raw` |
+| `--cursor-file` | `""` | Persist/reuse raw capture offsets across polling loops (`--raw` only) |
 | `--markers` | `""` | Marker-only extraction mode (`A,B,C`) |
 | `--keep-noise` | false | Keep Codex/MCP startup noise |
 | `--strip-noise` | n/a | Compatibility alias for default filtering |
@@ -195,6 +198,7 @@ Capture behavior:
   - offset mode: integer byte offset into current capture
   - timestamp mode: `@unix` or RFC3339; returns full capture only if output changed after timestamp
   - JSON includes `deltaMode` + `nextOffset` for iterative polling (fields appear when `--delta-from` is provided)
+- Cursor files (`--cursor-file`) auto-load prior offset when `--delta-from` is omitted and write back `nextOffset` after capture.
 
 JSON:
 - transcript: `{"session","claudeSession","messages":[{"role","text","timestamp"}]}`
@@ -219,6 +223,39 @@ Detailed diagnostics with recent event timeline.
 | `--json` | false | JSON output |
 
 JSON: `{"status":{...},"eventFile","events":[...],"droppedEventLines"}`
+
+## session handoff
+
+Compact handoff packet for another orchestrator/agent loop.
+
+Flags: `--session` (required), `--project-root`, `--agent`, `--mode`, `--events`, `--json`, `--json-min`.
+
+JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","summary","recent?"}`.
+
+## session context-pack
+
+Token-budgeted context packet with state + recent events + capture tail.
+
+Flags: `--for` (alias `--session`, required), `--project-root`, `--agent`, `--mode`, `--events`, `--lines`, `--token-budget`, `--json`, `--json-min`.
+
+JSON: `{"session","sessionState","status","reason","nextAction","nextOffset","pack","tokenBudget","truncated"}`.
+
+## session route
+
+Recommend mode/policy/model defaults for orchestration goal.
+
+Flags: `--goal` (`nested|analysis|exec`), `--agent`, `--prompt`, `--model`, `--project-root`, `--json`.
+
+JSON includes command preview + routing rationale:
+`{"goal","agent","mode","nestedPolicy","nestingIntent","model","command","monitorHint","nestedDetection","rationale"}`.
+
+## session guard
+
+Shared tmux safety guard.
+
+Flags: `--shared-tmux` (required), `--command`, `--project-root`, `--json`.
+
+JSON: `{"sharedTmux","defaultSessionCount","defaultSessions","commandRisk","safe","warnings"}`.
 
 ## session list / exists / kill / kill-all / name
 
@@ -246,6 +283,7 @@ Inspect metadata parent/child links for nested orchestration.
 | `--project-root` | cwd | Project directory |
 | `--all-hashes` | false | Include metadata from all project hashes |
 | `--active-only` | false | Include only sessions currently active in tmux |
+| `--delta` | false | Emit added/removed topology edges since last tree snapshot |
 | `--flat` | false | Machine-friendly parent/child rows |
 | `--json-min` | false | Minimal JSON output (`nodeCount` + session graph) |
 | `--json` | false | JSON output |
@@ -255,27 +293,30 @@ JSON: `{"session","projectRoot","allHashes","nodeCount","roots":[{"session","par
 Tree semantics:
 - `session tree` is metadata-first and can show historical roots even when no active session exists.
 - For active-only checks, use `--active-only` (or pair with `session list` / `session exists`).
+- `--delta` persists a previous topology snapshot per project hash and reports added/removed edges.
 
 ## session smoke
 
 Deterministic nested smoke (`L1 -> ... -> LN`) with marker assertions.
 
-Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|dot-slash|spawn|nested|neutral`), `--matrix-file` (`mode|prompt` lines; mode=`bypass|full-auto|any`), `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--json`.
+Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|dot-slash|spawn|nested|neutral`), `--matrix-file` (`mode|prompt` lines; mode=`bypass|full-auto|any`), `--model`, `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--json`.
 
 Behavior: uses nested `session spawn/monitor/capture`, asserts all level markers, non-zero exit on spawn/monitor/marker failure.
 `--prompt-style` adds a pre-smoke dry-run probe that validates nested wording detection.
 `--matrix-file` adds multi-prompt expectation regression before smoke execution and fails on mismatches.
+`--model` pins model on smoke `session spawn` calls. Smoke validates Lisa orchestration plumbing, not model answer quality.
 
 ## session preflight
 
 Validate environment + contract assumptions in one command.
 
-Flags: `--project-root`, `--agent`, `--model`, `--json`.
+Flags: `--project-root`, `--agent`, `--model`, `--auto-model`, `--auto-model-candidates`, `--json`.
 
 Behavior:
 - Runs doctor-equivalent environment checks (`tmux`, `claude`, `codex`).
 - Validates parser/contract assumptions (mode aliases, monitor marker guard, capture delta parsing, nested codex hint routing).
 - Optional model probe: `--agent codex --model <NAME>` performs real model-availability check.
+- `--auto-model` probes candidate models and selects first supported (`gpt-5.3-codex,gpt-5-codex` by default).
 - Exit `0` when both environment + contracts are ready; otherwise exit `1`.
 
 ## cleanup
@@ -291,14 +332,17 @@ Clean detached tmux servers and stale socket files from Lisa runs.
 JSON: `{"dryRun","scanned","removed","wouldRemove","killedServers","wouldKillServers","keptActive"}` plus optional `errors`.
 
 Non-JSON output: one-line summary. Exit `1` if any probe/kill/remove errors occurred.
+Safety: in shared tmux environments, run `session guard --shared-tmux --json` and `cleanup --dry-run` before any cleanup mutation.
 
 ## Other commands
 
 | Command | Purpose |
 |---|---|
 | `doctor [--json]` | Check prerequisites (tmux + at least one of claude/codex). Exit 0=ok, 1=missing |
+| `capabilities [--json]` | Emit command/flag capability matrix for orchestrator contract checks |
 | `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--nested-policy`, `--nesting-intent`, `--project-root`, `--prompt`, `--agent-args`, `--model`, `--no-dangerously-skip-permissions`, `--json`) |
 | `skills sync` | Sync external skill into repo `skills/lisa` (`--json`: `{"source","destination","files","directories","symlinks"}`) |
+| `skills doctor` | Verify installed Codex/Claude skill drift vs repo capability contract |
 | `skills install` | Install repo `skills/lisa` to `codex`, `claude`, or `project` (`--json`: `{"source","destination","files","directories","symlinks","noop?"}`; same source/destination now returns `noop:true`) |
 | `version` | Print build version (`version`, `--version`, `-v`) |
 
@@ -313,7 +357,7 @@ Aliases `execution` and `non-interactive` map to `exec`.
 
 ## JSON Surface
 
-`--json` exists on: `doctor`, `cleanup`, `agent build-cmd`, `skills sync`, `skills install`, `session name|spawn|send|status|explain|monitor|capture|tree|smoke|preflight|list|exists|kill|kill-all`.
+`--json` exists on: `doctor`, `capabilities`, `cleanup`, `agent build-cmd`, `skills sync|doctor|install`, `session name|spawn|detect-nested|send|snapshot|status|explain|monitor|capture|handoff|context-pack|route|guard|tree|smoke|preflight|list|exists|kill|kill-all`.
 
 JSON error contract:
 - command/runtime failures emit `{"ok":false,"errorCode":"...","error":"..."}` when `--json` is enabled.
