@@ -60,6 +60,9 @@ func commandExecEnv(name string) []string {
 		if strings.HasPrefix(kv, "TMUX=") {
 			continue
 		}
+		if strings.HasPrefix(kv, lisaClaudeOAuthTokenRuntimeEnv+"=") {
+			continue
+		}
 		filtered = append(filtered, kv)
 	}
 	return filtered

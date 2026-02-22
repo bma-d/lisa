@@ -329,9 +329,43 @@ func cmdSessionSpawn(args []string) int {
 	if strings.TrimSpace(commandToSend) != "" {
 		commandToSend = wrapSessionCommand(commandToSend, runID)
 	}
+	oauthTokenID := ""
+	oauthTokenPreviewID := ""
+	if agent == "claude" {
+		previewID, hasPreview, previewErr := peekNextClaudeOAuthTokenFn()
+		if previewErr != nil {
+			fmt.Fprintf(os.Stderr, "oauth warning: failed reading token pool: %v\n", previewErr)
+		} else if hasPreview {
+			oauthTokenPreviewID = previewID
+		}
+		if !dryRun {
+			selection, hasSelection, selectionErr := selectClaudeOAuthTokenFn()
+			if selectionErr != nil {
+				fmt.Fprintf(os.Stderr, "oauth warning: failed selecting token: %v\n", selectionErr)
+			} else if hasSelection {
+				oauthTokenID = selection.ID
+				restoreOAuth := setEnvScoped(lisaClaudeOAuthTokenRuntimeEnv, selection.Token)
+				defer restoreOAuth()
+			}
+		}
+	}
 
 	if dryRun {
 		socketPath := tmuxSocketPathForProjectRoot(projectRoot)
+		envPayload := map[string]string{
+			"LISA_SESSION":        "true",
+			"LISA_SESSION_NAME":   session,
+			"LISA_AGENT":          agent,
+			"LISA_MODE":           mode,
+			"LISA_PROJECT_ROOT":   projectRoot,
+			"LISA_TMUX_SOCKET":    socketPath,
+			"LISA_PROJECT_HASH":   projectHash(projectRoot),
+			"LISA_HEARTBEAT_FILE": sessionHeartbeatFile(projectRoot, session),
+			"LISA_DONE_FILE":      sessionDoneFile(projectRoot, session),
+		}
+		if agent == "claude" && oauthTokenPreviewID != "" {
+			envPayload[claudeOAuthTokenEnv] = "[managed-by-lisa]"
+		}
 		payload := map[string]any{
 			"dryRun":         true,
 			"session":        session,
@@ -347,17 +381,10 @@ func cmdSessionSpawn(args []string) int {
 			"socketPath":     socketPath,
 			"width":          width,
 			"height":         height,
-			"env": map[string]string{
-				"LISA_SESSION":        "true",
-				"LISA_SESSION_NAME":   session,
-				"LISA_AGENT":          agent,
-				"LISA_MODE":           mode,
-				"LISA_PROJECT_ROOT":   projectRoot,
-				"LISA_TMUX_SOCKET":    socketPath,
-				"LISA_PROJECT_HASH":   projectHash(projectRoot),
-				"LISA_HEARTBEAT_FILE": sessionHeartbeatFile(projectRoot, session),
-				"LISA_DONE_FILE":      sessionDoneFile(projectRoot, session),
-			},
+			"env":            envPayload,
+		}
+		if oauthTokenPreviewID != "" {
+			payload["oauthTokenId"] = oauthTokenPreviewID
 		}
 		if detectNested {
 			payload["nestedDetection"] = nestedDetection
@@ -402,6 +429,7 @@ func cmdSessionSpawn(args []string) int {
 		ParentSession: parentSessionFromEnv(session),
 		Agent:         agent,
 		Mode:          mode,
+		OAuthTokenID:  oauthTokenID,
 		RunID:         runID,
 		ProjectRoot:   projectRoot,
 		StartCmd:      command,
@@ -436,6 +464,9 @@ func cmdSessionSpawn(args []string) int {
 			"runId":         runID,
 			"projectRoot":   projectRoot,
 			"command":       command,
+		}
+		if oauthTokenID != "" {
+			payload["oauthTokenId"] = oauthTokenID
 		}
 		if detectNested {
 			payload["nestedDetection"] = nestedDetection

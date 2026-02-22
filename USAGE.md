@@ -34,6 +34,9 @@ lisa doctor
 lisa cleanup
 lisa version
 lisa capabilities
+lisa oauth add
+lisa oauth list
+lisa oauth remove
 lisa session name
 lisa session spawn
 lisa session detect-nested
@@ -161,6 +164,55 @@ lisa capabilities --json
 Flags:
 
 - `--json`: JSON output including build metadata and command+flag matrix
+
+### `oauth add`
+
+Add a Claude OAuth token to Lisa's local token pool (`~/.lisa/oauth_tokens.json`, mode `0600`).
+
+```bash
+lisa oauth add --token "<oauth-token>"
+printf '%s\n' "$CLAUDE_CODE_OAUTH_TOKEN" | lisa oauth add --stdin
+lisa oauth add --stdin --json
+```
+
+Flags:
+
+- `--token`: token value
+- `--stdin`: read token from stdin
+- `--json`: JSON output
+
+Behavior:
+
+- Deduplicates by token value.
+- Stored tokens are used for Claude session spawns in round-robin order.
+- When a spawned Claude session reports OAuth refresh failures (invalid/expired), Lisa removes that token automatically.
+
+### `oauth list`
+
+List token ids in the local pool.
+
+```bash
+lisa oauth list
+lisa oauth list --json
+```
+
+Flags:
+
+- `--json`: JSON output
+
+### `oauth remove`
+
+Remove token by id.
+
+```bash
+lisa oauth remove --id oauth-abc123def456
+lisa oauth remove --id oauth-abc123def456 --json
+```
+
+Flags:
+
+- `--id`: token id
+- `--json`: JSON output
 
 ### `skills sync`
 
@@ -845,6 +897,7 @@ LISA_MODE
 LISA_PROJECT_HASH
 LISA_HEARTBEAT_FILE
 LISA_DONE_FILE
+CLAUDE_CODE_OAUTH_TOKEN (when --agent claude and oauth pool has entries)
 ```
 
 Lisa clears `TMUX` when executing tmux commands, and routes tmux through a

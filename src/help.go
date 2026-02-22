@@ -42,6 +42,10 @@ var helpFuncs = map[string]func(){
 	"session list":          helpSessionList,
 	"capabilities":          helpCapabilities,
 	"skills install":        helpSkillsInstall,
+	"oauth":                 helpOAuth,
+	"oauth add":             helpOAuthAdd,
+	"oauth list":            helpOAuthList,
+	"oauth remove":          helpOAuthRemove,
 }
 
 func showHelp(cmdPath string) int {
@@ -84,6 +88,9 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session kill-all      Kill all lisa sessions")
 	fmt.Fprintln(os.Stderr, "  capabilities          Describe lisa CLI commands and flags")
 	fmt.Fprintln(os.Stderr, "  agent build-cmd       Build agent CLI command string")
+	fmt.Fprintln(os.Stderr, "  oauth add             Add Claude OAuth token to local pool")
+	fmt.Fprintln(os.Stderr, "  oauth list            List Claude OAuth token pool entries")
+	fmt.Fprintln(os.Stderr, "  oauth remove          Remove Claude OAuth token from pool")
 	fmt.Fprintln(os.Stderr, "  skills sync           Sync lisa skill into repo skills/lisa")
 	fmt.Fprintln(os.Stderr, "  skills doctor         Verify installed lisa skill drift")
 	fmt.Fprintln(os.Stderr, "  skills install        Install repo lisa skill to codex/claude/project")
@@ -541,6 +548,47 @@ func helpAgentBuildCmd() {
 	fmt.Fprintln(os.Stderr, "  --model NAME           Codex model name (for --agent codex)")
 	fmt.Fprintln(os.Stderr, "  --no-dangerously-skip-permissions")
 	fmt.Fprintln(os.Stderr, "                        Don't add --dangerously-skip-permissions to claude")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpOAuth() {
+	fmt.Fprintln(os.Stderr, "lisa oauth — manage Claude OAuth token pool")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa oauth <subcommand> [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Subcommands:")
+	fmt.Fprintln(os.Stderr, "  add      Add token to local pool (stored in ~/.lisa/oauth_tokens.json)")
+	fmt.Fprintln(os.Stderr, "  list     List pooled tokens (ids only)")
+	fmt.Fprintln(os.Stderr, "  remove   Remove token by id")
+}
+
+func helpOAuthAdd() {
+	fmt.Fprintln(os.Stderr, "lisa oauth add — add Claude OAuth token to local pool")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa oauth add [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --token VALUE         OAuth token value")
+	fmt.Fprintln(os.Stderr, "  --stdin               Read token from stdin")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpOAuthList() {
+	fmt.Fprintln(os.Stderr, "lisa oauth list — list Claude OAuth token pool")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa oauth list [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpOAuthRemove() {
+	fmt.Fprintln(os.Stderr, "lisa oauth remove — remove Claude OAuth token from pool")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa oauth remove [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --id VALUE            OAuth token id")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 

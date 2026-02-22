@@ -31,6 +31,8 @@ func Run(args []string) int {
 		return cmdAgent(rest)
 	case "skills":
 		return cmdSkills(rest)
+	case "oauth":
+		return cmdOAuth(rest)
 	case "help", "--help", "-h":
 		return showHelp(strings.Join(rest, " "))
 	default:

@@ -34,6 +34,10 @@ func TestHelpExitZero(t *testing.T) {
 		{"session name --help", []string{"session", "name", "--help"}},
 		{"agent --help", []string{"agent", "--help"}},
 		{"agent build-cmd --help", []string{"agent", "build-cmd", "--help"}},
+		{"oauth --help", []string{"oauth", "--help"}},
+		{"oauth add --help", []string{"oauth", "add", "--help"}},
+		{"oauth list --help", []string{"oauth", "list", "--help"}},
+		{"oauth remove --help", []string{"oauth", "remove", "--help"}},
 		{"skills --help", []string{"skills", "--help"}},
 		{"skills sync --help", []string{"skills", "sync", "--help"}},
 		{"skills install --help", []string{"skills", "install", "--help"}},
@@ -61,6 +65,16 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 			"top-level",
 			[]string{"--help"},
 			[]string{"lisa <command> [args]", "doctor", "cleanup", "session spawn", "session explain", "session smoke", "session preflight", "agent build-cmd", "skills sync"},
+		},
+		{
+			"oauth",
+			[]string{"oauth", "--help"},
+			[]string{"lisa oauth", "add", "list", "remove"},
+		},
+		{
+			"oauth add",
+			[]string{"oauth", "add", "--help"},
+			[]string{"lisa oauth add", "--token", "--stdin", "--json"},
 		},
 		{
 			"skills",
@@ -161,6 +175,12 @@ func TestHelpRoutingEquivalence(t *testing.T) {
 			[]string{"help", "agent", "build-cmd"},
 			[]string{"agent", "build-cmd", "--help"},
 			[]string{"agent", "help", "build-cmd"},
+		},
+		{
+			"oauth add",
+			[]string{"help", "oauth", "add"},
+			[]string{"oauth", "add", "--help"},
+			[]string{"oauth", "help", "add"},
 		},
 		{
 			"skills sync",

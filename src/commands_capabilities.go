@@ -196,6 +196,18 @@ var commandCapabilities = []commandCapability{
 		Flags: []string{"--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--project-root", "--agent-args", "--model", "--no-dangerously-skip-permissions", "--json"},
 	},
 	{
+		Name:  "oauth add",
+		Flags: []string{"--token", "--stdin", "--json"},
+	},
+	{
+		Name:  "oauth list",
+		Flags: []string{"--json"},
+	},
+	{
+		Name:  "oauth remove",
+		Flags: []string{"--id", "--json"},
+	},
+	{
 		Name:  "skills sync",
 		Flags: []string{"--from", "--path", "--repo-root", "--json"},
 	},

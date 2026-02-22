@@ -59,6 +59,11 @@ func tmuxNewSessionWithStartup(session, projectRoot, agent, mode string, width, 
 		"-e", "LISA_HEARTBEAT_FILE=" + sessionHeartbeatFile(projectRoot, session),
 		"-e", "LISA_DONE_FILE=" + sessionDoneFile(projectRoot, session),
 	}
+	if agent == "claude" {
+		if oauthToken := strings.TrimSpace(os.Getenv(lisaClaudeOAuthTokenRuntimeEnv)); oauthToken != "" {
+			args = append(args, "-e", claudeOAuthTokenEnv+"="+oauthToken)
+		}
+	}
 
 	startupCommand = strings.TrimSpace(startupCommand)
 	if startupCommand != "" {

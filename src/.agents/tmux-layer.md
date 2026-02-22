@@ -1,6 +1,6 @@
 # Tmux Interaction Layer
 
-Last Updated: 2026-02-20
+Last Updated: 2026-02-22
 Related Files: `src/tmux.go`
 
 ## Overview
@@ -15,6 +15,7 @@ Project socket routing now prefers `/tmp/lisa-tmux-<slug>-<hash>.sock` for neste
 - Custom dimensions (`-x`, `-y`)
 - Working directory (`-c projectRoot`)
 - Environment variables: `LISA_SESSION`, `LISA_SESSION_NAME`, `LISA_AGENT`, `LISA_MODE`, `LISA_PROJECT_HASH`, `LISA_HEARTBEAT_FILE`, `LISA_DONE_FILE`
+- Claude sessions include `CLAUDE_CODE_OAUTH_TOKEN` when Lisa selected a managed token for that spawn.
 
 Spawn path now hard-fails before session creation if heartbeat artifact path cannot be prepared.
 

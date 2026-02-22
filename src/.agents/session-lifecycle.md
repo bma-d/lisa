@@ -1,6 +1,6 @@
 # Session Lifecycle & File Management
 
-Last Updated: 2026-02-21
+Last Updated: 2026-02-22
 Related Files: `src/session_files.go`, `src/commands_session.go`
 
 ## Overview
@@ -26,8 +26,8 @@ All stored in `/tmp/`:
 
 | Type | Path Pattern | Content |
 |------|-------------|---------|
-| Meta | `.lisa-{hash}-session-{id}-meta.json` | `sessionMeta`: session, parentSession (when nested), agent, mode, projectRoot, startCmd, prompt, createdAt, runId |
-| State | `.lisa-{hash}-session-{id}-state.json` | `sessionState`: pollCount, hasEverBeenActive, output freshness fields, last classification |
+| Meta | `.lisa-{hash}-session-{id}-meta.json` | `sessionMeta`: session, parentSession (when nested), agent, mode, oauthTokenId (when managed), projectRoot, startCmd, prompt, createdAt, runId |
+| State | `.lisa-{hash}-session-{id}-state.json` | `sessionState`: pollCount, hasEverBeenActive, output freshness fields, last classification, oauthTokenPruned markers |
 | Output | `lisa-{hash}-output-{id}.txt` | Captured pane output (up to 260 lines) |
 | Heartbeat | `.lisa-{hash}-session-{id}-heartbeat.txt` | File mtime refreshed by wrapper heartbeat loop |
 | Done | `.lisa-{hash}-session-{id}-done.txt` | Wrapper trap writes `{runId}:{exitCode}` completion sidecar |
@@ -39,10 +39,12 @@ All stored in `/tmp/`:
 1. **Spawn** (`cmdSessionSpawn`): reset stale artifacts -> validate heartbeat path -> create tmux session -> wrap startup command (`__LISA_SESSION_START__:{runId}:{ts}` / `__LISA_SESSION_DONE__:{runId}:{exit}` + heartbeat loop + signal traps) -> send command -> save meta -> clear state. Metadata persistence is fail-fast: if meta write fails, Lisa kills the new tmux session and cleans artifacts before returning non-zero. If tmux session creation itself fails after heartbeat prep, Lisa now cleans artifacts before returning. Spawn failure paths also emit lifecycle failure reasons (`spawn_*_error`) for observability.
    - Wrapper exports `LISA_RUN_ID` to child processes so project-scoped hooks (for example Claude finish hooks) can emit run-id-matching done sidecars via `LISA_DONE_FILE`.
    - Spawn metadata now records `parentSession` when session is created from inside another Lisa session (`LISA_SESSION_NAME`).
+   - Claude spawns can source `CLAUDE_CODE_OAUTH_TOKEN` from Lisa-managed local pool (`~/.lisa/oauth_tokens.json`) using round-robin selection; selected token id is stored in session metadata.
    - `--dry-run` validates + resolves spawn command/socket/env and exits without tmux/artifact mutation.
 2. **Monitor** (`cmdSessionMonitor`): poll loop calling `computeSessionStatus()` at interval, stops on terminal state
    - Optional `--until-marker` stops with `exitReason=marker_found` when pane output contains a deterministic marker token.
    - `--expect terminal|marker` adds fail-fast expectation gates for success-path ambiguity.
+   - For Claude sessions tied to managed token ids, status polling inspects crash/stuck output for OAuth refresh failures (`invalid_grant`, expired/invalid token patterns) and auto-removes failing tokens from the pool.
 3. **Kill** (`cmdSessionKill`): resolve descendants from metadata parent links -> kill descendants first -> kill target session -> cleanup runtime artifacts (preserve event log) -> append lifecycle events
 4. **Kill-all** (`cmdSessionKillAll`): list sessions -> kill each -> cleanup runtime artifacts (preserve event log) -> append lifecycle event. Non-`--project-only` kill-all now cleans artifacts across hashes by default for the listed session IDs.
 5. **Tree** (`cmdSessionTree`): builds metadata graph (`parentSession` links) and returns nested hierarchy (text/JSON) or flat rows (`--flat`).

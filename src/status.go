@@ -473,6 +473,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			status.Signals.EventsWriteError = eventErr.Error()
 		}
 	}
+	status = maybePruneInvalidClaudeOAuthToken(projectRoot, session, meta, status, statePath, stateHint)
 
 	if full && (status.SessionState == "completed" || status.SessionState == "crashed" || status.SessionState == "stuck" || status.SessionState == "degraded") {
 		capture, captureErr := tmuxCapturePaneFn(session, 220)

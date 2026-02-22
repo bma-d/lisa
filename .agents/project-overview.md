@@ -1,6 +1,6 @@
 # Project Overview
 
-Last Updated: 2026-02-21
+Last Updated: 2026-02-22
 
 ## Technology Stack
 
@@ -43,6 +43,7 @@ lisa/
 - Function variable pattern for test mocking (`var tmuxFooFn = tmuxFoo`)
 - Hand-rolled flag parsing (no flag library)
 - Machine-readable `--json` is available on `doctor`, `capabilities`, `agent build-cmd`, and all major session commands (`name|spawn|send|status|explain|monitor|capture|tree|smoke|list|exists|kill|kill-all`)
+- `oauth` command manages local Claude OAuth token pool (`oauth add|list|remove`) with 0600 file permissions and spawn-time round-robin selection
 - Session artifacts in `/tmp/` keyed by project hash
 - `skills` command manages bidirectional Lisa skill sync/install (`skills sync`, `skills install`)
 - Release artifacts and package-manager distribution are handled via GoReleaser (Homebrew, deb/rpm/apk, archives)

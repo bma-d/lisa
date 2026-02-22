@@ -26,6 +26,7 @@ type sessionMeta struct {
 	ParentSession string `json:"parentSession,omitempty"`
 	Agent         string `json:"agent"`
 	Mode          string `json:"mode"`
+	OAuthTokenID  string `json:"oauthTokenId,omitempty"`
 	RunID         string `json:"runId,omitempty"`
 	ProjectRoot   string `json:"projectRoot"`
 	StartCmd      string `json:"startCommand"`
@@ -49,6 +50,8 @@ type sessionState struct {
 	LastTurnCompleteAtNanos    int64   `json:"lastTurnCompleteAtNanos,omitempty"`
 	LastTurnCompleteInputNanos int64   `json:"lastTurnCompleteInputNanos,omitempty"`
 	LastTurnCompleteFileAge    int     `json:"lastTurnCompleteFileAge,omitempty"`
+	OAuthTokenPruned           bool    `json:"oauthTokenPruned,omitempty"`
+	OAuthTokenPruneReason      string  `json:"oauthTokenPruneReason,omitempty"`
 	LastSessionState           string  `json:"lastSessionState,omitempty"`
 	LastStatus                 string  `json:"lastStatus,omitempty"`
 	LastClassificationReason   string  `json:"lastClassificationReason,omitempty"`

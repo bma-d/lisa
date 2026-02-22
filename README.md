@@ -58,6 +58,7 @@ Canonical CLI usage reference lives in [`USAGE.md`](./USAGE.md).
 lisa doctor                # verify setup
 lisa session preflight --json  # verify env + core command contracts
 lisa cleanup --dry-run     # inspect stale socket residue
+lisa oauth add --stdin     # store Claude OAuth token in local pool (paste token via stdin)
 lisa skills sync --from codex   # sync ~/.codex/skills/lisa into repo skills/lisa
 lisa version               # print version
 ```
