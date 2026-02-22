@@ -17,11 +17,13 @@ Validated: 2026-02-21
 - Nested diagnostics path: `session spawn --dry-run --detect-nested --json` or `session detect-nested --json`.
 - Deterministic nested override: `--nested-policy auto|force|off` and `--nesting-intent auto|nested|neutral`.
 - Quote/doc mentions like `The string "./lisa" appears in docs only.` are treated as non-executable nested hints.
-- Codex model pinning: `--model <NAME>` on `session spawn` / `agent build-cmd`; preflight support via `session preflight --agent codex --model <NAME> --json`.
+- Codex model pinning: `--model <NAME>` on `session spawn` / `agent build-cmd`; verify support with `session preflight --agent codex --model <NAME> --json`.
+- Model preflight probe can fail (`errorCode:"preflight_model_not_supported"`) for unknown aliases; treat this as capability signal, not parser failure.
 
 ## Observed Behaviors
 
 - `session monitor --until-marker` succeeds with `exitReason:"marker_found"` and may still report state `in_progress`.
+- `session monitor --until-marker` can match marker text echoed from prompt input; keep markers unique and out of prompt text.
 - `session exists` prints `false` and exits `1` when session is absent.
 - Nested wording detection is case-insensitive (`./LISA` matches `./lisa` hint).
 - `session smoke --levels 1..4 --json` passed in this repository with marker assertions.
@@ -34,7 +36,9 @@ test -x ./lisa || { echo "missing ./lisa"; exit 1; }
 LISA_BIN=./lisa
 
 $LISA_BIN session preflight --json
-$LISA_BIN session preflight --agent codex --model GPT-5.3-Codex-Spark --json
+MODEL="${MODEL:-gpt-5-codex}"
+$LISA_BIN session preflight --agent codex --model "$MODEL" --json || \
+  echo "model probe failed; continue without --model or pick supported model"
 $LISA_BIN session detect-nested --prompt "Use ./lisa for child orchestration." --json
 
 for p in \

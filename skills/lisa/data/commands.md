@@ -42,7 +42,8 @@ Spawn notes:
 - `--nested-policy off` disables prompt-based nested bypass heuristics.
 - `--nesting-intent nested|neutral` explicitly overrides prompt heuristics.
 - If `--agent-args '--dangerously-bypass-approvals-and-sandbox'` is passed, Lisa omits `--full-auto` automatically.
-- `--model GPT-5.3-Codex-Spark` injects Codex model selection without embedding `--model` inside `--agent-args`.
+- `--model <NAME>` injects Codex model selection without embedding `--model` inside `--agent-args`.
+- Unknown model aliases can still run via fallback metadata, but may warn and degrade behavior; run `session preflight --agent codex --model <NAME> --json` first.
 - Non-nested Codex `exec` with `--full-auto` can block child Lisa tmux sockets (`Operation not permitted`); prefer interactive + `session send` or explicit bypass args.
 - For deeply nested prompts, prefer heredoc injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`).
 - `--dry-run` returns resolved `command`, wrapped `startupCommand`, `socketPath`, and injected `env` keys.
@@ -156,6 +157,7 @@ Exit reasons:
 Monitor nuance:
 - Timeout returns `finalState:"timeout"`, `exitReason:"max_polls_exceeded"`, `finalStatus:"timeout"`.
 - `marker_found` is success, often before terminal completion (`in_progress`/`active`).
+- `marker_found` can occur on echoed prompt text; use unique markers that are excluded from prompt content.
 - `--waiting-requires-turn-complete true` can timeout whenever turn-complete cannot be inferred (common in Codex/non-transcript flows).
 - `--stream-json` emits one JSON poll object per loop (`type:"poll"`), then emits the standard final monitor payload.
 - Final monitor payload includes `nextOffset` when pane capture is available.

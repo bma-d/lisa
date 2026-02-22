@@ -2,7 +2,7 @@
 name: lisa
 description: lisa, tmux, orchestration, claude, codex, spawn, monitor, capture, nested, smoke, skills
 author: Claude Code
-version: 4.0.0
+version: 4.1.0
 date: 2026-02-21
 tags: [lisa, tmux, orchestration, claude, codex, agents]
 ---
@@ -17,6 +17,7 @@ Axiom: minimum context, deterministic command contracts.
 2. Use tokenized subcommands: `$LISA_BIN session spawn ...` (never `"session spawn"`).
 3. In multi-step/nested flows, always pass `--project-root` on `session *` and cleanup calls.
 4. For JSON workflows, parse `stdout` contract payloads; treat `stderr` as diagnostics and use `stderrPolicy`.
+5. For marker-gated monitor (`--until-marker`), choose a unique marker not present in prompt text.
 
 ## Crucial Commands
 
@@ -24,9 +25,12 @@ Axiom: minimum context, deterministic command contracts.
 test -x ./lisa || { echo "missing ./lisa"; exit 1; }
 LISA_BIN=./lisa
 ROOT=/path/to/project
+MODEL="${MODEL:-gpt-5-codex}"
 
 # preflight
 $LISA_BIN session preflight --json
+$LISA_BIN session preflight --agent codex --model "$MODEL" --json || \
+  echo "model probe failed; use supported model or omit --model"
 
 # spawn + monitor + capture + cleanup
 SESSION=$($LISA_BIN session spawn --agent codex --mode interactive --project-root "$ROOT" --prompt "Do X, then wait." --json | jq -r .session)
@@ -40,6 +44,7 @@ $LISA_BIN session kill --session "$SESSION" --project-root "$ROOT"
 
 ```bash
 $LISA_BIN session detect-nested --prompt "Use ./lisa for child orchestration." --json
+$LISA_BIN session detect-nested --prompt "Use lisa inside of lisa inside as well." --json
 $LISA_BIN session spawn --agent codex --mode exec --project-root "$ROOT" \
   --prompt "Create nested lisa inside lisa inside lisa and report" \
   --dry-run --detect-nested --json

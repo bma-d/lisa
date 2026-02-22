@@ -39,7 +39,9 @@ Use before complex orchestration to lock command assumptions:
 ```bash
 $LISA_BIN doctor --json
 $LISA_BIN session preflight --json
-$LISA_BIN session preflight --agent codex --model GPT-5.3-Codex-Spark --json
+MODEL="${MODEL:-gpt-5-codex}"
+$LISA_BIN session preflight --agent codex --model "$MODEL" --json || \
+  echo "model preflight probe failed; choose a supported model or omit --model"
 $LISA_BIN session spawn --help
 $LISA_BIN session monitor --help
 $LISA_BIN session tree --help
@@ -60,9 +62,9 @@ $LISA_BIN session monitor --session "$S1" --project-root . --json &
 $LISA_BIN session monitor --session "$S2" --project-root . --json &
 wait
 
-# codex worker pinned to explicit model
+# codex worker pinned to explicit model (after model preflight probe)
 SC=$($LISA_BIN session spawn --agent codex --mode exec \
-  --model GPT-5.3-Codex-Spark \
+  --model "$MODEL" \
   --prompt "Run integration tests and summarize failures" \
   --project-root . --json | jq -r .session)
 ```
@@ -142,6 +144,9 @@ $LISA_BIN session monitor --session "$S" --project-root . \
   --until-marker "DONE_MARKER" --expect marker --json
 ```
 
+Marker hygiene:
+- use marker strings that do not appear in prompt text, or `monitor --until-marker` can return early from echoed input.
+
 ## Cleanup Patterns
 
 ```bash
@@ -185,6 +190,11 @@ Nested Codex exec trigger wording (auto-bypass + omit `--full-auto`):
 
 Wording that does not trigger nested bypass:
 - `No nesting requested here.`
+- `Use lisa inside of lisa inside as well.`
+
+Rewrite non-trigger wording to trigger bypass:
+- `Use ./lisa for child orchestration.`
+- `Run lisa session spawn for child sessions.`
 
 Tip: validate trigger intent with `session spawn --dry-run --json` and inspect `command` for
 `--dangerously-bypass-approvals-and-sandbox` vs `--full-auto`.
@@ -266,7 +276,7 @@ Build-command preview with model pin:
 
 ```bash
 $LISA_BIN agent build-cmd --agent codex --mode exec \
-  --model GPT-5.3-Codex-Spark \
+  --model "$MODEL" \
   --prompt "Run tests" --json
 ```
 
