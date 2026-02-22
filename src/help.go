@@ -24,6 +24,9 @@ var helpFuncs = map[string]func(){
 	"session monitor":       helpSessionMonitor,
 	"session capture":       helpSessionCapture,
 	"session packet":        helpSessionPacket,
+	"session schema":        helpSessionSchema,
+	"session checkpoint":    helpSessionCheckpoint,
+	"session dedupe":        helpSessionDedupe,
 	"session handoff":       helpSessionHandoff,
 	"session context-pack":  helpSessionContextPack,
 	"session route":         helpSessionRoute,
@@ -76,6 +79,9 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session monitor       Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  session capture       Capture session pane output or transcript")
 	fmt.Fprintln(os.Stderr, "  session packet        Build status+capture+handoff packet")
+	fmt.Fprintln(os.Stderr, "  session schema        Emit JSON schemas for session command payloads")
+	fmt.Fprintln(os.Stderr, "  session checkpoint    Save/resume orchestration state bundles")
+	fmt.Fprintln(os.Stderr, "  session dedupe        Prevent duplicate work via task-hash claims")
 	fmt.Fprintln(os.Stderr, "  session handoff       Build compact handoff payload for another agent")
 	fmt.Fprintln(os.Stderr, "  session context-pack  Build token-budgeted context packet")
 	fmt.Fprintln(os.Stderr, "  session route         Recommend mode/policy/model for orchestration goal")
@@ -136,6 +142,9 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  monitor    Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  capture    Capture session pane output or transcript")
 	fmt.Fprintln(os.Stderr, "  packet     Build status+capture+handoff packet")
+	fmt.Fprintln(os.Stderr, "  schema     Emit JSON schemas for session payload contracts")
+	fmt.Fprintln(os.Stderr, "  checkpoint Save/resume orchestration state bundles")
+	fmt.Fprintln(os.Stderr, "  dedupe     Prevent duplicate work via task-hash claims")
 	fmt.Fprintln(os.Stderr, "  handoff    Build compact handoff payload for another agent")
 	fmt.Fprintln(os.Stderr, "  context-pack Build token-budgeted context packet")
 	fmt.Fprintln(os.Stderr, "  route      Recommend mode/policy/model for orchestration goal")
@@ -301,6 +310,7 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --stream-json         Emit line-delimited JSON poll events before final result")
 	fmt.Fprintln(os.Stderr, "  --emit-handoff        Emit compact handoff JSON events on each poll (requires --stream-json)")
 	fmt.Fprintln(os.Stderr, "  --handoff-cursor-file PATH  Persist/reuse handoff delta offset in stream mode")
+	fmt.Fprintln(os.Stderr, "  --event-budget N      Token budget hint for compact handoff stream deltas")
 	fmt.Fprintln(os.Stderr, "  --verbose             Print poll details to stderr")
 }
 
@@ -319,6 +329,7 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "  --summary             Return bounded summary instead of full capture")
 	fmt.Fprintln(os.Stderr, "  --summary-style MODE  Summary style: terse|ops|debug (default: terse)")
 	fmt.Fprintln(os.Stderr, "  --token-budget N      Summary token budget (default: 320)")
+	fmt.Fprintln(os.Stderr, "  --semantic-delta      Return meaning-level delta against semantic cursor")
 	fmt.Fprintln(os.Stderr, "  --keep-noise          Keep Codex/MCP startup noise in pane capture")
 	fmt.Fprintln(os.Stderr, "  --strip-noise         Compatibility alias for default noise filtering")
 	fmt.Fprintln(os.Stderr, "  --lines N             Number of pane lines for raw capture (default: 200)")
@@ -342,8 +353,49 @@ func helpSessionPacket() {
 	fmt.Fprintln(os.Stderr, "  --token-budget N      Summary token budget (default: 320)")
 	fmt.Fprintln(os.Stderr, "  --summary-style MODE  Summary style: terse|ops|debug (default: ops)")
 	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Persist/reuse handoff delta offset")
+	fmt.Fprintln(os.Stderr, "  --fields CSV          Project output to selected JSON fields")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
+}
+
+func helpSessionSchema() {
+	fmt.Fprintln(os.Stderr, "lisa session schema — emit JSON schema contracts for session payloads")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session schema [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --command NAME        Optional command selector (e.g. 'session packet')")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSessionCheckpoint() {
+	fmt.Fprintln(os.Stderr, "lisa session checkpoint — save/resume orchestration state bundles")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session checkpoint [save|resume] [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --action MODE         save|resume (default: save)")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required for save)")
+	fmt.Fprintln(os.Stderr, "  --file PATH           Checkpoint file path (required)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --events N            Recent events to include in saved bundle")
+	fmt.Fprintln(os.Stderr, "  --lines N             Capture tail lines to include in bundle")
+	fmt.Fprintln(os.Stderr, "  --strategy MODE       Context-pack strategy: terse|balanced|full")
+	fmt.Fprintln(os.Stderr, "  --token-budget N      Context-pack token budget")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSessionDedupe() {
+	fmt.Fprintln(os.Stderr, "lisa session dedupe — prevent duplicate work via task-hash claims")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session dedupe [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --task-hash HASH      Task hash key (required)")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Claim hash for this session")
+	fmt.Fprintln(os.Stderr, "  --release             Release existing hash claim")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
 func helpSessionHandoff() {
@@ -378,6 +430,7 @@ func helpSessionContextPack() {
 	fmt.Fprintln(os.Stderr, "  --token-budget N      Approx token budget for pack body (default: 700)")
 	fmt.Fprintln(os.Stderr, "  --strategy MODE       Pack strategy: terse|balanced|full (default: balanced)")
 	fmt.Fprintln(os.Stderr, "  --from-handoff PATH   Build from handoff JSON payload (use '-' for stdin)")
+	fmt.Fprintln(os.Stderr, "  --redact CSV          Redaction rules: none|all|paths|emails|secrets|numbers|tokens")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
@@ -393,6 +446,8 @@ func helpSessionRoute() {
 	fmt.Fprintln(os.Stderr, "  --prompt TEXT         Optional prompt override")
 	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model override")
 	fmt.Fprintln(os.Stderr, "  --budget N            Optional token budget hint for runbook/capture")
+	fmt.Fprintln(os.Stderr, "  --topology CSV        Optional topology roles: planner,workers,reviewer")
+	fmt.Fprintln(os.Stderr, "  --cost-estimate       Include token/time cost estimate payload")
 	fmt.Fprintln(os.Stderr, "  --from-state PATH     Route using handoff/status JSON (use '-' for stdin)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --emit-runbook        Include executable runbook JSON steps")
@@ -434,6 +489,7 @@ func helpSessionGuard() {
 	fmt.Fprintln(os.Stderr, "  --shared-tmux         Validate safety assumptions for shared tmux environments")
 	fmt.Fprintln(os.Stderr, "  --enforce             Escalate medium/high risk findings to hard failure")
 	fmt.Fprintln(os.Stderr, "  --advice-only         Never exit non-zero; diagnostics only")
+	fmt.Fprintln(os.Stderr, "  --machine-policy MODE strict|warn|off exit policy (default: strict)")
 	fmt.Fprintln(os.Stderr, "  --command TEXT        Optional command string to risk-check")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
@@ -465,6 +521,7 @@ func helpSessionList() {
 	fmt.Fprintln(os.Stderr, "  --project-only        Only show sessions for current project")
 	fmt.Fprintln(os.Stderr, "  --active-only         Filter out sessions that resolve to not_found")
 	fmt.Fprintln(os.Stderr, "  --with-next-action    Include nextAction/status/sessionState per session")
+	fmt.Fprintln(os.Stderr, "  --priority            Include + sort by priority score")
 	fmt.Fprintln(os.Stderr, "  --stale               Include stale metadata-only session counts/list")
 	fmt.Fprintln(os.Stderr, "  --prune-preview       Include safe stale-session prune commands (requires --stale)")
 	fmt.Fprintln(os.Stderr, "  --delta-json          Emit added/removed/changed since cursor snapshot")
@@ -502,6 +559,7 @@ func helpSessionSmoke() {
 	fmt.Fprintln(os.Stderr, "  --prompt-style STYLE  Nested hint probe: none|dot-slash|spawn|nested|neutral")
 	fmt.Fprintln(os.Stderr, "  --matrix-file PATH    Prompt matrix file: mode|prompt (mode=bypass|full-auto|any)")
 	fmt.Fprintln(os.Stderr, "  --chaos MODE          Fault mode: none|delay|drop-marker|fail-child|mixed")
+	fmt.Fprintln(os.Stderr, "  --chaos-report        Normalize chaos outcomes against expected-failure contracts")
 	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model pin for smoke spawn sessions")
 	fmt.Fprintln(os.Stderr, "  --poll-interval N     Seconds between monitor polls (default: 1)")
 	fmt.Fprintln(os.Stderr, "  --max-polls N         Maximum polls per nested monitor (default: 180)")

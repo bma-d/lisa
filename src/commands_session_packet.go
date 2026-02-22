@@ -17,6 +17,7 @@ func cmdSessionPacket(args []string) int {
 	tokenBudget := 320
 	summaryStyle := "ops"
 	cursorFile := ""
+	fieldsRaw := ""
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 
@@ -91,6 +92,12 @@ func cmdSessionPacket(args []string) int {
 			}
 			cursorFile = strings.TrimSpace(args[i+1])
 			i++
+		case "--fields":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --fields")
+			}
+			fieldsRaw = strings.TrimSpace(args[i+1])
+			i++
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -103,6 +110,17 @@ func cmdSessionPacket(args []string) int {
 
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
+	}
+	fields := []string{}
+	if fieldsRaw != "" {
+		var parseErr error
+		fields, parseErr = parseProjectionFields(fieldsRaw)
+		if parseErr != nil {
+			return commandError(jsonOut, "invalid_fields", parseErr.Error())
+		}
+		if !jsonOut {
+			return commandError(jsonOut, "fields_requires_json", "--fields requires --json")
+		}
 	}
 	var err error
 	summaryStyle, err = parseCaptureSummaryStyle(summaryStyle)
@@ -215,6 +233,9 @@ func cmdSessionPacket(args []string) int {
 		}
 		if status.SessionState == "not_found" {
 			payload["errorCode"] = "session_not_found"
+		}
+		if len(fields) > 0 {
+			payload = projectPayloadFields(payload, fields)
 		}
 		writeJSON(payload)
 		if status.SessionState == "not_found" {

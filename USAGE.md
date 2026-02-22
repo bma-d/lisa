@@ -46,7 +46,11 @@ lisa session status
 lisa session explain
 lisa session monitor
 lisa session capture
+lisa session schema
+lisa session checkpoint
+lisa session dedupe
 lisa session handoff
+lisa session packet
 lisa session context-pack
 lisa session route
 lisa session autopilot
@@ -274,7 +278,14 @@ lisa skills doctor --json
 Flags:
 
 - `--repo-root`: repo root containing `skills/` (default cwd)
+- `--deep`: include recursive content-hash drift checks
+- `--explain-drift`: include remediation guidance for drift findings
 - `--json`: JSON summary output
+
+Behavior notes:
+
+- `--deep` computes recursive content hashes for repo and installed skill trees; matching versions can still report `content drift`.
+- `--explain-drift` adds per-target remediation hints (`remediation`) in JSON and text output.
 
 ### `session name`
 
@@ -367,7 +378,13 @@ Flags:
 - `--model`
 - `--project-root`
 - `--rewrite`: include trigger-safe prompt rewrite suggestions
+- `--why`: include hint-span reasoning payload
 - `--json`
+
+Behavior notes:
+
+- `--why` adds a `why` payload with nested decision fields plus matched hint spans/context classification.
+- In text mode, `--why` prints `why: ...` after the primary detection line.
 
 ### `session send`
 
@@ -488,6 +505,8 @@ Flags:
 - `--json-min` (minimal JSON: `session`, `finalState`, `exitReason`, `polls`)
 - `--stream-json` (line-delimited JSON poll events before final result)
 - `--emit-handoff` (line-delimited compact handoff packets per poll; requires `--stream-json`)
+- `--handoff-cursor-file PATH`: persist/reuse handoff delta offset (`--emit-handoff` only)
+- `--event-budget N`: token budget hint for streamed handoff deltas (`--emit-handoff` only)
 - `--verbose`
 
 Output note:
@@ -497,7 +516,10 @@ Output note:
 - Timeout exits use `finalState=timeout` and `finalStatus=timeout`.
 - `--stream-json` emits one JSON object per poll (`type=poll`), then emits the standard final monitor JSON payload.
 - `--emit-handoff` adds `type=handoff` packets per poll for low-token multi-agent relay loops.
+- `--handoff-cursor-file` and/or `--event-budget` switch handoff stream output to incremental deltas (`deltaFrom`, `nextDeltaOffset`, `recent`), otherwise handoff packets are summary-only.
+- `--event-budget` maps to handoff delta event window size (approx `budget/32`, clamped to `1..24`, default delta window `8` when unset).
 - Final monitor JSON includes `nextOffset` when pane capture is available (ready for follow-up delta capture polling).
+- `--emit-handoff` requires `--stream-json`; `--handoff-cursor-file` and `--event-budget` both require `--emit-handoff`.
 
 When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
 `waiting_input` after transcript tail inspection confirms an assistant turn is
@@ -530,8 +552,11 @@ Flags:
 - `--delta-from VALUE`: delta start (`offset` integer, `@unix` timestamp, or RFC3339 timestamp; requires `--raw`)
 - `--cursor-file PATH`: persist/reuse raw capture offsets (`--raw` only)
 - `--markers CSV`: marker-only extraction mode (comma-separated markers)
+- `--markers-json`: include structured marker hits (`markerHits`) with offsets/line numbers (requires `--markers`)
 - `--summary`: return bounded summary instead of full capture body
+- `--summary-style MODE`: `terse|ops|debug` (default `terse`; requires `--summary`)
 - `--token-budget N`: summary budget in approximate tokens (default `320`)
+- `--semantic-delta`: return meaning-level delta (`semanticDelta`) against semantic cursor state (`--raw` only)
 - `--keep-noise`: keep Codex/MCP startup noise in pane capture
 - `--strip-noise`: compatibility alias to force default noise filtering
 - `--lines N`: pane lines for raw capture (default `200`)
@@ -553,6 +578,83 @@ Behavior:
 - `--cursor-file` auto-loads prior offset when `--delta-from` is omitted and writes back `nextOffset`.
 - `--json-min` keeps compact capture payloads (and includes `nextOffset` for delta polling).
 - `--summary` cannot be combined with `--markers`.
+- `--summary-style` defaults to `terse`; non-default styles require `--summary`.
+- `--markers-json` requires `--markers` and implies JSON output.
+- `--semantic-delta` requires `--raw` and cannot be combined with `--markers`.
+- `--semantic-delta` with `--cursor-file` reuses/persists semantic baseline; without `--cursor-file`, baseline is empty each call.
+- With `--semantic-delta`, text output prints semantic delta lines (and `--summary` summarizes semantic delta text).
+
+### `session schema`
+
+Emit JSON schema contracts for session payloads.
+
+```bash
+lisa session schema
+lisa session schema --command "session guard" --json
+```
+
+Flags:
+
+- `--command`: optional schema selector (accepts `session <command>` or `<command>`)
+- `--json`
+
+Behavior:
+
+- Without `--command`, text output lists available schema commands; JSON returns full command->schema catalog.
+- With `--command`, returns only the selected schema payload.
+- Unknown schema selectors fail with non-zero exit.
+
+### `session checkpoint`
+
+Save/resume orchestration state bundles.
+
+```bash
+lisa session checkpoint save --session <NAME> --file /tmp/lisa-checkpoint.json
+lisa session checkpoint resume --file /tmp/lisa-checkpoint.json --json
+```
+
+Flags:
+
+- `--action`: `save|resume` (default `save`)
+- `--session`: required for `save`; optional resume guard (must match checkpoint session when provided)
+- `--file` (required)
+- `--project-root`
+- `--events N` (default `8`)
+- `--lines N` (default `120`)
+- `--strategy`: `terse|balanced|full` (default `balanced`)
+- `--token-budget N` (default `700`)
+- `--json`
+
+Behavior:
+
+- `save` captures status/session state, recent events, context pack, and capture tail into the checkpoint file.
+- `save` fails when the session cannot be resolved.
+- `resume` loads and returns checkpoint metadata/payload; mismatched `--session` fails non-zero.
+
+### `session dedupe`
+
+Prevent duplicate work using task-hash claims.
+
+```bash
+lisa session dedupe --task-hash <HASH>
+lisa session dedupe --task-hash <HASH> --session <NAME> --json
+lisa session dedupe --task-hash <HASH> --release
+```
+
+Flags:
+
+- `--task-hash` (required)
+- `--session`: claim hash for this session/root
+- `--release`: release existing hash claim
+- `--project-root`
+- `--json`
+
+Behavior:
+
+- Stores claims in `/tmp/.lisa-<project_hash>-dedupe.json`; stale claims are auto-pruned.
+- Query mode (no `--session`, no `--release`) exits non-zero only when an active duplicate exists.
+- Claim mode (`--session`) exits non-zero if hash is already claimed by an active different session.
+- Release mode is idempotent and exits zero.
 
 ### `session handoff`
 
@@ -578,6 +680,38 @@ Delta handoff behavior:
 - `--delta-from` returns events after that offset and includes `nextDeltaOffset` for next incremental pull.
 - `--json-min` still includes the compact `recent` delta list when `--delta-from` is used.
 
+### `session packet`
+
+Build one-shot status + capture summary + handoff packet.
+
+```bash
+lisa session packet --session <NAME> --json
+lisa session packet --session <NAME> --cursor-file /tmp/lisa.packet.cursor --json-min
+lisa session packet --session <NAME> --fields session,nextAction,nextOffset --json
+```
+
+Flags:
+
+- `--session` (required)
+- `--project-root`
+- `--agent`: `auto|claude|codex`
+- `--mode`: `auto|interactive|exec`
+- `--lines N` (default `120`)
+- `--events N` (default `8`)
+- `--token-budget N` (default `320`)
+- `--summary-style`: `terse|ops|debug` (default `ops`)
+- `--cursor-file PATH`: persist/reuse handoff delta offset
+- `--fields CSV`: project JSON payload to selected fields (requires `--json`)
+- `--json`
+- `--json-min`
+
+Behavior notes:
+
+- `--json-min` emits compact packet fields plus `recent`.
+- `--cursor-file` switches handoff output to incremental delta fields: `deltaFrom`, `nextDeltaOffset`, `deltaCount`.
+- `--fields` supports dotted JSON path projection for low-token caller payloads.
+- Missing session still emits packet JSON with `errorCode=session_not_found` and exits non-zero.
+
 ### `session context-pack`
 
 Build token-budgeted context packet (`state + recent events + capture tail`).
@@ -597,8 +731,16 @@ Flags:
 - `--token-budget N` (default `700`)
 - `--strategy`: `terse|balanced|full` (default `balanced`; adjusts default events/lines/token-budget)
 - `--from-handoff PATH`: build from handoff JSON payload (`-` for stdin)
+- `--redact CSV`: redaction rules `none|all|paths|emails|secrets|numbers|tokens`
 - `--json`
 - `--json-min`
+
+Behavior notes:
+
+- `--from-handoff` builds from handoff JSON payload fields instead of live tmux state polling.
+- `--for` and `--from-handoff` must reference the same session when both are set.
+- `--redact` applies in-pack redaction before JSON emission; `none` cannot be combined with other rules.
+- Active redaction rules are returned in `redactRules` (`--json` and `--json-min`).
 
 ### `session route`
 
@@ -615,9 +757,20 @@ Flags:
 - `--prompt`: optional override
 - `--model`: optional codex model override
 - `--budget N`: optional token budget hint for runbook/capture
+- `--topology CSV`: optional roles `planner,workers,reviewer`
+- `--cost-estimate`: include token/time estimate payload
+- `--from-state PATH`: route using handoff/status JSON payload (`-` for stdin)
 - `--project-root`
 - `--emit-runbook`: include executable spawn/monitor/capture/handoff/cleanup plan JSON
 - `--json`
+
+Behavior notes:
+
+- `--topology` adds a topology graph payload (`roles`, `nodes`, `edges`) to the JSON response.
+- `--cost-estimate` adds `costEstimate` (`totalTokens`, `totalSeconds`, per-step estimates).
+- Cost estimate scales by goal/mode and topology roles; `--budget` also influences capture-step token estimate.
+- `--from-state` accepts handoff/status JSON (`session`, `sessionState`, `reason`, `nextAction`); parsed input is echoed as `fromState` in JSON output.
+- If `--prompt` is omitted, `--from-state` builds a continuation prompt from state fields; explicit `--prompt` overrides it.
 
 ### `session autopilot`
 
@@ -645,7 +798,14 @@ Flags:
 - `--summary-style`: `terse|ops|debug` (default `ops`; requires `--summary`)
 - `--token-budget N`: summary token budget when `--summary` is set (default `320`)
 - `--kill-after true|false`: kill session after handoff (default `false`)
+- `--resume-from PATH`: resume from previous autopilot JSON summary (`-` for stdin)
 - `--json`
+
+Behavior notes:
+
+- `--resume-from` loads a prior autopilot summary, resumes from the first failed/incomplete step, and preserves completed-step payloads.
+- Resume inherits prior `mode`, `goal` (when still default), `session`, and `killAfter` unless explicit flags override.
+- If the prior summary is already complete, autopilot returns a resume no-op.
 
 ### `session guard`
 
@@ -661,9 +821,16 @@ Flags:
 
 - `--shared-tmux` (required)
 - `--enforce`: escalate medium/high risk findings to hard failure (exit non-zero)
+- `--advice-only`: diagnostics only; always exit zero
+- `--machine-policy`: `strict|warn|off` (default `strict`) for risk exit policy
 - `--command`: optional command-risk check
 - `--project-root`
 - `--json`
+
+Behavior note:
+
+- `--machine-policy strict` returns non-zero when guard is unsafe (unless `--advice-only` is set).
+- `--machine-policy warn|off` keeps advisory output and exits zero.
 
 ### `session preflight`
 
@@ -681,12 +848,14 @@ Flags:
 - `--model` (optional codex model probe)
 - `--auto-model` (probe candidate models and select first supported)
 - `--auto-model-candidates CSV` (default `gpt-5.3-codex,gpt-5-codex`)
+- `--fast` (run reduced high-risk contract checks only)
 - `--json`
 
 Behavior:
 
 - Runs doctor-equivalent environment checks (`tmux`, `claude`, `codex`).
 - Validates critical parser/contract assumptions (mode aliases, monitor marker guard, capture delta parsing, nested codex hint routing).
+- `--fast` keeps environment checks but runs a reduced contract set focused on high-risk monitor/capture/nested-bypass guards.
 - Optional model probe: `--agent codex --model <NAME>` runs a real Codex model-availability check.
 - Optional auto-model probe: `--auto-model` runs candidate model probes and selects first supported.
 - Returns exit `0` when both environment and contract checks pass; else exit `1`.
@@ -705,8 +874,13 @@ Flags:
 
 - `--all-sockets`: discover active sessions across project sockets by replaying metadata roots
 - `--project-only`
+- `--active-only`: filter out sessions currently resolving to `not_found`
+- `--with-next-action`: include per-session `status`, `sessionState`, `nextAction` data
+- `--priority`: include priority fields and sort sessions descending by priority score (implies `--with-next-action`)
 - `--stale`: include metadata historical/stale counts (+ stale list in full JSON/text)
 - `--prune-preview`: include safe stale-session cleanup plan (requires `--stale`)
+- `--delta-json`: include `delta.added|removed|changed` since prior list cursor snapshot
+- `--cursor-file PATH`: cursor snapshot file for `--delta-json` (default `/tmp/.lisa-<project_hash>-list-delta.json`)
 - `--project-root`
 - `--json`
 - `--json-min`: minimal JSON (`sessions`, `count`)
@@ -716,6 +890,10 @@ Behavior note:
 
 - Default `session list` is current-socket scoped.
 - `--all-sockets` expands discovery across metadata-known project roots and includes sessions currently active on those roots.
+- `--delta-json` implies JSON output.
+- `--delta-json` cannot be combined with `--stale`.
+- `--active-only` cannot be combined with `--stale`.
+- `--cursor-file` requires `--delta-json` and is written on each `--delta-json` run.
 
 ### `session tree`
 
@@ -752,6 +930,7 @@ Deterministic nested Lisa smoke test (`L1 -> ... -> LN`) with marker assertions.
 lisa session smoke --levels 3
 lisa session smoke --levels 4 --chaos mixed --json
 lisa session smoke --levels 4 --json
+lisa session smoke --levels 2 --chaos drop-marker --chaos-report --report-min --json
 ```
 
 Flags:
@@ -761,6 +940,7 @@ Flags:
 - `--prompt-style STYLE` (`none|dot-slash|spawn|nested|neutral`, default `none`)
 - `--matrix-file PATH`: prompt regression matrix (`mode|prompt`, mode = `bypass|full-auto|any`)
 - `--chaos MODE`: fault mode (`none|delay|drop-marker|fail-child|mixed`, default `none`)
+- `--chaos-report`: normalize chaos outcomes against expected-failure contracts
 - `--model NAME`: optional Codex model pin for smoke spawn sessions
 - `--poll-interval N` (default `1`)
 - `--max-polls N` (default `180`)
@@ -781,6 +961,8 @@ Behavior:
   - `drop-marker`: removes deepest-level done marker to force marker assertion failure
   - `fail-child`: exits one child session non-zero to force monitor failure
   - `mixed`: combines delay + deepest-level marker drop
+- `--chaos-report` adds `chaosResult` payload with expected/observed failure matching and can convert expected chaos failures to passing exit status when contracts match.
+- With `--report-min`, chaos payload still includes `chaosReport` and `chaosResult` when enabled.
 
 ### `session exists`
 
@@ -884,6 +1066,7 @@ JSON support:
 - `session monitor`
 - `session capture`
 - `session handoff`
+- `session packet`
 - `session context-pack`
 - `session route`
 - `session autopilot`

@@ -35,6 +35,8 @@ type sessionSmokeSummary struct {
 	WorkDir        string             `json:"workDir"`
 	KeepSessions   bool               `json:"keepSessions"`
 	ReportMin      bool               `json:"reportMin,omitempty"`
+	ChaosReport    bool               `json:"chaosReport,omitempty"`
+	ChaosResult    map[string]any     `json:"chaosResult,omitempty"`
 	Sessions       []string           `json:"sessions"`
 	Markers        []string           `json:"markers"`
 	MissingMarkers []string           `json:"missingMarkers,omitempty"`
@@ -65,6 +67,7 @@ func cmdSessionSmoke(args []string) int {
 	pollInterval := 1
 	keepSessions := false
 	reportMin := false
+	chaosReport := false
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -135,6 +138,8 @@ func cmdSessionSmoke(args []string) int {
 			keepSessions = true
 		case "--report-min":
 			reportMin = true
+		case "--chaos-report":
+			chaosReport = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -202,6 +207,7 @@ func cmdSessionSmoke(args []string) int {
 		WorkDir:      workDir,
 		KeepSessions: keepSessions,
 		ReportMin:    reportMin,
+		ChaosReport:  chaosReport,
 		Sessions:     sessions,
 		Markers:      markers,
 	}
@@ -307,6 +313,7 @@ func cmdSessionSmoke(args []string) int {
 		"--project-root", projectRoot,
 		"--poll-interval", strconv.Itoa(pollInterval),
 		"--max-polls", strconv.Itoa(maxPolls),
+		"--stop-on-waiting", "false",
 		"--expect", "terminal",
 		"--json",
 	)
@@ -360,6 +367,28 @@ func cmdSessionSmoke(args []string) int {
 	}
 
 	summary.OK = true
+	if summary.ChaosReport {
+		expectedFailure, expectedCodes := smokeChaosContract(summary.Chaos)
+		chaosResult := map[string]any{
+			"expectedFailure":   expectedFailure,
+			"expectedErrorCodes": expectedCodes,
+			"observedFailure":   false,
+			"observedErrorCode": "",
+			"matched":           !expectedFailure,
+		}
+		summary.ChaosResult = chaosResult
+		if expectedFailure {
+			summary.OK = false
+			summary.ErrorCode = "smoke_chaos_expected_failure_not_observed"
+			summary.Error = "chaos contract expected a failure but smoke completed"
+			if jsonOut {
+				writeSmokeSummaryJSON(summary, reportMin)
+				return 1
+			}
+			fmt.Fprintln(os.Stderr, summary.Error)
+			return 1
+		}
+	}
 	if jsonOut {
 		writeSmokeSummaryJSON(summary, reportMin)
 		return 0
@@ -376,6 +405,36 @@ func emitSmokeFailure(jsonOut bool, reportMin bool, summary *sessionSmokeSummary
 	summary.OK = false
 	summary.ErrorCode = errorCode
 	summary.Error = message
+	if summary.ChaosReport {
+		expectedFailure, expectedCodes := smokeChaosContract(summary.Chaos)
+		matched := false
+		if expectedFailure {
+			for _, code := range expectedCodes {
+				if code == errorCode {
+					matched = true
+					break
+				}
+			}
+		}
+		summary.ChaosResult = map[string]any{
+			"expectedFailure":   expectedFailure,
+			"expectedErrorCodes": expectedCodes,
+			"observedFailure":   true,
+			"observedErrorCode": errorCode,
+			"matched":           matched,
+		}
+		if matched {
+			summary.OK = true
+			summary.ErrorCode = ""
+			summary.Error = ""
+			if jsonOut {
+				writeSmokeSummaryJSON(*summary, reportMin)
+				return 0
+			}
+			fmt.Println("PASS: chaos contract matched expected failure")
+			return 0
+		}
+	}
 	if jsonOut {
 		writeSmokeSummaryJSON(*summary, reportMin)
 		return 1
@@ -397,6 +456,12 @@ func writeSmokeSummaryJSON(summary sessionSmokeSummary, reportMin bool) {
 		"model":       summary.Model,
 		"chaos":       summary.Chaos,
 		"projectRoot": summary.ProjectRoot,
+	}
+	if summary.ChaosReport {
+		payload["chaosReport"] = true
+	}
+	if summary.ChaosResult != nil {
+		payload["chaosResult"] = summary.ChaosResult
 	}
 	if summary.Monitor.FinalState != "" {
 		payload["finalState"] = summary.Monitor.FinalState
@@ -425,6 +490,19 @@ func writeSmokeSummaryJSON(summary sessionSmokeSummary, reportMin bool) {
 		}
 	}
 	writeJSON(payload)
+}
+
+func smokeChaosContract(mode string) (bool, []string) {
+	switch mode {
+	case "drop-marker":
+		return true, []string{"smoke_marker_assertion_failed"}
+	case "fail-child":
+		return true, []string{"smoke_monitor_failed", "smoke_unexpected_final_state"}
+	case "mixed":
+		return true, []string{"smoke_marker_assertion_failed", "smoke_monitor_failed"}
+	default:
+		return false, []string{}
+	}
 }
 
 func cleanupSmokeSessions(binPath, projectRoot string, sessions []string) []string {

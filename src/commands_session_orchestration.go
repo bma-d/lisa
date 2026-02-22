@@ -286,6 +286,7 @@ func cmdSessionContextPack(args []string) int {
 	tokenBudget := 700
 	strategy := "balanced"
 	fromHandoff := ""
+	redactRaw := ""
 	eventsSet := false
 	linesSet := false
 	tokenBudgetSet := false
@@ -366,6 +367,12 @@ func cmdSessionContextPack(args []string) int {
 			}
 			fromHandoff = strings.TrimSpace(args[i+1])
 			i++
+		case "--redact":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --redact")
+			}
+			redactRaw = strings.TrimSpace(args[i+1])
+			i++
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -404,6 +411,10 @@ func cmdSessionContextPack(args []string) int {
 	}
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--for is required")
+	}
+	redactRules, err := parseRedactionRules(redactRaw)
+	if err != nil {
+		return commandError(jsonOut, "invalid_redact_rules", err.Error())
 	}
 
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
@@ -474,6 +485,7 @@ func cmdSessionContextPack(args []string) int {
 
 	packRaw := buildContextPackRaw(strategyConfig.Name, session, status, recent, captureTail)
 	pack, truncated := truncateToTokenBudget(packRaw, tokenBudget)
+	pack = applyRedactionRules(pack, redactRules)
 
 	if jsonOut {
 		payload := map[string]any{
@@ -495,6 +507,11 @@ func cmdSessionContextPack(args []string) int {
 			if fromHandoff != "" {
 				payload["fromHandoff"] = fromHandoff
 			}
+			if len(redactRules) > 0 {
+				payload["redactRules"] = redactRules
+			}
+		} else if len(redactRules) > 0 {
+			payload["redactRules"] = redactRules
 		}
 		if status.SessionState == "not_found" {
 			payload["errorCode"] = "session_not_found"
@@ -521,6 +538,8 @@ func cmdSessionRoute(args []string) int {
 	model := ""
 	budget := 0
 	emitRunbook := false
+	topologyRaw := ""
+	costEstimate := false
 	fromState := ""
 	jsonOut := hasJSONFlag(args)
 
@@ -570,6 +589,14 @@ func cmdSessionRoute(args []string) int {
 			i++
 		case "--emit-runbook":
 			emitRunbook = true
+		case "--topology":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --topology")
+			}
+			topologyRaw = strings.TrimSpace(args[i+1])
+			i++
+		case "--cost-estimate":
+			costEstimate = true
 		case "--from-state":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --from-state")
@@ -595,6 +622,10 @@ func cmdSessionRoute(args []string) int {
 	projectRoot = canonicalProjectRoot(projectRoot)
 
 	mode, nestedPolicy, nestingIntent, defaultPrompt, defaultModel := sessionRouteDefaults(goal)
+	topologyRoles, err := parseTopologyRoles(topologyRaw)
+	if err != nil {
+		return commandError(jsonOut, "invalid_topology", err.Error())
+	}
 	var parsedFromState *routeStateInput
 	if fromState != "" {
 		parsedFromState, err = loadRouteStateInput(fromState)
@@ -645,6 +676,9 @@ func cmdSessionRoute(args []string) int {
 	if budget > 0 {
 		rationale = append(rationale, fmt.Sprintf("budget=%d", budget))
 	}
+	if len(topologyRoles) > 0 {
+		rationale = append(rationale, "topology="+strings.Join(topologyRoles, ","))
+	}
 	monitorHint := "session monitor --expect terminal --json"
 	if mode == "interactive" {
 		monitorHint = "session monitor --stop-on-waiting true --json"
@@ -673,6 +707,12 @@ func cmdSessionRoute(args []string) int {
 	if emitRunbook {
 		payload["runbook"] = buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model, budget)
 	}
+	if len(topologyRoles) > 0 {
+		payload["topology"] = buildTopologyGraph(topologyRoles)
+	}
+	if costEstimate {
+		payload["costEstimate"] = estimateRouteCost(goal, mode, budget, topologyRoles)
+	}
 	if jsonOut {
 		writeJSON(payload)
 		return 0
@@ -685,6 +725,7 @@ func cmdSessionGuard(args []string) int {
 	sharedTmux := false
 	enforce := false
 	adviceOnly := false
+	machinePolicy := "strict"
 	commandText := ""
 	projectRoot := canonicalProjectRoot(getPWD())
 	jsonOut := hasJSONFlag(args)
@@ -699,6 +740,12 @@ func cmdSessionGuard(args []string) int {
 			enforce = true
 		case "--advice-only":
 			adviceOnly = true
+		case "--machine-policy":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --machine-policy")
+			}
+			machinePolicy = strings.ToLower(strings.TrimSpace(args[i+1]))
+			i++
 		case "--command":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --command")
@@ -720,6 +767,11 @@ func cmdSessionGuard(args []string) int {
 
 	if !sharedTmux {
 		return commandError(jsonOut, "missing_required_flag", "--shared-tmux is required")
+	}
+	switch machinePolicy {
+	case "strict", "warn", "off":
+	default:
+		return commandErrorf(jsonOut, "invalid_machine_policy", "invalid --machine-policy: %s (expected strict|warn|off)", machinePolicy)
 	}
 
 	defaultSessions := []string{}
@@ -796,6 +848,7 @@ func cmdSessionGuard(args []string) int {
 			"commandRisk":         commandRisk,
 			"enforce":             enforce,
 			"adviceOnly":          adviceOnly,
+			"machinePolicy":       machinePolicy,
 			"safe":                safe,
 			"warnings":            warnings,
 		}
@@ -805,7 +858,7 @@ func cmdSessionGuard(args []string) int {
 		if len(remediation) > 0 {
 			payload["remediation"] = remediation
 		}
-		if !safe && !adviceOnly {
+		if !safe && !adviceOnly && machinePolicy == "strict" {
 			if enforce {
 				payload["errorCode"] = "shared_tmux_guard_enforced"
 			} else {
@@ -816,10 +869,13 @@ func cmdSessionGuard(args []string) int {
 		if adviceOnly {
 			return 0
 		}
+		if machinePolicy == "warn" || machinePolicy == "off" {
+			return 0
+		}
 		return boolExit(safe)
 	}
 
-	fmt.Printf("safe=%t enforce=%t advice_only=%t default_sessions=%d command_risk=%s\n", safe, enforce, adviceOnly, len(defaultSessions), commandRisk)
+	fmt.Printf("safe=%t enforce=%t advice_only=%t machine_policy=%s default_sessions=%d command_risk=%s\n", safe, enforce, adviceOnly, machinePolicy, len(defaultSessions), commandRisk)
 	for _, warning := range warnings {
 		fmt.Printf("- %s\n", warning)
 	}
@@ -827,6 +883,9 @@ func cmdSessionGuard(args []string) int {
 		fmt.Printf("- remediation: %s\n", line)
 	}
 	if adviceOnly {
+		return 0
+	}
+	if machinePolicy == "warn" || machinePolicy == "off" {
 		return 0
 	}
 	return boolExit(safe)
@@ -1038,6 +1097,12 @@ func cmdSessionAutopilot(args []string) int {
 		resumePayload, err = loadAutopilotSummaryInput(resumeFrom)
 		if err != nil {
 			return commandErrorf(jsonOut, "invalid_resume_from", "failed to load --resume-from: %v", err)
+		}
+		if strings.TrimSpace(modeOverride) == "" && strings.TrimSpace(resumePayload.Mode) != "" {
+			mode = strings.TrimSpace(resumePayload.Mode)
+		}
+		if strings.TrimSpace(goal) == "analysis" && strings.TrimSpace(resumePayload.Goal) != "" {
+			goal = strings.TrimSpace(resumePayload.Goal)
 		}
 		if session == "" {
 			session = strings.TrimSpace(resumePayload.Session)

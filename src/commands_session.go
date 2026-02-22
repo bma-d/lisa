@@ -45,6 +45,12 @@ func cmdSession(args []string) int {
 		return cmdSessionCapture(args[1:])
 	case "packet":
 		return cmdSessionPacket(args[1:])
+	case "schema":
+		return cmdSessionSchema(args[1:])
+	case "checkpoint":
+		return cmdSessionCheckpoint(args[1:])
+	case "dedupe":
+		return cmdSessionDedupe(args[1:])
 	case "handoff":
 		return cmdSessionHandoff(args[1:])
 	case "context-pack":

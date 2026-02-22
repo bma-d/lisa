@@ -23,6 +23,8 @@ type sessionListItem struct {
 	Status       string `json:"status,omitempty"`
 	SessionState string `json:"sessionState,omitempty"`
 	NextAction   string `json:"nextAction,omitempty"`
+	PriorityScore int   `json:"priorityScore,omitempty"`
+	PriorityLabel string `json:"priorityLabel,omitempty"`
 	ProjectRoot  string `json:"projectRoot,omitempty"`
 }
 
@@ -36,6 +38,7 @@ func cmdSessionList(args []string) int {
 	allSockets := false
 	activeOnly := false
 	withNextAction := false
+	priority := false
 	stale := false
 	prunePreview := false
 	deltaJSON := false
@@ -55,6 +58,9 @@ func cmdSessionList(args []string) int {
 		case "--active-only":
 			activeOnly = true
 		case "--with-next-action":
+			withNextAction = true
+		case "--priority":
+			priority = true
 			withNextAction = true
 		case "--stale":
 			stale = true
@@ -118,7 +124,7 @@ func cmdSessionList(args []string) int {
 		return commandErrorf(jsonOut, "session_list_failed", "failed to list sessions: %v", err)
 	}
 	items := []sessionListItem{}
-	if withNextAction || activeOnly {
+	if withNextAction || activeOnly || priority {
 		filtered := make([]string, 0, len(list))
 		items = make([]sessionListItem, 0, len(list))
 		for _, session := range list {
@@ -145,16 +151,27 @@ func cmdSessionList(args []string) int {
 			}
 			filtered = append(filtered, session)
 			if withNextAction {
+				priorityScore, priorityLabel := computeSessionPriority(status)
 				items = append(items, sessionListItem{
 					Session:      session,
 					Status:       status.Status,
 					SessionState: status.SessionState,
 					NextAction:   nextActionForState(status.SessionState),
+					PriorityScore: priorityScore,
+					PriorityLabel: priorityLabel,
 					ProjectRoot:  resolvedRoot,
 				})
 			}
 		}
 		list = filtered
+		if priority {
+			sortSessionListByPriority(items)
+			sorted := make([]string, 0, len(items))
+			for _, item := range items {
+				sorted = append(sorted, item.Session)
+			}
+			list = sorted
+		}
 	}
 	staleSessions := []string{}
 	staleInfos := []staleSessionInfo{}
@@ -249,6 +266,7 @@ func cmdSessionList(args []string) int {
 			payload["allSockets"] = allSockets
 			payload["activeOnly"] = activeOnly
 			payload["withNextAction"] = withNextAction
+			payload["priority"] = priority
 			payload["projectRoot"] = projectRoot
 		}
 		writeJSON(payload)
@@ -261,7 +279,11 @@ func cmdSessionList(args []string) int {
 	if !stale {
 		if withNextAction {
 			for _, item := range items {
-				fmt.Printf("%s,%s,%s,%s\n", item.Session, item.Status, item.SessionState, item.NextAction)
+				if priority {
+					fmt.Printf("%s,%s,%s,%s,%d,%s\n", item.Session, item.Status, item.SessionState, item.NextAction, item.PriorityScore, item.PriorityLabel)
+				} else {
+					fmt.Printf("%s,%s,%s,%s\n", item.Session, item.Status, item.SessionState, item.NextAction)
+				}
 			}
 		} else {
 			fmt.Println(strings.Join(list, "\n"))
@@ -434,6 +456,8 @@ func sessionListItemsEqual(a, b sessionListItem) bool {
 		a.Status == b.Status &&
 		a.SessionState == b.SessionState &&
 		a.NextAction == b.NextAction &&
+		a.PriorityScore == b.PriorityScore &&
+		a.PriorityLabel == b.PriorityLabel &&
 		a.ProjectRoot == b.ProjectRoot
 }
 

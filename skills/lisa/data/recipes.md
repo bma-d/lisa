@@ -380,4 +380,47 @@ $LISA_BIN session route --goal exec --project-root . \
 ```bash
 $LISA_BIN session smoke --project-root . --levels 4 --chaos delay --json
 $LISA_BIN session smoke --project-root . --levels 4 --chaos drop-marker --report-min --json
+# expected-failure normalization contract
+$LISA_BIN session smoke --project-root . --levels 2 --chaos drop-marker --chaos-report --report-min --json
+```
+
+## LLM-Efficient Extras
+
+```bash
+# payload schema contract for parser generation
+$LISA_BIN session schema --command packet --json
+
+# bounded stream handoff deltas during monitor loops
+$LISA_BIN session monitor --session "$S" --project-root . \
+  --stream-json --emit-handoff --event-budget 64 --json-min
+
+# projected packet for low-token relay
+$LISA_BIN session packet --session "$S" --project-root . \
+  --fields session,nextAction,nextOffset --json
+
+# semantic delta capture with persisted baseline
+$LISA_BIN session capture --session "$S" --project-root . \
+  --raw --cursor-file /tmp/lisa.capture.cursor --semantic-delta --json
+
+# checkpoint save/resume bundle
+$LISA_BIN session checkpoint save --session "$S" --project-root . \
+  --file /tmp/lisa.checkpoint.json --json
+$LISA_BIN session checkpoint resume --file /tmp/lisa.checkpoint.json --json
+
+# dedupe claim before spawning parallel workers
+$LISA_BIN session dedupe --task-hash task-abc123 --session "$S" --project-root . --json
+
+# redact sensitive payloads before cross-agent handoff
+$LISA_BIN session context-pack --for "$S" --project-root . \
+  --strategy balanced --redact all --json-min
+
+# topology + cost plan
+$LISA_BIN session route --goal nested --project-root . \
+  --topology planner,workers,reviewer --cost-estimate --emit-runbook --json
+
+# deterministic CI guard behavior
+$LISA_BIN session guard --shared-tmux --machine-policy warn --json
+
+# triage queue ordering
+$LISA_BIN session list --project-root . --priority --json-min
 ```

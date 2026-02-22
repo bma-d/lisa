@@ -122,6 +122,7 @@ var commandCapabilities = []commandCapability{
 			"--stream-json",
 			"--emit-handoff",
 			"--handoff-cursor-file",
+			"--event-budget",
 			"--verbose",
 		},
 	},
@@ -139,6 +140,7 @@ var commandCapabilities = []commandCapability{
 			"--summary",
 			"--summary-style",
 			"--token-budget",
+			"--semantic-delta",
 			"--keep-noise",
 			"--strip-noise",
 			"--json",
@@ -147,7 +149,19 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session packet",
-		Flags: []string{"--session", "--project-root", "--agent", "--mode", "--lines", "--events", "--token-budget", "--summary-style", "--cursor-file", "--json", "--json-min"},
+		Flags: []string{"--session", "--project-root", "--agent", "--mode", "--lines", "--events", "--token-budget", "--summary-style", "--cursor-file", "--fields", "--json", "--json-min"},
+	},
+	{
+		Name:  "session schema",
+		Flags: []string{"--command", "--json"},
+	},
+	{
+		Name:  "session checkpoint",
+		Flags: []string{"--action", "--session", "--file", "--project-root", "--events", "--lines", "--strategy", "--token-budget", "--json"},
+	},
+	{
+		Name:  "session dedupe",
+		Flags: []string{"--task-hash", "--session", "--release", "--project-root", "--json"},
 	},
 	{
 		Name:  "session handoff",
@@ -155,11 +169,11 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session context-pack",
-		Flags: []string{"--for", "--session", "--project-root", "--agent", "--mode", "--events", "--lines", "--token-budget", "--strategy", "--from-handoff", "--json", "--json-min"},
+		Flags: []string{"--for", "--session", "--project-root", "--agent", "--mode", "--events", "--lines", "--token-budget", "--strategy", "--from-handoff", "--redact", "--json", "--json-min"},
 	},
 	{
 		Name:  "session route",
-		Flags: []string{"--goal", "--agent", "--prompt", "--model", "--budget", "--from-state", "--project-root", "--emit-runbook", "--json"},
+		Flags: []string{"--goal", "--agent", "--prompt", "--model", "--budget", "--topology", "--cost-estimate", "--from-state", "--project-root", "--emit-runbook", "--json"},
 	},
 	{
 		Name:  "session autopilot",
@@ -167,7 +181,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session guard",
-		Flags: []string{"--shared-tmux", "--enforce", "--advice-only", "--command", "--project-root", "--json"},
+		Flags: []string{"--shared-tmux", "--enforce", "--advice-only", "--machine-policy", "--command", "--project-root", "--json"},
 	},
 	{
 		Name:  "session tree",
@@ -175,7 +189,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session smoke",
-		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--chaos", "--model", "--poll-interval", "--max-polls", "--keep-sessions", "--report-min", "--json"},
+		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--chaos", "--chaos-report", "--model", "--poll-interval", "--max-polls", "--keep-sessions", "--report-min", "--json"},
 	},
 	{
 		Name:  "session preflight",
@@ -183,7 +197,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session list",
-		Flags: []string{"--all-sockets", "--project-only", "--active-only", "--with-next-action", "--stale", "--prune-preview", "--delta-json", "--cursor-file", "--project-root", "--json", "--json-min"},
+		Flags: []string{"--all-sockets", "--project-only", "--active-only", "--with-next-action", "--priority", "--stale", "--prune-preview", "--delta-json", "--cursor-file", "--project-root", "--json", "--json-min"},
 	},
 	{
 		Name:  "session exists",

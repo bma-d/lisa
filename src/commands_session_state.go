@@ -240,8 +240,11 @@ func writeMonitorStreamHandoff(status sessionStatus, poll int, jsonMin bool) {
 	writeJSON(payload)
 }
 
-func writeMonitorStreamHandoffDelta(status sessionStatus, poll int, jsonMin bool, projectRoot string, deltaFrom int) (int, error) {
-	items, _, nextDeltaOffset, err := readSessionHandoffDelta(projectRoot, status.Session, deltaFrom, 8)
+func writeMonitorStreamHandoffDelta(status sessionStatus, poll int, jsonMin bool, projectRoot string, deltaFrom int, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	items, _, nextDeltaOffset, err := readSessionHandoffDelta(projectRoot, status.Session, deltaFrom, limit)
 	if err != nil {
 		return deltaFrom, err
 	}
@@ -445,6 +448,7 @@ func cmdSessionMonitor(args []string) int {
 	streamJSON := false
 	emitHandoff := false
 	handoffCursorFile := ""
+	eventBudget := 0
 	verbose := false
 
 	for i := 0; i < len(args); i++ {
@@ -566,6 +570,16 @@ func cmdSessionMonitor(args []string) int {
 			}
 			handoffCursorFile = strings.TrimSpace(args[i+1])
 			i++
+		case "--event-budget":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --event-budget")
+			}
+			n, parseErr := parsePositiveIntFlag(args[i+1], "--event-budget")
+			if parseErr != nil {
+				return commandError(jsonOut, "invalid_event_budget", parseErr.Error())
+			}
+			eventBudget = n
+			i++
 		case "--verbose":
 			verbose = true
 		default:
@@ -591,6 +605,9 @@ func cmdSessionMonitor(args []string) int {
 	}
 	if emitHandoff && !streamJSON {
 		return commandError(jsonOut, "emit_handoff_requires_stream_json", "--emit-handoff requires --stream-json")
+	}
+	if eventBudget > 0 && !emitHandoff {
+		return commandError(jsonOut, "event_budget_requires_emit_handoff", "--event-budget requires --emit-handoff")
 	}
 	if handoffCursorFile != "" && !emitHandoff {
 		return commandError(jsonOut, "handoff_cursor_requires_emit_handoff", "--handoff-cursor-file requires --emit-handoff")
@@ -621,6 +638,7 @@ func cmdSessionMonitor(args []string) int {
 		}
 		handoffDeltaOffset = offset
 	}
+	handoffEventLimit := monitorEventLimitFromBudget(eventBudget)
 
 	last := sessionStatus{}
 	degradedPolls := 0
@@ -642,14 +660,16 @@ func cmdSessionMonitor(args []string) int {
 		if streamJSON {
 			writeMonitorStreamPoll(status, poll, jsonMin)
 			if emitHandoff {
-				if handoffCursorFile != "" {
-					nextOffset, streamErr := writeMonitorStreamHandoffDelta(status, poll, jsonMin, projectRoot, handoffDeltaOffset)
+				if handoffCursorFile != "" || eventBudget > 0 {
+					nextOffset, streamErr := writeMonitorStreamHandoffDelta(status, poll, jsonMin, projectRoot, handoffDeltaOffset, handoffEventLimit)
 					if streamErr != nil {
 						return commandErrorf(jsonOut, "handoff_stream_failed", "failed emitting handoff delta: %v", streamErr)
 					}
 					handoffDeltaOffset = nextOffset
-					if writeErr := writeCursorOffset(handoffCursorFile, handoffDeltaOffset); writeErr != nil {
-						return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --handoff-cursor-file: %v", writeErr)
+					if handoffCursorFile != "" {
+						if writeErr := writeCursorOffset(handoffCursorFile, handoffDeltaOffset); writeErr != nil {
+							return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --handoff-cursor-file: %v", writeErr)
+						}
 					}
 				} else {
 					writeMonitorStreamHandoff(status, poll, jsonMin)
@@ -803,6 +823,20 @@ func cmdSessionMonitor(args []string) int {
 		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 	}
 	return 2
+}
+
+func monitorEventLimitFromBudget(eventBudget int) int {
+	if eventBudget <= 0 {
+		return 8
+	}
+	limit := eventBudget / 32
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 24 {
+		limit = 24
+	}
+	return limit
 }
 
 func computeSessionCaptureNextOffset(session string) int {
@@ -967,6 +1001,7 @@ func cmdSessionCapture(args []string) int {
 	cursorFile := ""
 	markersRaw := ""
 	markersJSON := false
+	semanticDelta := false
 	tokenBudget := 320
 	summaryStyle := "terse"
 	stripNoise := true
@@ -1023,6 +1058,9 @@ func cmdSessionCapture(args []string) int {
 		case "--markers-json":
 			markersJSON = true
 			jsonOut = true
+		case "--semantic-delta":
+			semanticDelta = true
+			jsonOut = true
 		case "--token-budget":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --token-budget")
@@ -1062,8 +1100,14 @@ func cmdSessionCapture(args []string) int {
 	if cursorFile != "" && !raw {
 		return commandError(jsonOut, "cursor_file_requires_raw_capture", "--cursor-file requires --raw")
 	}
+	if semanticDelta && !raw {
+		return commandError(jsonOut, "semantic_delta_requires_raw_capture", "--semantic-delta requires --raw")
+	}
 	if summary && len(markersRaw) > 0 {
 		return commandError(jsonOut, "summary_incompatible_with_markers", "--summary cannot be combined with --markers")
+	}
+	if semanticDelta && len(markersRaw) > 0 {
+		return commandError(jsonOut, "semantic_delta_incompatible_with_markers", "--semantic-delta cannot be combined with --markers")
 	}
 	if markersJSON && len(strings.TrimSpace(markersRaw)) == 0 {
 		return commandError(jsonOut, "markers_json_requires_markers", "--markers-json requires --markers")
@@ -1151,6 +1195,7 @@ func cmdSessionCapture(args []string) int {
 	if stripNoise {
 		capture = filterCaptureNoise(capture)
 	}
+	semanticSource := capture
 	if err := updateCaptureState(projectRoot, session, capture); err != nil {
 		fmt.Fprintf(os.Stderr, "observability warning: failed to update capture state: %v\n", err)
 	}
@@ -1182,8 +1227,32 @@ func cmdSessionCapture(args []string) int {
 	}
 	summaryText := ""
 	summaryTruncated := false
+	semanticLines := []string{}
+	semanticDeltaLines := []string{}
+	semanticDeltaText := ""
+	if semanticDelta {
+		semanticLines = extractSemanticLines(semanticSource)
+		baseline := []string{}
+		if cursorFile != "" {
+			baselinePath := semanticCursorPath(cursorFile)
+			loaded, loadErr := loadSemanticCursor(baselinePath)
+			if loadErr != nil {
+				return commandErrorf(jsonOut, "semantic_cursor_read_failed", "failed reading semantic cursor: %v", loadErr)
+			}
+			baseline = loaded
+			if saveErr := saveSemanticCursor(baselinePath, semanticLines); saveErr != nil {
+				return commandErrorf(jsonOut, "semantic_cursor_write_failed", "failed writing semantic cursor: %v", saveErr)
+			}
+		}
+		semanticDeltaLines = computeSemanticDelta(semanticLines, baseline)
+		semanticDeltaText = strings.Join(semanticDeltaLines, "\n")
+	}
 	if summary {
-		summaryText, summaryTruncated = summarizeCaptureTextByStyle(session, projectRoot, capture, tokenBudget, summaryStyle)
+		summarySource := capture
+		if semanticDelta {
+			summarySource = semanticDeltaText
+		}
+		summaryText, summaryTruncated = summarizeCaptureTextByStyle(session, projectRoot, summarySource, tokenBudget, summaryStyle)
 	}
 
 	if jsonOut {
@@ -1217,6 +1286,13 @@ func cmdSessionCapture(args []string) int {
 			}
 			payload["nextOffset"] = nextOffset
 		}
+		if semanticDelta {
+			payload["semanticDelta"] = semanticDeltaText
+			payload["semanticDeltaCount"] = len(semanticDeltaLines)
+			if !jsonMin {
+				payload["semanticLines"] = semanticLines
+			}
+		}
 		if cursorFile != "" && !jsonMin {
 			payload["cursorFile"] = cursorFile
 		}
@@ -1231,6 +1307,10 @@ func cmdSessionCapture(args []string) int {
 	}
 	if summary {
 		fmt.Print(summaryText)
+		return 0
+	}
+	if semanticDelta {
+		fmt.Print(semanticDeltaText)
 		return 0
 	}
 	fmt.Print(capture)

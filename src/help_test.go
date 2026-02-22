@@ -26,6 +26,9 @@ func TestHelpExitZero(t *testing.T) {
 		{"session monitor --help", []string{"session", "monitor", "--help"}},
 		{"session capture --help", []string{"session", "capture", "--help"}},
 		{"session context-pack --help", []string{"session", "context-pack", "--help"}},
+		{"session schema --help", []string{"session", "schema", "--help"}},
+		{"session checkpoint --help", []string{"session", "checkpoint", "--help"}},
+		{"session dedupe --help", []string{"session", "dedupe", "--help"}},
 		{"session route --help", []string{"session", "route", "--help"}},
 		{"session autopilot --help", []string{"session", "autopilot", "--help"}},
 		{"session smoke --help", []string{"session", "smoke", "--help"}},
@@ -112,17 +115,32 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session monitor",
 			[]string{"session", "monitor", "--help"},
-			[]string{"lisa session monitor", "--until-jsonpath", "--json"},
+			[]string{"lisa session monitor", "--until-jsonpath", "--event-budget", "--json"},
+		},
+		{
+			"session schema",
+			[]string{"session", "schema", "--help"},
+			[]string{"lisa session schema", "--command", "--json"},
+		},
+		{
+			"session checkpoint",
+			[]string{"session", "checkpoint", "--help"},
+			[]string{"lisa session checkpoint", "--file", "--session", "--json"},
+		},
+		{
+			"session dedupe",
+			[]string{"session", "dedupe", "--help"},
+			[]string{"lisa session dedupe", "--task-hash", "--session", "--json"},
 		},
 		{
 			"session context-pack",
 			[]string{"session", "context-pack", "--help"},
-			[]string{"lisa session context-pack", "--from-handoff", "--token-budget", "--json"},
+			[]string{"lisa session context-pack", "--from-handoff", "--redact", "--token-budget", "--json"},
 		},
 		{
 			"session route",
 			[]string{"session", "route", "--help"},
-			[]string{"lisa session route", "--budget", "--emit-runbook", "--json"},
+			[]string{"lisa session route", "--budget", "--topology", "--cost-estimate", "--emit-runbook", "--json"},
 		},
 		{
 			"session autopilot",
@@ -132,7 +150,7 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session smoke",
 			[]string{"session", "smoke", "--help"},
-			[]string{"lisa session smoke", "--levels", "--poll-interval", "--max-polls", "--json"},
+			[]string{"lisa session smoke", "--levels", "--chaos-report", "--poll-interval", "--max-polls", "--json"},
 		},
 		{
 			"session preflight",

@@ -107,7 +107,9 @@ func TestCommandCapabilitiesCommandSet(t *testing.T) {
 		"oauth list",
 		"oauth remove",
 		"session capture",
+		"session checkpoint",
 		"session context-pack",
+		"session dedupe",
 		"session detect-nested",
 		"session exists",
 		"session explain",
@@ -122,6 +124,7 @@ func TestCommandCapabilitiesCommandSet(t *testing.T) {
 		"session packet",
 		"session preflight",
 		"session route",
+		"session schema",
 		"session send",
 		"session snapshot",
 		"session smoke",
@@ -142,9 +145,17 @@ func TestCommandCapabilitiesCommandSet(t *testing.T) {
 
 func TestCommandCapabilitiesCriticalFlagContracts(t *testing.T) {
 	required := map[string][]string{
-		"session monitor":      {"--until-jsonpath"},
-		"session context-pack": {"--from-handoff"},
-		"session route":        {"--budget"},
+		"session monitor":      {"--until-jsonpath", "--event-budget"},
+		"session context-pack": {"--from-handoff", "--redact"},
+		"session route":        {"--budget", "--topology", "--cost-estimate"},
+		"session packet":       {"--fields"},
+		"session capture":      {"--semantic-delta"},
+		"session smoke":        {"--chaos-report"},
+		"session guard":        {"--machine-policy"},
+		"session list":         {"--priority"},
+		"session schema":       {"--command"},
+		"session checkpoint":   {"--file"},
+		"session dedupe":       {"--task-hash"},
 		"session autopilot":    {"--json"},
 	}
 
