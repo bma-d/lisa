@@ -39,6 +39,17 @@ type monitorStreamPollMin struct {
 	WaitEstimate int    `json:"waitEstimate"`
 }
 
+type monitorStreamHandoffMin struct {
+	Type         string `json:"type"`
+	Poll         int    `json:"poll"`
+	Session      string `json:"session"`
+	Status       string `json:"status"`
+	SessionState string `json:"sessionState"`
+	Reason       string `json:"reason"`
+	NextAction   string `json:"nextAction"`
+	NextOffset   int    `json:"nextOffset,omitempty"`
+}
+
 type sessionStatusMin struct {
 	Session      string `json:"session"`
 	Status       string `json:"status"`
@@ -186,6 +197,39 @@ func writeMonitorStreamPoll(status sessionStatus, poll int, jsonMin bool) {
 		"todosTotal":           status.TodosTotal,
 		"classificationReason": status.ClassificationReason,
 	})
+}
+
+func writeMonitorStreamHandoff(status sessionStatus, poll int, jsonMin bool) {
+	nextOffset := computeSessionCaptureNextOffset(status.Session)
+	nextAction := nextActionForState(status.SessionState)
+	if jsonMin {
+		minPayload := monitorStreamHandoffMin{
+			Type:         "handoff",
+			Poll:         poll,
+			Session:      status.Session,
+			Status:       normalizeMonitorFinalStatus(status.SessionState, status.Status),
+			SessionState: status.SessionState,
+			Reason:       status.ClassificationReason,
+			NextAction:   nextAction,
+			NextOffset:   nextOffset,
+		}
+		writeJSON(minPayload)
+		return
+	}
+	payload := map[string]any{
+		"type":         "handoff",
+		"poll":         poll,
+		"session":      status.Session,
+		"status":       normalizeMonitorFinalStatus(status.SessionState, status.Status),
+		"sessionState": status.SessionState,
+		"reason":       status.ClassificationReason,
+		"nextAction":   nextAction,
+		"summary":      fmt.Sprintf("state=%s reason=%s next=%s", status.SessionState, status.ClassificationReason, nextAction),
+	}
+	if nextOffset > 0 {
+		payload["nextOffset"] = nextOffset
+	}
+	writeJSON(payload)
 }
 
 func normalizeMonitorFinalStatus(finalState, finalStatus string) string {
@@ -359,6 +403,7 @@ func cmdSessionMonitor(args []string) int {
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 	streamJSON := false
+	emitHandoff := false
 	verbose := false
 
 	for i := 0; i < len(args); i++ {
@@ -465,6 +510,9 @@ func cmdSessionMonitor(args []string) int {
 		case "--stream-json":
 			streamJSON = true
 			jsonOut = true
+		case "--emit-handoff":
+			emitHandoff = true
+			jsonOut = true
 		case "--verbose":
 			verbose = true
 		default:
@@ -480,6 +528,9 @@ func cmdSessionMonitor(args []string) int {
 	}
 	if err := validateMonitorExpectationConfig(expect, untilMarker); err != nil {
 		return commandError(jsonOut, "expect_marker_requires_until_marker", err.Error())
+	}
+	if emitHandoff && !streamJSON {
+		return commandError(jsonOut, "emit_handoff_requires_stream_json", "--emit-handoff requires --stream-json")
 	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
@@ -512,6 +563,9 @@ func cmdSessionMonitor(args []string) int {
 		}
 		if streamJSON {
 			writeMonitorStreamPoll(status, poll, jsonMin)
+			if emitHandoff {
+				writeMonitorStreamHandoff(status, poll, jsonMin)
+			}
 		}
 
 		reason := ""
@@ -808,9 +862,11 @@ func cmdSessionCapture(args []string) int {
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 	raw := false
+	summary := false
 	deltaFrom := ""
 	cursorFile := ""
 	markersRaw := ""
+	tokenBudget := 320
 	stripNoise := true
 	projectRoot := getPWD()
 	projectRootExplicit := false
@@ -836,6 +892,8 @@ func cmdSessionCapture(args []string) int {
 			i++
 		case "--raw":
 			raw = true
+		case "--summary":
+			summary = true
 		case "--delta-from":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --delta-from")
@@ -853,6 +911,16 @@ func cmdSessionCapture(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --markers")
 			}
 			markersRaw = args[i+1]
+			i++
+		case "--token-budget":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --token-budget")
+			}
+			n, parseErr := parsePositiveIntFlag(args[i+1], "--token-budget")
+			if parseErr != nil {
+				return commandError(jsonOut, "invalid_token_budget", parseErr.Error())
+			}
+			tokenBudget = n
 			i++
 		case "--keep-noise":
 			stripNoise = false
@@ -882,6 +950,9 @@ func cmdSessionCapture(args []string) int {
 	}
 	if cursorFile != "" && !raw {
 		return commandError(jsonOut, "cursor_file_requires_raw_capture", "--cursor-file requires --raw")
+	}
+	if summary && len(markersRaw) > 0 {
+		return commandError(jsonOut, "summary_incompatible_with_markers", "--summary cannot be combined with --markers")
 	}
 	markers, err := parseCaptureMarkersFlag(markersRaw)
 	if err != nil {
@@ -916,6 +987,24 @@ func cmdSessionCapture(args []string) int {
 	if !raw && shouldUseTranscriptCaptureFn(session, transcriptProjectRoot) {
 		sessionID, messages, err := captureSessionTranscriptFn(session, transcriptProjectRoot)
 		if err == nil {
+			if summary {
+				transcriptText := formatTranscriptPlain(messages)
+				summaryText, truncated := summarizeCaptureText(transcriptText, tokenBudget)
+				if jsonOut {
+					payload := map[string]any{
+						"session":       session,
+						"claudeSession": sessionID,
+						"messageCount":  len(messages),
+						"summary":       summaryText,
+						"tokenBudget":   tokenBudget,
+						"truncated":     truncated,
+					}
+					writeJSON(payload)
+					return 0
+				}
+				fmt.Print(summaryText)
+				return 0
+			}
 			return writeTranscriptCapture(session, sessionID, messages, jsonOut, jsonMin)
 		}
 	}
@@ -964,9 +1053,22 @@ func cmdSessionCapture(args []string) int {
 	if len(markers) > 0 {
 		markerSummary = buildCaptureMarkerSummary(capture, markers)
 	}
+	summaryText := ""
+	summaryTruncated := false
+	if summary {
+		summaryText, summaryTruncated = summarizeCaptureText(capture, tokenBudget)
+	}
 
 	if jsonOut {
 		payload := map[string]any{"session": session, "capture": capture}
+		if summary {
+			payload = map[string]any{
+				"session":     session,
+				"summary":     summaryText,
+				"tokenBudget": tokenBudget,
+				"truncated":   summaryTruncated,
+			}
+		}
 		if len(markers) > 0 {
 			delete(payload, "capture")
 			payload["markers"] = markerSummary.Markers
@@ -996,8 +1098,41 @@ func cmdSessionCapture(args []string) int {
 		}
 		return 0
 	}
+	if summary {
+		fmt.Print(summaryText)
+		return 0
+	}
 	fmt.Print(capture)
 	return 0
+}
+
+func summarizeCaptureText(text string, tokenBudget int) (string, bool) {
+	lines := trimLines(text)
+	filtered := make([]string, 0, len(lines))
+	last := ""
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if line == last {
+			continue
+		}
+		if strings.HasPrefix(line, "__LISA_SESSION_START__") || strings.HasPrefix(line, "__LISA_SESSION_DONE__") {
+			continue
+		}
+		filtered = append(filtered, line)
+		last = line
+	}
+	if len(filtered) == 0 {
+		filtered = []string{"(no capture output)"}
+	}
+	window := filtered
+	if len(filtered) > 20 {
+		window = filtered[len(filtered)-20:]
+	}
+	body := strings.Join(window, "\n")
+	return truncateToTokenBudget(body, tokenBudget)
 }
 
 func updateCaptureState(projectRoot, session, capture string) error {

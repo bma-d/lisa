@@ -62,7 +62,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session detect-nested",
-		Flags: []string{"--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--agent-args", "--model", "--project-root", "--json"},
+		Flags: []string{"--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--agent-args", "--model", "--project-root", "--rewrite", "--json"},
 	},
 	{
 		Name:  "session send",
@@ -119,6 +119,7 @@ var commandCapabilities = []commandCapability{
 			"--json",
 			"--json-min",
 			"--stream-json",
+			"--emit-handoff",
 			"--verbose",
 		},
 	},
@@ -132,6 +133,8 @@ var commandCapabilities = []commandCapability{
 			"--delta-from",
 			"--cursor-file",
 			"--markers",
+			"--summary",
+			"--token-budget",
 			"--keep-noise",
 			"--strip-noise",
 			"--json",
@@ -140,15 +143,15 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session handoff",
-		Flags: []string{"--session", "--project-root", "--agent", "--mode", "--events", "--json", "--json-min"},
+		Flags: []string{"--session", "--project-root", "--agent", "--mode", "--events", "--delta-from", "--json", "--json-min"},
 	},
 	{
 		Name:  "session context-pack",
-		Flags: []string{"--for", "--session", "--project-root", "--agent", "--mode", "--events", "--lines", "--token-budget", "--json", "--json-min"},
+		Flags: []string{"--for", "--session", "--project-root", "--agent", "--mode", "--events", "--lines", "--token-budget", "--strategy", "--json", "--json-min"},
 	},
 	{
 		Name:  "session route",
-		Flags: []string{"--goal", "--agent", "--prompt", "--model", "--project-root", "--json"},
+		Flags: []string{"--goal", "--agent", "--prompt", "--model", "--project-root", "--emit-runbook", "--json"},
 	},
 	{
 		Name:  "session guard",
@@ -156,11 +159,11 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session tree",
-		Flags: []string{"--session", "--project-root", "--all-hashes", "--active-only", "--delta", "--flat", "--json", "--json-min"},
+		Flags: []string{"--session", "--project-root", "--all-hashes", "--active-only", "--delta", "--flat", "--with-state", "--json", "--json-min"},
 	},
 	{
 		Name:  "session smoke",
-		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--model", "--poll-interval", "--max-polls", "--keep-sessions", "--json"},
+		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--model", "--poll-interval", "--max-polls", "--keep-sessions", "--report-min", "--json"},
 	},
 	{
 		Name:  "session preflight",
@@ -168,7 +171,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session list",
-		Flags: []string{"--all-sockets", "--project-only", "--stale", "--project-root", "--json", "--json-min"},
+		Flags: []string{"--all-sockets", "--project-only", "--stale", "--prune-preview", "--project-root", "--json", "--json-min"},
 	},
 	{
 		Name:  "session exists",
@@ -192,7 +195,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "skills doctor",
-		Flags: []string{"--repo-root", "--json"},
+		Flags: []string{"--repo-root", "--deep", "--json"},
 	},
 	{
 		Name:  "skills install",

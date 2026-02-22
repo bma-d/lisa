@@ -13,6 +13,8 @@ type sessionTreeNode struct {
 	ParentSession string            `json:"parentSession,omitempty"`
 	Agent         string            `json:"agent,omitempty"`
 	Mode          string            `json:"mode,omitempty"`
+	Status        string            `json:"status,omitempty"`
+	SessionState  string            `json:"sessionState,omitempty"`
 	ProjectRoot   string            `json:"projectRoot,omitempty"`
 	CreatedAt     string            `json:"createdAt,omitempty"`
 	Children      []sessionTreeNode `json:"children,omitempty"`
@@ -25,6 +27,7 @@ type sessionTreeResult struct {
 	ActiveOnly  bool              `json:"activeOnly,omitempty"`
 	DeltaOnly   bool              `json:"delta,omitempty"`
 	Flat        bool              `json:"flat,omitempty"`
+	WithState   bool              `json:"withState,omitempty"`
 	NodeCount   int               `json:"nodeCount"`
 	Rows        []sessionTreeRow  `json:"rows,omitempty"`
 	Roots       []sessionTreeNode `json:"roots"`
@@ -36,6 +39,8 @@ type sessionTreeRow struct {
 	ParentSession string `json:"parentSession,omitempty"`
 	Agent         string `json:"agent,omitempty"`
 	Mode          string `json:"mode,omitempty"`
+	Status        string `json:"status,omitempty"`
+	SessionState  string `json:"sessionState,omitempty"`
 	ProjectRoot   string `json:"projectRoot,omitempty"`
 	CreatedAt     string `json:"createdAt,omitempty"`
 }
@@ -53,6 +58,7 @@ func cmdSessionTree(args []string) int {
 	activeOnly := false
 	delta := false
 	flat := false
+	withState := false
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 
@@ -80,6 +86,8 @@ func cmdSessionTree(args []string) int {
 			delta = true
 		case "--flat":
 			flat = true
+		case "--with-state":
+			withState = true
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -146,11 +154,16 @@ func cmdSessionTree(args []string) int {
 		ActiveOnly:  activeOnly,
 		DeltaOnly:   delta,
 		Flat:        flat,
+		WithState:   withState,
 		NodeCount:   len(nodesBySession),
 		Roots:       roots,
 	}
 	rows := flattenSessionTreeRows(roots)
-	if flat {
+	if withState {
+		rows = enrichSessionTreeRowsWithState(projectRoot, rows)
+		result.Roots = applyRowsToTreeRoots(result.Roots, rows)
+	}
+	if flat || withState {
 		result.Rows = rows
 	}
 	if delta {
@@ -170,7 +183,7 @@ func cmdSessionTree(args []string) int {
 				payload["added"] = flattenSessionTreeRowsMin(result.Delta.Added)
 				payload["removed"] = flattenSessionTreeRowsMin(result.Delta.Removed)
 				payload["deltaCount"] = result.Delta.Count
-			} else if flat {
+			} else if flat || withState {
 				payload["rows"] = flattenSessionTreeRowsMin(result.Rows)
 			} else {
 				payload["roots"] = minimizeSessionTreeRoots(result.Roots)
@@ -182,16 +195,33 @@ func cmdSessionTree(args []string) int {
 		return 0
 	}
 	if flat {
-		fmt.Println("session\tparentSession\tagent\tmode\tprojectRoot\tcreatedAt")
+		if withState {
+			fmt.Println("session\tparentSession\tagent\tmode\tstatus\tsessionState\tprojectRoot\tcreatedAt")
+		} else {
+			fmt.Println("session\tparentSession\tagent\tmode\tprojectRoot\tcreatedAt")
+		}
 		for _, row := range result.Rows {
-			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n",
-				row.Session,
-				row.ParentSession,
-				row.Agent,
-				row.Mode,
-				row.ProjectRoot,
-				row.CreatedAt,
-			)
+			if withState {
+				fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					row.Session,
+					row.ParentSession,
+					row.Agent,
+					row.Mode,
+					row.Status,
+					row.SessionState,
+					row.ProjectRoot,
+					row.CreatedAt,
+				)
+			} else {
+				fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n",
+					row.Session,
+					row.ParentSession,
+					row.Agent,
+					row.Mode,
+					row.ProjectRoot,
+					row.CreatedAt,
+				)
+			}
 		}
 		return 0
 	}
@@ -206,7 +236,7 @@ func cmdSessionTree(args []string) int {
 		return 0
 	}
 
-	for _, root := range roots {
+	for _, root := range result.Roots {
 		printSessionTreeNode(root, "")
 	}
 	return 0
@@ -288,6 +318,12 @@ func flattenSessionTreeRowsMin(rows []sessionTreeRow) []map[string]any {
 		if strings.TrimSpace(row.ParentSession) != "" {
 			item["parentSession"] = row.ParentSession
 		}
+		if strings.TrimSpace(row.Status) != "" {
+			item["status"] = row.Status
+		}
+		if strings.TrimSpace(row.SessionState) != "" {
+			item["sessionState"] = row.SessionState
+		}
 		out = append(out, item)
 	}
 	return out
@@ -307,6 +343,12 @@ func minimizeSessionTreeNode(node sessionTreeNode) map[string]any {
 	}
 	if strings.TrimSpace(node.ParentSession) != "" {
 		item["parentSession"] = node.ParentSession
+	}
+	if strings.TrimSpace(node.Status) != "" {
+		item["status"] = node.Status
+	}
+	if strings.TrimSpace(node.SessionState) != "" {
+		item["sessionState"] = node.SessionState
 	}
 	if len(node.Children) > 0 {
 		children := make([]map[string]any, 0, len(node.Children))
@@ -408,6 +450,8 @@ func flattenSessionTreeRows(roots []sessionTreeNode) []sessionTreeRow {
 			ParentSession: node.ParentSession,
 			Agent:         node.Agent,
 			Mode:          node.Mode,
+			Status:        node.Status,
+			SessionState:  node.SessionState,
 			ProjectRoot:   node.ProjectRoot,
 			CreatedAt:     node.CreatedAt,
 		})
@@ -419,4 +463,49 @@ func flattenSessionTreeRows(roots []sessionTreeNode) []sessionTreeRow {
 		walk(root)
 	}
 	return rows
+}
+
+func enrichSessionTreeRowsWithState(defaultProjectRoot string, rows []sessionTreeRow) []sessionTreeRow {
+	out := make([]sessionTreeRow, 0, len(rows))
+	for _, row := range rows {
+		updated := row
+		root := strings.TrimSpace(row.ProjectRoot)
+		if root == "" {
+			root = defaultProjectRoot
+		}
+		root = canonicalProjectRoot(root)
+		restoreRuntime := withProjectRuntimeEnv(root)
+		status, err := computeSessionStatusFn(row.Session, root, "auto", "auto", false, 0)
+		restoreRuntime()
+		if err == nil {
+			status = normalizeStatusForSessionStatusOutput(status)
+			updated.Status = status.Status
+			updated.SessionState = status.SessionState
+		}
+		out = append(out, updated)
+	}
+	return out
+}
+
+func applyRowsToTreeRoots(roots []sessionTreeNode, rows []sessionTreeRow) []sessionTreeNode {
+	statusBySession := make(map[string]sessionTreeRow, len(rows))
+	for _, row := range rows {
+		statusBySession[row.Session] = row
+	}
+	var walk func(node sessionTreeNode) sessionTreeNode
+	walk = func(node sessionTreeNode) sessionTreeNode {
+		if row, ok := statusBySession[node.Session]; ok {
+			node.Status = row.Status
+			node.SessionState = row.SessionState
+		}
+		for i := range node.Children {
+			node.Children[i] = walk(node.Children[i])
+		}
+		return node
+	}
+	out := make([]sessionTreeNode, 0, len(roots))
+	for _, root := range roots {
+		out = append(out, walk(root))
+	}
+	return out
 }

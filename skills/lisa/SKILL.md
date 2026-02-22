@@ -26,7 +26,7 @@ Axiom: minimum context, deterministic command contracts.
 test -x ./lisa || { echo "missing ./lisa"; exit 1; }
 LISA_BIN=./lisa
 ROOT=/path/to/project
-MODEL="${MODEL:-gpt-5-codex}"
+MODEL="${MODEL:-gpt-5.3-codex-spark}"
 
 # preflight
 $LISA_BIN session preflight --json
@@ -38,8 +38,9 @@ SESSION=$($LISA_BIN session spawn --agent codex --mode interactive --project-roo
 $LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --until-state waiting_input --json-min --stream-json
 $LISA_BIN session snapshot --session "$SESSION" --project-root "$ROOT" --json-min
 $LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --cursor-file /tmp/lisa.cursor --json-min
-$LISA_BIN session handoff --session "$SESSION" --project-root "$ROOT" --json-min
-$LISA_BIN session context-pack --for "$SESSION" --project-root "$ROOT" --token-budget 700 --json-min
+$LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --summary --token-budget 320 --json
+$LISA_BIN session handoff --session "$SESSION" --project-root "$ROOT" --delta-from 0 --json-min
+$LISA_BIN session context-pack --for "$SESSION" --project-root "$ROOT" --strategy balanced --json-min
 $LISA_BIN session kill --session "$SESSION" --project-root "$ROOT"
 ```
 
@@ -49,12 +50,20 @@ $LISA_BIN session kill --session "$SESSION" --project-root "$ROOT"
 $LISA_BIN session detect-nested --prompt "Use ./lisa for child orchestration." --json
 $LISA_BIN session detect-nested --prompt "Use lisa inside of lisa inside as well." --json
 # expected: reason=no_nested_hint (non-trigger phrase)
+$LISA_BIN session detect-nested --prompt "Use lisa inside of lisa inside as well." --rewrite --json
+# expected: rewrites[] provides trigger-safe prompt alternatives
+$LISA_BIN session detect-nested --prompt "Use ./LISA for child orchestration." --json
+# expected: case-insensitive match => reason=prompt_contains_dot_slash_lisa
 $LISA_BIN session spawn --agent codex --mode exec --project-root "$ROOT" \
   --prompt "Create nested lisa inside lisa inside lisa and report" \
   --dry-run --detect-nested --json
 $LISA_BIN session smoke --project-root "$ROOT" --levels 4 --prompt-style nested --model "$MODEL" --json
-$LISA_BIN session route --goal nested --project-root "$ROOT" --json
+$LISA_BIN session smoke --project-root "$ROOT" --levels 4 --report-min --json
+$LISA_BIN session route --goal nested --project-root "$ROOT" --emit-runbook --json
 ```
+
+Model note:
+- Prefer lowercase model ids (`gpt-5.3-codex-spark`); mixed-case aliases may fail model preflight.
 
 ## Router (JIT)
 

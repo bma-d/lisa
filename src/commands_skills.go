@@ -40,6 +40,8 @@ type skillsDoctorTarget struct {
 	Path            string   `json:"path"`
 	Exists          bool     `json:"exists"`
 	Version         string   `json:"version,omitempty"`
+	ContentHash     string   `json:"contentHash,omitempty"`
+	RepoContentHash string   `json:"repoContentHash,omitempty"`
 	Status          string   `json:"status"`
 	MissingCommands []string `json:"missingCommands,omitempty"`
 	Detail          string   `json:"detail,omitempty"`
@@ -47,6 +49,7 @@ type skillsDoctorTarget struct {
 
 type skillsDoctorSummary struct {
 	OK             bool                 `json:"ok"`
+	Deep           bool                 `json:"deep,omitempty"`
 	RepoRoot       string               `json:"repoRoot"`
 	RepoSkillPath  string               `json:"repoSkillPath"`
 	RepoVersion    string               `json:"repoVersion,omitempty"`
@@ -219,6 +222,7 @@ func cmdSkillsInstall(args []string) int {
 func cmdSkillsDoctor(args []string) int {
 	repoRoot := getPWD()
 	jsonOut := hasJSONFlag(args)
+	deep := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -230,6 +234,8 @@ func cmdSkillsDoctor(args []string) int {
 			}
 			repoRoot = args[i+1]
 			i++
+		case "--deep":
+			deep = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -247,6 +253,13 @@ func cmdSkillsDoctor(args []string) int {
 	}
 	requiredCommands := requiredSkillCommandNames()
 	capHash := capabilityContractHash()
+	repoContentHash := ""
+	if deep {
+		repoContentHash, err = hashDirectoryContents(repoSkillPath)
+		if err != nil {
+			return commandErrorf(jsonOut, "skills_doctor_repo_hash_failed", "failed hashing repo skill: %v", err)
+		}
+	}
 	targets := make([]skillsDoctorTarget, 0, 2)
 
 	for _, target := range []string{"codex", "claude"} {
@@ -280,6 +293,17 @@ func cmdSkillsDoctor(args []string) int {
 		}
 		info.Version = version
 		info.MissingCommands = detectMissingSkillCommands(filepath.Join(path, "data", "commands.md"), requiredCommands)
+		if deep {
+			info.RepoContentHash = repoContentHash
+			contentHash, hashErr := hashDirectoryContents(path)
+			if hashErr != nil {
+				info.Status = "error"
+				info.Detail = fmt.Sprintf("content hash failed: %v", hashErr)
+				targets = append(targets, info)
+				continue
+			}
+			info.ContentHash = contentHash
+		}
 		if version == repoVersion && len(info.MissingCommands) == 0 {
 			info.Status = "up_to_date"
 		} else {
@@ -294,6 +318,13 @@ func cmdSkillsDoctor(args []string) int {
 				info.Detail += "command contract drift"
 			}
 		}
+		if deep && info.Status == "up_to_date" && info.ContentHash != info.RepoContentHash {
+			info.Status = "outdated"
+			if info.Detail != "" {
+				info.Detail += "; "
+			}
+			info.Detail += "content drift"
+		}
 		targets = append(targets, info)
 	}
 
@@ -306,6 +337,7 @@ func cmdSkillsDoctor(args []string) int {
 	}
 	summary := skillsDoctorSummary{
 		OK:             ok,
+		Deep:           deep,
 		RepoRoot:       canonicalProjectRoot(repoRoot),
 		RepoSkillPath:  repoSkillPath,
 		RepoVersion:    repoVersion,
@@ -323,6 +355,9 @@ func cmdSkillsDoctor(args []string) int {
 	fmt.Printf("repo_version=%s capability_hash=%s ok=%t\n", summary.RepoVersion, summary.CapabilityHash, summary.OK)
 	for _, target := range summary.Targets {
 		fmt.Printf("- %s status=%s version=%s path=%s\n", target.Target, target.Status, target.Version, target.Path)
+		if deep {
+			fmt.Printf("  content_hash=%s repo_content_hash=%s\n", target.ContentHash, target.RepoContentHash)
+		}
 		if target.Detail != "" {
 			fmt.Printf("  detail: %s\n", target.Detail)
 		}
@@ -514,6 +549,56 @@ func detectMissingSkillCommands(commandsPath string, required []string) []string
 		}
 	}
 	return missing
+}
+
+func hashDirectoryContents(root string) (string, error) {
+	root = filepath.Clean(strings.TrimSpace(root))
+	if root == "" {
+		return "", fmt.Errorf("directory path is required")
+	}
+	hash := sha256.New()
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode()
+		if mode&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			_, _ = hash.Write([]byte("L|" + rel + "|" + target + "\n"))
+			return nil
+		}
+		if d.IsDir() {
+			_, _ = hash.Write([]byte("D|" + rel + "\n"))
+			return nil
+		}
+		_, _ = hash.Write([]byte("F|" + rel + "\n"))
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		if _, err := io.Copy(hash, file); err != nil {
+			return err
+		}
+		_, _ = hash.Write([]byte("\n"))
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil))[:16], nil
 }
 
 func pathExists(path string) bool {

@@ -16,13 +16,23 @@ Validated: 2026-02-21
 - Cursor-file polling path: `session capture --raw --cursor-file /tmp/lisa.cursor --json-min`.
 - State-gated polling path: `session monitor --until-state waiting_input|completed|crashed --json`.
 - `session monitor` final payload includes `nextOffset` when capture is available.
+- `session monitor --stream-json --emit-handoff` emits `type=handoff` packets per poll.
 - `session handoff --json-min` and `session context-pack --json-min` provide compact transfer payloads for multi-agent loops.
+- `session handoff --delta-from <N>` returns incremental `recent` events + `nextDeltaOffset`.
+- `session context-pack --strategy terse|balanced|full` applies deterministic default budgets.
 - Nested diagnostics path: `session spawn --dry-run --detect-nested --json` or `session detect-nested --json`.
+- `session detect-nested --rewrite` emits trigger-safe prompt rewrites.
 - Deterministic nested override: `--nested-policy auto|force|off` and `--nesting-intent auto|nested|neutral`.
+- Prompt-style smoke probes expose detection fields at `promptProbe.detection.*`.
 - Quote/doc mentions like `The string "./lisa" appears in docs only.` are treated as non-executable nested hints.
 - Codex model pinning: `--model <NAME>` on `session spawn` / `agent build-cmd`; verify support with `session preflight --agent codex --model <NAME> --json`.
+- Model ids are case-sensitive in practice (`gpt-5.3-codex-spark` succeeded; `GPT-5.3-Codex-Spark` failed preflight).
 - Model preflight probe can fail (`errorCode:"preflight_model_not_supported"`) for unknown aliases; treat this as capability signal, not parser failure.
 - `session preflight --auto-model --json` selects first supported candidate model (`gpt-5.3-codex`, then `gpt-5-codex` by default).
+- `session smoke --report-min --json` emits compact CI payloads.
+- `session list --stale --prune-preview` emits safe stale cleanup commands.
+- `session tree --with-state --json-min` emits rows with topology + status/sessionState.
+- `session capture --summary --token-budget N` returns bounded summary payloads.
 
 ## Observed Behaviors
 

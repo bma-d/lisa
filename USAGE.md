@@ -177,6 +177,7 @@ Flags:
 - `--from`: `codex|claude|path` (default `codex`)
 - `--path`: required when `--from path`
 - `--repo-root`: repo root containing `skills/` (default cwd)
+- `--deep`: include recursive content-hash drift checks
 - `--json`: JSON summary output
 
 ### `skills install`
@@ -287,7 +288,8 @@ Notes:
 - `--nesting-intent nested|neutral` explicitly overrides prompt heuristics.
 - For non-nested Codex `exec`, `--full-auto` sandbox can still block tmux socket creation for child Lisa sessions (`Operation not permitted`); use `--mode interactive` + `session send` or pass explicit bypass args.
 - If you pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'`, Lisa omits `--full-auto` automatically (Codex rejects combining both flags).
-- Use `--model GPT-5.3-Codex-Spark` (or another Codex model name) to inject `--model` without manual `--agent-args` quoting.
+- Use `--model gpt-5.3-codex-spark` (or another Codex model name) to inject `--model` without manual `--agent-args` quoting.
+- Model IDs are case-sensitive in practice; mixed-case aliases may fail preflight probes.
 - For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`) to avoid shell quoting collisions in inline nested commands.
 - Spawned panes receive `LISA_*` routing env (see Runtime Environment Variables) so nested Lisa commands preserve project/socket isolation.
 - `--dry-run` validates inputs and returns planned spawn payload (`session`, `command`, wrapped `startupCommand`, `socketPath`, injected env vars) without creating a session.
@@ -311,6 +313,7 @@ Flags:
 - `--agent-args`
 - `--model`
 - `--project-root`
+- `--rewrite`: include trigger-safe prompt rewrite suggestions
 - `--json`
 
 ### `session send`
@@ -430,6 +433,7 @@ Flags:
 - `--json`
 - `--json-min` (minimal JSON: `session`, `finalState`, `exitReason`, `polls`)
 - `--stream-json` (line-delimited JSON poll events before final result)
+- `--emit-handoff` (line-delimited compact handoff packets per poll; requires `--stream-json`)
 - `--verbose`
 
 Output note:
@@ -438,6 +442,7 @@ Output note:
 - `finalStatus` is normalized for terminal monitor states (`completed`, `crashed`, `stuck`, `not_found`) so it aligns with `finalState` in JSON/CSV output.
 - Timeout exits use `finalState=timeout` and `finalStatus=timeout`.
 - `--stream-json` emits one JSON object per poll (`type=poll`), then emits the standard final monitor JSON payload.
+- `--emit-handoff` adds `type=handoff` packets per poll for low-token multi-agent relay loops.
 - Final monitor JSON includes `nextOffset` when pane capture is available (ready for follow-up delta capture polling).
 
 When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
@@ -471,6 +476,8 @@ Flags:
 - `--delta-from VALUE`: delta start (`offset` integer, `@unix` timestamp, or RFC3339 timestamp; requires `--raw`)
 - `--cursor-file PATH`: persist/reuse raw capture offsets (`--raw` only)
 - `--markers CSV`: marker-only extraction mode (comma-separated markers)
+- `--summary`: return bounded summary instead of full capture body
+- `--token-budget N`: summary budget in approximate tokens (default `320`)
 - `--keep-noise`: keep Codex/MCP startup noise in pane capture
 - `--strip-noise`: compatibility alias to force default noise filtering
 - `--lines N`: pane lines for raw capture (default `200`)
@@ -491,6 +498,7 @@ Behavior:
   - JSON capture includes `deltaMode` and `nextOffset` for subsequent polls
 - `--cursor-file` auto-loads prior offset when `--delta-from` is omitted and writes back `nextOffset`.
 - `--json-min` keeps compact capture payloads (and includes `nextOffset` for delta polling).
+- `--summary` cannot be combined with `--markers`.
 
 ### `session handoff`
 
@@ -507,8 +515,14 @@ Flags:
 - `--agent`: `auto|claude|codex`
 - `--mode`: `auto|interactive|exec`
 - `--events N` (default `8`)
+- `--delta-from N`: incremental event offset (non-negative integer)
 - `--json`
 - `--json-min`
+
+Delta handoff behavior:
+
+- `--delta-from` returns events after that offset and includes `nextDeltaOffset` for next incremental pull.
+- `--json-min` still includes the compact `recent` delta list when `--delta-from` is used.
 
 ### `session context-pack`
 
@@ -527,6 +541,7 @@ Flags:
 - `--events N` (default `8`)
 - `--lines N` (default `120`)
 - `--token-budget N` (default `700`)
+- `--strategy`: `terse|balanced|full` (default `balanced`; adjusts default events/lines/token-budget)
 - `--json`
 - `--json-min`
 
@@ -545,6 +560,7 @@ Flags:
 - `--prompt`: optional override
 - `--model`: optional codex model override
 - `--project-root`
+- `--emit-runbook`: include executable spawn/monitor/capture/handoff/cleanup plan JSON
 - `--json`
 
 ### `session guard`
@@ -604,6 +620,7 @@ Flags:
 - `--all-sockets`: discover active sessions across project sockets by replaying metadata roots
 - `--project-only`
 - `--stale`: include metadata historical/stale counts (+ stale list in full JSON/text)
+- `--prune-preview`: include safe stale-session cleanup plan (requires `--stale`)
 - `--project-root`
 - `--json`
 - `--json-min`: minimal JSON (`sessions`, `count`)
@@ -632,8 +649,9 @@ Flags:
 - `--active-only` (include only sessions currently active in tmux)
 - `--delta` (emit added/removed topology edges since previous tree snapshot)
 - `--flat` (machine-friendly parent/child rows)
+- `--with-state` (attach status/sessionState snapshot to tree rows/nodes)
 - `--json`
-- `--json-min`: minimal JSON (`nodeCount` plus session graph rows/roots)
+- `--json-min`: minimal JSON (`nodeCount` plus session graph rows/roots; with `--with-state`, emits rows)
 
 Behavior note:
 
@@ -659,6 +677,7 @@ Flags:
 - `--poll-interval N` (default `1`)
 - `--max-polls N` (default `180`)
 - `--keep-sessions`
+- `--report-min`: compact CI-focused JSON summary (errorCode/finalState/missing markers only)
 - `--json`
 
 Behavior:

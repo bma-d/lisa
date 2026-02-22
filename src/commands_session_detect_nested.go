@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strings"
 )
 
 func cmdSessionDetectNested(args []string) int {
@@ -13,6 +14,7 @@ func cmdSessionDetectNested(args []string) int {
 	agentArgs := ""
 	model := ""
 	projectRoot := getPWD()
+	rewrite := false
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -67,6 +69,8 @@ func cmdSessionDetectNested(args []string) int {
 			}
 			projectRoot = args[i+1]
 			i++
+		case "--rewrite":
+			rewrite = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -120,6 +124,9 @@ func cmdSessionDetectNested(args []string) int {
 	if model != "" {
 		payload["model"] = model
 	}
+	if rewrite {
+		payload["rewrites"] = nestedRewriteSuggestions(prompt, detection)
+	}
 	if command, buildErr := buildAgentCommandWithOptions(agent, mode, prompt, effectiveAgentArgs, true); buildErr == nil {
 		payload["command"] = command
 	}
@@ -133,5 +140,53 @@ func cmdSessionDetectNested(args []string) int {
 	if cmd, ok := payload["command"].(string); ok && cmd != "" {
 		fmt.Println(cmd)
 	}
+	if rewrite {
+		if suggestions, ok := payload["rewrites"].([]string); ok && len(suggestions) > 0 {
+			fmt.Println("rewrites:")
+			for _, line := range suggestions {
+				fmt.Printf("- %s\n", line)
+			}
+		}
+	}
 	return 0
+}
+
+func nestedRewriteSuggestions(prompt string, detection nestedCodexDetection) []string {
+	base := strings.TrimSpace(prompt)
+	if base == "" {
+		base = "Run nested child orchestration and report markers."
+	}
+	prefixes := []string{
+		"Use ./lisa for child orchestration.",
+		"Run lisa session spawn for child workers.",
+		"Create nested lisa inside lisa inside lisa and report markers.",
+	}
+	out := make([]string, 0, len(prefixes))
+	seen := map[string]struct{}{}
+
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+
+	if detection.AutoBypass {
+		add(base)
+		add("Use ./lisa for child orchestration. Continue with the existing task.")
+		return out
+	}
+	for _, prefix := range prefixes {
+		if strings.EqualFold(base, prefix) {
+			add(prefix)
+			continue
+		}
+		add(prefix + " " + base)
+	}
+	return out
 }

@@ -33,6 +33,7 @@ type sessionSmokeSummary struct {
 	PromptMatrix   []smokeMatrixProbe `json:"promptMatrix,omitempty"`
 	WorkDir        string             `json:"workDir"`
 	KeepSessions   bool               `json:"keepSessions"`
+	ReportMin      bool               `json:"reportMin,omitempty"`
 	Sessions       []string           `json:"sessions"`
 	Markers        []string           `json:"markers"`
 	MissingMarkers []string           `json:"missingMarkers,omitempty"`
@@ -61,6 +62,7 @@ func cmdSessionSmoke(args []string) int {
 	maxPolls := 180
 	pollInterval := 1
 	keepSessions := false
+	reportMin := false
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -123,6 +125,8 @@ func cmdSessionSmoke(args []string) int {
 			i++
 		case "--keep-sessions":
 			keepSessions = true
+		case "--report-min":
+			reportMin = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -184,6 +188,7 @@ func cmdSessionSmoke(args []string) int {
 		PromptStyle:  promptStyle,
 		WorkDir:      workDir,
 		KeepSessions: keepSessions,
+		ReportMin:    reportMin,
 		Sessions:     sessions,
 		Markers:      markers,
 	}
@@ -197,7 +202,7 @@ func cmdSessionSmoke(args []string) int {
 	if promptStyle != "none" {
 		probe, probeErr := runSmokePromptStyleProbe(binPath, projectRoot, promptStyle, model)
 		if probeErr != nil {
-			return emitSmokeFailure(jsonOut, &summary, "smoke_prompt_style_probe_failed", probeErr.Error())
+			return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_prompt_style_probe_failed", probeErr.Error())
 		}
 		summary.PromptProbe = probe
 	}
@@ -205,7 +210,7 @@ func cmdSessionSmoke(args []string) int {
 		matrixProbes, matrixErr := runSmokePromptMatrixProbe(binPath, projectRoot, matrixFile, model)
 		summary.PromptMatrix = matrixProbes
 		if matrixErr != nil {
-			return emitSmokeFailure(jsonOut, &summary, "smoke_prompt_matrix_assertion_failed", matrixErr.Error())
+			return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_prompt_matrix_assertion_failed", matrixErr.Error())
 		}
 	}
 
@@ -242,7 +247,7 @@ func cmdSessionSmoke(args []string) int {
 
 		body := strings.Join(lines, "\n") + "\n"
 		if err := os.WriteFile(scripts[idx], []byte(body), 0o700); err != nil {
-			return emitSmokeFailure(jsonOut, &summary, "smoke_script_write_failed", fmt.Sprintf("failed to write smoke script %s: %v", scripts[idx], err))
+			return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_script_write_failed", fmt.Sprintf("failed to write smoke script %s: %v", scripts[idx], err))
 		}
 	}
 
@@ -260,7 +265,7 @@ func cmdSessionSmoke(args []string) int {
 	}
 	rootSpawnArgs = append(rootSpawnArgs, "--json")
 	if _, stderr, err := runLisaSubcommandFn(binPath, rootSpawnArgs...); err != nil {
-		return emitSmokeFailure(jsonOut, &summary, "smoke_spawn_failed", formatSmokeSubcommandError("failed to spawn L1 smoke session", err, stderr))
+		return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_spawn_failed", formatSmokeSubcommandError("failed to spawn L1 smoke session", err, stderr))
 	}
 
 	monitorOut, monitorErr, err := runLisaSubcommandFn(binPath,
@@ -273,13 +278,13 @@ func cmdSessionSmoke(args []string) int {
 		"--json",
 	)
 	if err != nil {
-		return emitSmokeFailure(jsonOut, &summary, "smoke_monitor_failed", formatSmokeSubcommandError("failed to monitor L1 smoke session", err, monitorErr))
+		return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_monitor_failed", formatSmokeSubcommandError("failed to monitor L1 smoke session", err, monitorErr))
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(monitorOut)), &summary.Monitor); err != nil {
-		return emitSmokeFailure(jsonOut, &summary, "smoke_monitor_parse_failed", fmt.Sprintf("failed to parse monitor output: %v", err))
+		return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_monitor_parse_failed", fmt.Sprintf("failed to parse monitor output: %v", err))
 	}
 	if summary.Monitor.FinalState != "completed" {
-		return emitSmokeFailure(jsonOut, &summary, "smoke_unexpected_final_state", fmt.Sprintf("unexpected smoke final state: %s", summary.Monitor.FinalState))
+		return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_unexpected_final_state", fmt.Sprintf("unexpected smoke final state: %s", summary.Monitor.FinalState))
 	}
 
 	captureOut, captureErr, err := runLisaSubcommandFn(binPath,
@@ -291,13 +296,13 @@ func cmdSessionSmoke(args []string) int {
 		"--json",
 	)
 	if err != nil {
-		return emitSmokeFailure(jsonOut, &summary, "smoke_capture_failed", formatSmokeSubcommandError("failed to capture smoke output", err, captureErr))
+		return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_capture_failed", formatSmokeSubcommandError("failed to capture smoke output", err, captureErr))
 	}
 	var capturePayload struct {
 		Capture string `json:"capture"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(captureOut)), &capturePayload); err != nil {
-		return emitSmokeFailure(jsonOut, &summary, "smoke_capture_parse_failed", fmt.Sprintf("failed to parse capture output: %v", err))
+		return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_capture_parse_failed", fmt.Sprintf("failed to parse capture output: %v", err))
 	}
 	for _, marker := range markers {
 		if !strings.Contains(capturePayload.Capture, marker) {
@@ -305,7 +310,7 @@ func cmdSessionSmoke(args []string) int {
 		}
 	}
 	if len(summary.MissingMarkers) > 0 {
-		return emitSmokeFailure(jsonOut, &summary, "smoke_marker_assertion_failed", "smoke marker assertions failed")
+		return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_marker_assertion_failed", "smoke marker assertions failed")
 	}
 
 	treeOut, _, err := runLisaSubcommandFn(binPath,
@@ -323,7 +328,7 @@ func cmdSessionSmoke(args []string) int {
 
 	summary.OK = true
 	if jsonOut {
-		writeJSON(summary)
+		writeSmokeSummaryJSON(summary, reportMin)
 		return 0
 	}
 	fmt.Printf("PASS: nested smoke %d-level\n", levels)
@@ -334,16 +339,58 @@ func cmdSessionSmoke(args []string) int {
 	return 0
 }
 
-func emitSmokeFailure(jsonOut bool, summary *sessionSmokeSummary, errorCode, message string) int {
+func emitSmokeFailure(jsonOut bool, reportMin bool, summary *sessionSmokeSummary, errorCode, message string) int {
 	summary.OK = false
 	summary.ErrorCode = errorCode
 	summary.Error = message
 	if jsonOut {
-		writeJSON(summary)
+		writeSmokeSummaryJSON(*summary, reportMin)
 		return 1
 	}
 	fmt.Fprintln(os.Stderr, message)
 	return 1
+}
+
+func writeSmokeSummaryJSON(summary sessionSmokeSummary, reportMin bool) {
+	if !reportMin {
+		writeJSON(summary)
+		return
+	}
+	payload := map[string]any{
+		"ok":         summary.OK,
+		"errorCode":  summary.ErrorCode,
+		"error":      summary.Error,
+		"levels":     summary.Levels,
+		"model":      summary.Model,
+		"projectRoot": summary.ProjectRoot,
+	}
+	if summary.Monitor.FinalState != "" {
+		payload["finalState"] = summary.Monitor.FinalState
+		payload["exitReason"] = summary.Monitor.ExitReason
+	}
+	if len(summary.MissingMarkers) > 0 {
+		payload["missingMarkers"] = summary.MissingMarkers
+	}
+	if len(summary.CleanupErrors) > 0 {
+		payload["cleanupErrorCount"] = len(summary.CleanupErrors)
+	}
+	if len(summary.PromptMatrix) > 0 {
+		failed := make([]map[string]any, 0)
+		for _, probe := range summary.PromptMatrix {
+			if probe.Pass {
+				continue
+			}
+			failed = append(failed, map[string]any{
+				"prompt":       probe.Prompt,
+				"expectedMode": probe.ExpectedMode,
+				"actualMode":   probe.ActualMode,
+			})
+		}
+		if len(failed) > 0 {
+			payload["failedMatrix"] = failed
+		}
+	}
+	writeJSON(payload)
 }
 
 func cleanupSmokeSessions(binPath, projectRoot string, sessions []string) []string {

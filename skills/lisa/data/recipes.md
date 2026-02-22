@@ -39,7 +39,7 @@ Use before complex orchestration to lock command assumptions:
 ```bash
 $LISA_BIN doctor --json
 $LISA_BIN session preflight --json
-MODEL="${MODEL:-gpt-5-codex}"
+MODEL="${MODEL:-gpt-5.3-codex-spark}"
 $LISA_BIN session preflight --agent codex --auto-model --json || \
   echo "auto-model probe failed; set --model explicitly"
 $LISA_BIN session spawn --help
@@ -132,14 +132,19 @@ $LISA_BIN session monitor --session "$S" --project-root . --verbose --json
 # line-delimited low-token poll stream + final result
 $LISA_BIN session monitor --session "$S" --project-root . --json-min --stream-json
 
+# line-delimited poll + handoff packets
+$LISA_BIN session monitor --session "$S" --project-root . --json-min --stream-json --emit-handoff
+
 # one-shot compact status+capture payload
 $LISA_BIN session snapshot --session "$S" --project-root . --json-min
 
 # compact handoff packet for another orchestrator
 $LISA_BIN session handoff --session "$S" --project-root . --json-min
+$LISA_BIN session handoff --session "$S" --project-root . --delta-from 0 --json-min
 
 # token-budgeted context packet
 $LISA_BIN session context-pack --for "$S" --project-root . --token-budget 700 --json-min
+$LISA_BIN session context-pack --for "$S" --project-root . --strategy terse --json-min
 ```
 
 Expectation patterns:
@@ -168,7 +173,7 @@ $LISA_BIN session kill-all --project-only --project-root .
 $LISA_BIN session kill-all --cleanup-all-hashes
 
 $LISA_BIN session guard --shared-tmux --json
-$LISA_BIN session guard --shared-tmux --command "lisa cleanup --include-tmux-default" --json
+$LISA_BIN session guard --shared-tmux --command "./lisa cleanup --include-tmux-default" --json
 
 $LISA_BIN cleanup --dry-run
 $LISA_BIN cleanup
@@ -241,6 +246,7 @@ for p in \
   "Build a nested lisa chain and report markers." \
   "Create nested lisa inside lisa inside lisa and report." \
   "Run ./LISA for children." \
+  "Use lisa inside of lisa inside as well." \
   "No nesting requested here."
 do
   $LISA_BIN session spawn --agent codex --mode exec --project-root . \
@@ -250,6 +256,8 @@ done
 # standalone detector (no tmux spawn)
 $LISA_BIN session detect-nested --agent codex --mode exec \
   --prompt "The string './lisa' appears in docs only." --json
+$LISA_BIN session detect-nested --agent codex --mode exec \
+  --prompt "Use lisa inside of lisa inside as well." --rewrite --json
 ```
 
 Deterministic nested validation:
@@ -264,6 +272,9 @@ $LISA_BIN session smoke --project-root "$(pwd)" --levels 4 --prompt-style dot-sl
 
 # matrix-file regression before smoke
 $LISA_BIN session smoke --project-root "$(pwd)" --levels 4 --matrix-file ./nested-matrix.txt --json
+
+# compact CI-oriented smoke output
+$LISA_BIN session smoke --project-root "$(pwd)" --levels 4 --report-min --json
 ```
 
 Four-level matrix (quick confidence loop):
@@ -297,7 +308,7 @@ $LISA_BIN agent build-cmd --agent codex --mode exec \
   --prompt "Run tests" --json
 
 # route recommendation helper for nested orchestration
-$LISA_BIN session route --goal nested --project-root "$(pwd)" --json
+$LISA_BIN session route --goal nested --project-root "$(pwd)" --emit-runbook --json
 ```
 
 JSON parsing hygiene:

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,13 @@ type sessionTreeDeltaState struct {
 	Rows map[string]string `json:"rows"`
 }
 
+type contextPackStrategyConfig struct {
+	Name        string
+	Events      int
+	Lines       int
+	TokenBudget int
+}
+
 func cmdSessionHandoff(args []string) int {
 	session := ""
 	projectRoot := getPWD()
@@ -27,6 +35,7 @@ func cmdSessionHandoff(args []string) int {
 	agentHint := "auto"
 	modeHint := "auto"
 	events := 8
+	deltaFrom := -1
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 
@@ -69,6 +78,16 @@ func cmdSessionHandoff(args []string) int {
 			}
 			events = n
 			i++
+		case "--delta-from":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --delta-from")
+			}
+			offset, parseErr := parseNonNegativeIntFlag(args[i+1], "--delta-from")
+			if parseErr != nil {
+				return commandError(jsonOut, "invalid_delta_from", parseErr.Error())
+			}
+			deltaFrom = offset
+			i++
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -102,16 +121,29 @@ func cmdSessionHandoff(args []string) int {
 		return commandError(jsonOut, "status_compute_failed", err.Error())
 	}
 	status = normalizeStatusForSessionStatusOutput(status)
-	tail, _ := readSessionEventTailFn(projectRoot, session, events)
-	items := make([]sessionHandoffItem, 0, len(tail.Events))
-	for _, event := range tail.Events {
-		items = append(items, sessionHandoffItem{
-			At:     event.At,
-			Type:   event.Type,
-			State:  event.State,
-			Status: event.Status,
-			Reason: event.Reason,
-		})
+	items := make([]sessionHandoffItem, 0)
+	droppedRecent := 0
+	nextDeltaOffset := -1
+	if deltaFrom >= 0 {
+		deltaItems, deltaDropped, deltaNext, deltaErr := readSessionHandoffDelta(projectRoot, session, deltaFrom, events)
+		if deltaErr == nil {
+			items = deltaItems
+			droppedRecent = deltaDropped
+			nextDeltaOffset = deltaNext
+		}
+	} else {
+		tail, _ := readSessionEventTailFn(projectRoot, session, events)
+		droppedRecent = tail.DroppedLines
+		items = make([]sessionHandoffItem, 0, len(tail.Events))
+		for _, event := range tail.Events {
+			items = append(items, sessionHandoffItem{
+				At:     event.At,
+				Type:   event.Type,
+				State:  event.State,
+				Status: event.Status,
+				Reason: event.Reason,
+			})
+		}
 	}
 	nextOffset := computeSessionCaptureNextOffset(session)
 	nextAction := nextActionForState(status.SessionState)
@@ -130,7 +162,15 @@ func cmdSessionHandoff(args []string) int {
 		if !jsonMin {
 			payload["projectRoot"] = projectRoot
 			payload["recent"] = items
-			payload["droppedRecent"] = tail.DroppedLines
+			payload["droppedRecent"] = droppedRecent
+		}
+		if deltaFrom >= 0 {
+			payload["deltaFrom"] = deltaFrom
+			payload["nextDeltaOffset"] = nextDeltaOffset
+			payload["deltaCount"] = len(items)
+			if jsonMin {
+				payload["recent"] = items
+			}
 		}
 		if status.SessionState == "not_found" {
 			payload["errorCode"] = "session_not_found"
@@ -149,6 +189,9 @@ func cmdSessionHandoff(args []string) int {
 			fmt.Printf("- %s %s %s %s\n", item.At, item.Type, item.State, item.Reason)
 		}
 	}
+	if deltaFrom >= 0 {
+		fmt.Printf("delta_from=%d next_delta_offset=%d\n", deltaFrom, nextDeltaOffset)
+	}
 	if status.SessionState == "not_found" {
 		return 1
 	}
@@ -164,6 +207,10 @@ func cmdSessionContextPack(args []string) int {
 	events := 8
 	lines := 120
 	tokenBudget := 700
+	strategy := "balanced"
+	eventsSet := false
+	linesSet := false
+	tokenBudgetSet := false
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 
@@ -205,6 +252,7 @@ func cmdSessionContextPack(args []string) int {
 				return commandError(jsonOut, "invalid_events", err.Error())
 			}
 			events = n
+			eventsSet = true
 			i++
 		case "--lines":
 			if i+1 >= len(args) {
@@ -215,6 +263,7 @@ func cmdSessionContextPack(args []string) int {
 				return commandError(jsonOut, "invalid_lines", err.Error())
 			}
 			lines = n
+			linesSet = true
 			i++
 		case "--token-budget":
 			if i+1 >= len(args) {
@@ -225,6 +274,13 @@ func cmdSessionContextPack(args []string) int {
 				return commandError(jsonOut, "invalid_token_budget", err.Error())
 			}
 			tokenBudget = n
+			tokenBudgetSet = true
+			i++
+		case "--strategy":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --strategy")
+			}
+			strategy = args[i+1]
 			i++
 		case "--json":
 			jsonOut = true
@@ -239,12 +295,24 @@ func cmdSessionContextPack(args []string) int {
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--for is required")
 	}
+	strategyConfig, err := parseContextPackStrategy(strategy)
+	if err != nil {
+		return commandError(jsonOut, "invalid_strategy", err.Error())
+	}
+	if !eventsSet {
+		events = strategyConfig.Events
+	}
+	if !linesSet {
+		lines = strategyConfig.Lines
+	}
+	if !tokenBudgetSet {
+		tokenBudget = strategyConfig.TokenBudget
+	}
 
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 
-	var err error
 	agentHint, err = parseAgentHint(agentHint)
 	if err != nil {
 		return commandError(jsonOut, "invalid_agent_hint", err.Error())
@@ -275,21 +343,7 @@ func cmdSessionContextPack(args []string) int {
 		captureTail = "(no live capture)"
 	}
 
-	packLines := []string{
-		"session=" + session,
-		"state=" + status.SessionState,
-		"status=" + status.Status,
-		"reason=" + status.ClassificationReason,
-		"next_action=" + nextActionForState(status.SessionState),
-	}
-	if len(recent) > 0 {
-		packLines = append(packLines, "recent_events:")
-		packLines = append(packLines, recent...)
-	}
-	packLines = append(packLines, "capture_tail:")
-	packLines = append(packLines, captureTail)
-
-	packRaw := strings.Join(packLines, "\n")
+	packRaw := buildContextPackRaw(strategyConfig.Name, session, status, recent, captureTail)
 	pack, truncated := truncateToTokenBudget(packRaw, tokenBudget)
 	nextOffset := computeSessionCaptureNextOffset(session)
 
@@ -301,6 +355,7 @@ func cmdSessionContextPack(args []string) int {
 			"reason":       status.ClassificationReason,
 			"nextAction":   nextActionForState(status.SessionState),
 			"nextOffset":   nextOffset,
+			"strategy":     strategyConfig.Name,
 			"tokenBudget":  tokenBudget,
 			"truncated":    truncated,
 			"pack":         pack,
@@ -333,6 +388,7 @@ func cmdSessionRoute(args []string) int {
 	projectRoot := getPWD()
 	prompt := ""
 	model := ""
+	emitRunbook := false
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -369,6 +425,8 @@ func cmdSessionRoute(args []string) int {
 			}
 			model = args[i+1]
 			i++
+		case "--emit-runbook":
+			emitRunbook = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -443,6 +501,9 @@ func cmdSessionRoute(args []string) int {
 		"monitorHint":     monitorHint,
 		"nestedDetection": detection,
 		"rationale":       rationale,
+	}
+	if emitRunbook {
+		payload["runbook"] = buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model)
 	}
 	if jsonOut {
 		writeJSON(payload)
@@ -560,11 +621,178 @@ func parseSessionRouteGoal(goal string) (string, error) {
 func sessionRouteDefaults(goal string) (mode, nestedPolicy, nestingIntent, prompt, model string) {
 	switch goal {
 	case "nested":
-		return "exec", "force", "nested", "Create nested lisa workers and report markers.", "gpt-5-codex"
+		return "exec", "force", "nested", "Create nested lisa workers and report markers.", "gpt-5.3-codex-spark"
 	case "exec":
-		return "exec", "off", "neutral", "Run the task and return concise final output.", "gpt-5-codex"
+		return "exec", "off", "neutral", "Run the task and return concise final output.", "gpt-5.3-codex-spark"
 	default:
-		return "interactive", "off", "neutral", "Analyze current task and propose next concrete actions.", "gpt-5.3-codex"
+		return "interactive", "off", "neutral", "Analyze current task and propose next concrete actions.", "gpt-5.3-codex-spark"
+	}
+}
+
+func parseContextPackStrategy(raw string) (contextPackStrategyConfig, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "balanced":
+		return contextPackStrategyConfig{Name: "balanced", Events: 8, Lines: 120, TokenBudget: 700}, nil
+	case "terse":
+		return contextPackStrategyConfig{Name: "terse", Events: 4, Lines: 60, TokenBudget: 400}, nil
+	case "full":
+		return contextPackStrategyConfig{Name: "full", Events: 20, Lines: 260, TokenBudget: 1400}, nil
+	default:
+		return contextPackStrategyConfig{}, fmt.Errorf("invalid --strategy: %s (expected terse|balanced|full)", raw)
+	}
+}
+
+func buildContextPackRaw(strategy, session string, status sessionStatus, recent []string, captureTail string) string {
+	nextAction := nextActionForState(status.SessionState)
+	switch strategy {
+	case "terse":
+		lines := []string{
+			"session=" + session,
+			"state=" + status.SessionState,
+			"status=" + status.Status,
+			"next_action=" + nextAction,
+		}
+		if len(recent) > 0 {
+			lines = append(lines, "recent:")
+			for i := len(recent) - 1; i >= 0; i-- {
+				lines = append(lines, recent[i])
+				if len(lines) >= 8 {
+					break
+				}
+			}
+		}
+		return strings.Join(lines, "\n")
+	case "full":
+		lines := []string{
+			"session=" + session,
+			"state=" + status.SessionState,
+			"status=" + status.Status,
+			"reason=" + status.ClassificationReason,
+			"next_action=" + nextAction,
+			fmt.Sprintf("todos=%d/%d", status.TodosDone, status.TodosTotal),
+			fmt.Sprintf("wait_estimate=%d", status.WaitEstimate),
+			fmt.Sprintf("output_age_seconds=%d", status.OutputAgeSeconds),
+			fmt.Sprintf("heartbeat_age_seconds=%d", status.HeartbeatAge),
+		}
+		if strings.TrimSpace(status.ActiveTask) != "" {
+			lines = append(lines, "active_task="+status.ActiveTask)
+		}
+		if len(recent) > 0 {
+			lines = append(lines, "recent_events:")
+			lines = append(lines, recent...)
+		}
+		lines = append(lines, "capture_tail:")
+		lines = append(lines, captureTail)
+		return strings.Join(lines, "\n")
+	default:
+		lines := []string{
+			"session=" + session,
+			"state=" + status.SessionState,
+			"status=" + status.Status,
+			"reason=" + status.ClassificationReason,
+			"next_action=" + nextAction,
+		}
+		if len(recent) > 0 {
+			lines = append(lines, "recent_events:")
+			lines = append(lines, recent...)
+		}
+		lines = append(lines, "capture_tail:")
+		lines = append(lines, captureTail)
+		return strings.Join(lines, "\n")
+	}
+}
+
+func readSessionHandoffDelta(projectRoot, session string, offset, limit int) ([]sessionHandoffItem, int, int, error) {
+	eventsPath := sessionEventsFile(projectRoot, session)
+	raw, err := os.ReadFile(eventsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []sessionHandoffItem{}, 0, 0, nil
+		}
+		return nil, 0, 0, err
+	}
+	lines := trimLines(string(raw))
+	all := make([]sessionHandoffItem, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event sessionEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		all = append(all, sessionHandoffItem{
+			At:     event.At,
+			Type:   event.Type,
+			State:  event.State,
+			Status: event.Status,
+			Reason: event.Reason,
+		})
+	}
+	total := len(all)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	delta := append([]sessionHandoffItem{}, all[offset:]...)
+	dropped := 0
+	if limit > 0 && len(delta) > limit {
+		dropped = len(delta) - limit
+		delta = delta[len(delta)-limit:]
+	}
+	return delta, dropped, total, nil
+}
+
+func parseNonNegativeIntFlag(raw, flag string) (int, error) {
+	value := strings.TrimSpace(raw)
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid %s: expected non-negative integer", flag)
+	}
+	return n, nil
+}
+
+func buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model string) map[string]any {
+	spawn := fmt.Sprintf("./lisa session spawn --agent %s --mode %s --nested-policy %s --nesting-intent %s --project-root %s --prompt %s --json",
+		agent, mode, nestedPolicy, nestingIntent, shellQuote(projectRoot), shellQuote(prompt))
+	if model != "" && agent == "codex" {
+		spawn = strings.TrimSuffix(spawn, " --json") + " --model " + shellQuote(model) + " --json"
+	}
+	monitor := "./lisa session monitor --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --expect terminal --json"
+	if mode == "interactive" {
+		monitor = "./lisa session monitor --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --stop-on-waiting true --json"
+	}
+	return map[string]any{
+		"steps": []map[string]any{
+			{
+				"id":      "preflight",
+				"command": "./lisa session preflight --agent " + agent + " --project-root " + shellQuote(projectRoot) + " --json",
+			},
+			{
+				"id":      "spawn",
+				"command": spawn,
+				"note":    "extract SESSION from spawn JSON payload",
+			},
+			{
+				"id":      "monitor",
+				"command": monitor,
+			},
+			{
+				"id":      "capture",
+				"command": "./lisa session capture --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --raw --json-min",
+			},
+			{
+				"id":      "handoff",
+				"command": "./lisa session handoff --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --json-min",
+			},
+			{
+				"id":      "cleanup",
+				"command": "./lisa session kill --session \"$SESSION\" --project-root " + shellQuote(projectRoot) + " --json",
+			},
+		},
 	}
 }
 

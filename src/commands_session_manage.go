@@ -3,14 +3,24 @@ package app
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
+
+type staleSessionInfo struct {
+	Session     string `json:"session"`
+	ProjectRoot string `json:"projectRoot,omitempty"`
+	CreatedAt   string `json:"createdAt,omitempty"`
+	MetaPath    string `json:"metaPath,omitempty"`
+	PruneCmd    string `json:"pruneCmd,omitempty"`
+}
 
 func cmdSessionList(args []string) int {
 	projectOnly := false
 	allSockets := false
 	stale := false
+	prunePreview := false
 	projectRoot := getPWD()
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
@@ -25,6 +35,8 @@ func cmdSessionList(args []string) int {
 			allSockets = true
 		case "--stale":
 			stale = true
+		case "--prune-preview":
+			prunePreview = true
 		case "--project-root":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
@@ -42,6 +54,9 @@ func cmdSessionList(args []string) int {
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
+	if prunePreview && !stale {
+		return commandError(jsonOut, "prune_preview_requires_stale", "--prune-preview requires --stale")
+	}
 	list := []string{}
 	var err error
 	if allSockets {
@@ -55,13 +70,15 @@ func cmdSessionList(args []string) int {
 		return commandErrorf(jsonOut, "session_list_failed", "failed to list sessions: %v", err)
 	}
 	staleSessions := []string{}
+	staleInfos := []staleSessionInfo{}
 	historicalCount := 0
 	if stale {
-		staleList, historyCount, staleErr := listStaleSessions(projectRoot, list)
+		staleList, staleDetails, historyCount, staleErr := listStaleSessions(projectRoot, list)
 		if staleErr != nil {
 			return commandErrorf(jsonOut, "session_list_stale_failed", "failed to compute stale sessions: %v", staleErr)
 		}
 		staleSessions = staleList
+		staleInfos = staleDetails
 		historicalCount = historyCount
 	}
 	if jsonOut {
@@ -72,6 +89,9 @@ func cmdSessionList(args []string) int {
 		if stale {
 			payload["historicalCount"] = historicalCount
 			payload["staleCount"] = len(staleSessions)
+			if prunePreview {
+				payload["prunePreview"] = staleInfos
+			}
 			if !jsonMin {
 				payload["staleSessions"] = staleSessions
 			}
@@ -97,13 +117,19 @@ func cmdSessionList(args []string) int {
 		fmt.Println("stale_sessions:")
 		fmt.Println(strings.Join(staleSessions, "\n"))
 	}
+	if prunePreview && len(staleInfos) > 0 {
+		fmt.Println("prune_preview:")
+		for _, info := range staleInfos {
+			fmt.Printf("- %s\n", info.PruneCmd)
+		}
+	}
 	return 0
 }
 
-func listStaleSessions(projectRoot string, activeSessions []string) ([]string, int, error) {
+func listStaleSessions(projectRoot string, activeSessions []string) ([]string, []staleSessionInfo, int, error) {
 	metas, err := loadSessionMetasForProject(projectRoot, true)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	activeSet := make(map[string]struct{}, len(activeSessions))
 	for _, session := range activeSessions {
@@ -112,6 +138,7 @@ func listStaleSessions(projectRoot string, activeSessions []string) ([]string, i
 	projectHashCurrent := projectHash(projectRoot)
 	historicalSet := map[string]struct{}{}
 	staleSet := map[string]struct{}{}
+	metaBySession := map[string]sessionMeta{}
 	for _, meta := range metas {
 		session := strings.TrimSpace(meta.Session)
 		if session == "" {
@@ -127,6 +154,7 @@ func listStaleSessions(projectRoot string, activeSessions []string) ([]string, i
 		historicalSet[session] = struct{}{}
 		if _, ok := activeSet[session]; !ok {
 			staleSet[session] = struct{}{}
+			metaBySession[session] = meta
 		}
 	}
 	stale := make([]string, 0, len(staleSet))
@@ -134,7 +162,22 @@ func listStaleSessions(projectRoot string, activeSessions []string) ([]string, i
 		stale = append(stale, session)
 	}
 	sort.Strings(stale)
-	return stale, len(historicalSet), nil
+	staleInfos := make([]staleSessionInfo, 0, len(stale))
+	for _, session := range stale {
+		meta := metaBySession[session]
+		metaRoot := canonicalProjectRoot(meta.ProjectRoot)
+		if metaRoot == "" {
+			metaRoot = projectRoot
+		}
+		staleInfos = append(staleInfos, staleSessionInfo{
+			Session:     session,
+			ProjectRoot: metaRoot,
+			CreatedAt:   strings.TrimSpace(meta.CreatedAt),
+			MetaPath:    filepath.Clean(sessionMetaFile(metaRoot, session)),
+			PruneCmd:    fmt.Sprintf("./lisa session kill --session %s --project-root %s --json", shellQuote(session), shellQuote(metaRoot)),
+		})
+	}
+	return stale, staleInfos, len(historicalSet), nil
 }
 
 func listSessionsAcrossSockets(projectRoot string, projectOnly bool) ([]string, error) {
