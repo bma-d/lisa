@@ -172,6 +172,65 @@ func TestCmdSessionListAllSocketsFindsCrossRootSessions(t *testing.T) {
 	}
 }
 
+func TestCmdSessionListWithNextActionIncludesSocketPathFromMeta(t *testing.T) {
+	origList := tmuxListSessionsFn
+	origStatus := computeSessionStatusFn
+	t.Cleanup(func() {
+		tmuxListSessionsFn = origList
+		computeSessionStatusFn = origStatus
+	})
+
+	projectRoot := t.TempDir()
+	session := "lisa-socket-meta"
+	socketPath := "/tmp/custom-lisa-socket.sock"
+	now := "2026-02-23T10:00:00Z"
+	if err := saveSessionMeta(projectRoot, session, sessionMeta{
+		Session:     session,
+		Agent:       "codex",
+		Mode:        "interactive",
+		ProjectRoot: projectRoot,
+		SocketPath:  socketPath,
+		StartCmd:    "echo",
+		CreatedAt:   now,
+	}); err != nil {
+		t.Fatalf("save session meta failed: %v", err)
+	}
+
+	tmuxListSessionsFn = func(projectOnly bool, root string) ([]string, error) {
+		return []string{session}, nil
+	}
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:      session,
+			Status:       "active",
+			SessionState: "in_progress",
+		}, nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionList([]string{"--project-root", projectRoot, "--with-next-action", "--json"})
+		if code != 0 {
+			t.Fatalf("expected session list success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+
+	var payload struct {
+		Items []sessionListItem `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("failed parsing session list JSON: %v (%q)", err, stdout)
+	}
+	if len(payload.Items) != 1 {
+		t.Fatalf("items len = %d", len(payload.Items))
+	}
+	if payload.Items[0].SocketPath != socketPath {
+		t.Fatalf("socketPath = %q, want %q", payload.Items[0].SocketPath, socketPath)
+	}
+}
+
 func TestCmdSessionMonitorStopsOnUntilMarker(t *testing.T) {
 	origCompute := computeSessionStatusFn
 	origCapture := tmuxCapturePaneFn

@@ -29,6 +29,7 @@ type sessionMeta struct {
 	OAuthTokenID  string `json:"oauthTokenId,omitempty"`
 	RunID         string `json:"runId,omitempty"`
 	ProjectRoot   string `json:"projectRoot"`
+	SocketPath    string `json:"socketPath,omitempty"`
 	StartCmd      string `json:"startCommand"`
 	Prompt        string `json:"prompt,omitempty"`
 	CreatedAt     string `json:"createdAt"`

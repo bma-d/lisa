@@ -460,6 +460,7 @@ func cmdSessionSpawn(args []string) int {
 		OAuthTokenID:  oauthTokenPreviewID,
 		RunID:         runID,
 		ProjectRoot:   projectRoot,
+		SocketPath:    tmuxSocketPathForProjectRoot(projectRoot),
 		StartCmd:      command,
 		Prompt:        prompt,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
@@ -514,6 +515,7 @@ func cmdSessionSpawn(args []string) int {
 			"nestingIntent": nestingIntent,
 			"runId":         runID,
 			"projectRoot":   projectRoot,
+			"socketPath":    tmuxSocketPathForProjectRoot(projectRoot),
 			"command":       command,
 		}
 		if oauthTokenID != "" {

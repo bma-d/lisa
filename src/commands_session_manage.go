@@ -19,13 +19,14 @@ type staleSessionInfo struct {
 }
 
 type sessionListItem struct {
-	Session      string `json:"session"`
-	Status       string `json:"status,omitempty"`
-	SessionState string `json:"sessionState,omitempty"`
-	NextAction   string `json:"nextAction,omitempty"`
-	PriorityScore int   `json:"priorityScore,omitempty"`
+	Session       string `json:"session"`
+	Status        string `json:"status,omitempty"`
+	SessionState  string `json:"sessionState,omitempty"`
+	NextAction    string `json:"nextAction,omitempty"`
+	PriorityScore int    `json:"priorityScore,omitempty"`
 	PriorityLabel string `json:"priorityLabel,omitempty"`
-	ProjectRoot  string `json:"projectRoot,omitempty"`
+	ProjectRoot   string `json:"projectRoot,omitempty"`
+	SocketPath    string `json:"socketPath,omitempty"`
 }
 
 type sessionListDeltaCursor struct {
@@ -140,6 +141,7 @@ func cmdSessionList(args []string) int {
 					items = append(items, sessionListItem{
 						Session:     session,
 						ProjectRoot: resolvedRoot,
+						SocketPath:  resolveSessionSocketPath(session, resolvedRoot),
 						NextAction:  "session status",
 					})
 				}
@@ -153,13 +155,14 @@ func cmdSessionList(args []string) int {
 			if withNextAction {
 				priorityScore, priorityLabel := computeSessionPriority(status)
 				items = append(items, sessionListItem{
-					Session:      session,
-					Status:       status.Status,
-					SessionState: status.SessionState,
-					NextAction:   nextActionForState(status.SessionState),
+					Session:       session,
+					Status:        status.Status,
+					SessionState:  status.SessionState,
+					NextAction:    nextActionForState(status.SessionState),
 					PriorityScore: priorityScore,
 					PriorityLabel: priorityLabel,
-					ProjectRoot:  resolvedRoot,
+					ProjectRoot:   resolvedRoot,
+					SocketPath:    resolveSessionSocketPath(session, resolvedRoot),
 				})
 			}
 		}
@@ -199,9 +202,11 @@ func cmdSessionList(args []string) int {
 			}
 		} else {
 			for _, session := range list {
+				resolvedRoot := resolveSessionProjectRoot(session, projectRoot, false)
 				current[session] = sessionListItem{
 					Session:     session,
-					ProjectRoot: resolveSessionProjectRoot(session, projectRoot, false),
+					ProjectRoot: resolvedRoot,
+					SocketPath:  resolveSessionSocketPath(session, resolvedRoot),
 				}
 			}
 		}
@@ -394,9 +399,16 @@ func listSessionsAcrossSockets(projectRoot string, projectOnly bool) ([]string, 
 		if projectOnly && projectHash(metaRoot) != rootHash {
 			continue
 		}
-		restore := withProjectRuntimeEnv(metaRoot)
-		active := tmuxHasSessionFn(session)
-		restore()
+		active := false
+		socketPath := strings.TrimSpace(meta.SocketPath)
+		if socketPath != "" {
+			_, hasErr := runTmuxCmdWithSocket(socketPath, "has-session", "-t", session)
+			active = hasErr == nil
+		} else {
+			restore := withProjectRuntimeEnv(metaRoot)
+			active = tmuxHasSessionFn(session)
+			restore()
+		}
 		if active {
 			outSet[session] = struct{}{}
 		}
@@ -458,7 +470,18 @@ func sessionListItemsEqual(a, b sessionListItem) bool {
 		a.NextAction == b.NextAction &&
 		a.PriorityScore == b.PriorityScore &&
 		a.PriorityLabel == b.PriorityLabel &&
-		a.ProjectRoot == b.ProjectRoot
+		a.ProjectRoot == b.ProjectRoot &&
+		a.SocketPath == b.SocketPath
+}
+
+func resolveSessionSocketPath(session, projectRoot string) string {
+	root := canonicalProjectRoot(projectRoot)
+	if meta, err := loadSessionMeta(root, session); err == nil {
+		if socket := strings.TrimSpace(meta.SocketPath); socket != "" {
+			return filepath.Clean(socket)
+		}
+	}
+	return tmuxSocketPathForProjectRoot(root)
 }
 
 func cmdSessionExists(args []string) int {
