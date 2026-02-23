@@ -91,6 +91,38 @@ func TestCmdCapabilitiesUnknownFlagJSON(t *testing.T) {
 	}
 }
 
+func TestCmdCapabilitiesUnknownFlagText(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdCapabilities([]string{"--badflag"})
+		if code == 0 {
+			t.Fatalf("expected capabilities to fail on unknown flag")
+		}
+	})
+	if stdout != "" {
+		t.Fatalf("expected empty stdout, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "unknown flag: --badflag") {
+		t.Fatalf("expected unknown flag stderr, got %q", stderr)
+	}
+}
+
+func TestCmdCapabilitiesHelp(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdCapabilities([]string{"--help"})
+		if code != 0 {
+			t.Fatalf("expected help to succeed, got %d", code)
+		}
+	})
+	if stdout != "" {
+		t.Fatalf("expected empty stdout, got %q", stdout)
+	}
+	for _, token := range []string{"lisa capabilities", "Usage: lisa capabilities [flags]", "--json"} {
+		if !strings.Contains(stderr, token) {
+			t.Fatalf("expected help output token %q, got %q", token, stderr)
+		}
+	}
+}
+
 func TestCommandCapabilitiesCommandSet(t *testing.T) {
 	var got []string
 	for _, c := range commandCapabilities {
@@ -107,10 +139,15 @@ func TestCommandCapabilitiesCommandSet(t *testing.T) {
 		"oauth list",
 		"oauth remove",
 		"session capture",
+		"session anomaly",
+		"session aggregate",
+		"session budget-enforce",
 		"session checkpoint",
 		"session context-pack",
+		"session contract-check",
 		"session dedupe",
 		"session detect-nested",
+		"session diff-pack",
 		"session exists",
 		"session explain",
 		"session autopilot",
@@ -121,8 +158,11 @@ func TestCommandCapabilitiesCommandSet(t *testing.T) {
 		"session list",
 		"session monitor",
 		"session name",
+		"session next",
 		"session packet",
 		"session preflight",
+		"session prompt-lint",
+		"session replay",
 		"session route",
 		"session schema",
 		"session send",
@@ -145,18 +185,30 @@ func TestCommandCapabilitiesCommandSet(t *testing.T) {
 
 func TestCommandCapabilitiesCriticalFlagContracts(t *testing.T) {
 	required := map[string][]string{
-		"session monitor":      {"--until-jsonpath", "--event-budget"},
-		"session context-pack": {"--from-handoff", "--redact"},
-		"session route":        {"--budget", "--topology", "--cost-estimate"},
-		"session packet":       {"--fields"},
-		"session capture":      {"--semantic-delta"},
-		"session smoke":        {"--chaos-report"},
-		"session guard":        {"--machine-policy"},
-		"session list":         {"--priority"},
-		"session schema":       {"--command"},
-		"session checkpoint":   {"--file"},
-		"session dedupe":       {"--task-hash"},
-		"session autopilot":    {"--json"},
+		"session monitor":        {"--until-jsonpath", "--event-budget", "--webhook", "--timeout-seconds"},
+		"session explain":        {"--since"},
+		"session context-pack":   {"--from-handoff", "--redact"},
+		"session route":          {"--budget", "--topology", "--cost-estimate", "--profile"},
+		"session packet":         {"--fields"},
+		"session capture":        {"--semantic-delta"},
+		"session smoke":          {"--chaos-report", "--export-artifacts"},
+		"session guard":          {"--shared-tmux", "--command", "--project-root", "--machine-policy"},
+		"session list":           {"--priority", "--watch-json", "--watch-interval", "--watch-cycles"},
+		"session tree":           {"--delta-json", "--cursor-file"},
+		"session schema":         {"--command"},
+		"session checkpoint":     {"--file"},
+		"session dedupe":         {"--task-hash"},
+		"session next":           {"--budget"},
+		"session aggregate":      {"--token-budget", "--dedupe"},
+		"session prompt-lint":    {"--markers", "--strict"},
+		"session diff-pack":      {"--cursor-file", "--redact"},
+		"session anomaly":        {"--events"},
+		"session budget-enforce": {"--max-tokens", "--from"},
+		"session replay":         {"--from-checkpoint"},
+		"session handoff":        {"--compress"},
+		"session contract-check": {"--project-root"},
+		"session autopilot":      {"--json"},
+		"skills doctor":          {"--fix", "--contract-check"},
 	}
 
 	flagsByCommand := map[string][]string{}

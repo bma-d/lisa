@@ -1,6 +1,6 @@
 # Lisa Validation Snapshot
 
-Validated: 2026-02-22
+Validated: 2026-02-23
 
 ## Guardrails
 
@@ -29,7 +29,7 @@ Validated: 2026-02-22
 - `session context-pack --from-handoff <path|->` builds pack without live status polling.
 - Nested diagnostics path: `session spawn --dry-run --detect-nested --json` or `session detect-nested --json`.
 - `session detect-nested --rewrite` emits trigger-safe prompt rewrites.
-- `session detect-nested --why` emits hint-span reasoning payload (`why.spans`).
+- `session detect-nested --why` emits hint-span reasoning payload (`why.spans`), which can be an empty list for non-trigger prompts.
 - Deterministic nested override: `--nested-policy auto|force|off` and `--nesting-intent auto|nested|neutral`.
 - Prompt-style smoke probes expose detection fields at `promptProbe.detection.*`.
 - Quote/doc mentions like `The string "./lisa" appears in docs only.` are treated as non-executable nested hints.
@@ -37,7 +37,7 @@ Validated: 2026-02-22
 - Model ids are case-sensitive in practice (`gpt-5.3-codex-spark` succeeded; `GPT-5.3-Codex-Spark` failed preflight).
 - Model preflight probe can fail (`errorCode:"preflight_model_not_supported"`) for unknown aliases; treat this as capability signal, not parser failure.
 - `session preflight --auto-model --json` selects first supported candidate model (`gpt-5.3-codex`, then `gpt-5-codex` by default).
-- `session smoke --report-min --json` emits compact CI payloads.
+- `session smoke --report-min --json` emits compact CI payloads and omits rich fields (for example `promptProbe`).
 - `session list --stale --prune-preview` emits safe stale cleanup commands.
 - `session tree --with-state --json-min` emits rows with topology + status/sessionState.
 - `session capture --summary --token-budget N` returns bounded summary payloads.
@@ -45,7 +45,8 @@ Validated: 2026-02-22
 - `session route --budget N --emit-runbook` propagates token-budget hints into capture/context-pack steps.
 - `session route --from-state <PATH|->` routes from handoff/status JSON and emits `fromState` in payload.
 - `session list --active-only --with-next-action --json-min` returns filtered sessions plus per-session next actions.
-- `session list --cursor-file <PATH>` is meaningful only with `--delta-json` (cursor snapshot read/write).
+- `session list --cursor-file <PATH>` without `--delta-json` is a usage error (`cursor_file_requires_delta_json`, exit `1`).
+- `session tree --cursor-file <PATH>` without `--delta-json` is a usage error (`cursor_file_requires_delta_json`, exit `1`).
 - `session list --delta-json --cursor-file <PATH>` returns added/removed/changed session deltas with persisted cursor snapshots.
 - `session guard --shared-tmux --enforce --command ...` returns `errorCode:"shared_tmux_guard_enforced"` on medium/high risk.
 - `session guard --shared-tmux --advice-only --command ...` preserves diagnostics while always exiting `0`.

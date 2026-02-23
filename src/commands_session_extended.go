@@ -35,6 +35,14 @@ type sessionDedupeRegistry struct {
 	Items     map[string]sessionDedupeRecord `json:"items"`
 }
 
+type sessionContractCheckResult struct {
+	Name    string `json:"name"`
+	OK      bool   `json:"ok"`
+	Detail  string `json:"detail,omitempty"`
+	Checked int    `json:"checked,omitempty"`
+	Failed  int    `json:"failed,omitempty"`
+}
+
 func cmdSessionSchema(args []string) int {
 	commandName := ""
 	jsonOut := hasJSONFlag(args)
@@ -88,6 +96,156 @@ func cmdSessionSchema(args []string) int {
 	sort.Strings(names)
 	fmt.Println(strings.Join(names, "\n"))
 	return 0
+}
+
+func cmdSessionContractCheck(args []string) int {
+	projectRoot := getPWD()
+	jsonOut := hasJSONFlag(args)
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session contract-check")
+		case "--project-root":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
+			}
+			projectRoot = args[i+1]
+			i++
+		case "--json":
+			jsonOut = true
+		default:
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
+		}
+	}
+
+	projectRoot = canonicalProjectRoot(projectRoot)
+	results, ok := runSessionContractChecks(projectRoot)
+	payload := map[string]any{
+		"ok":          ok,
+		"projectRoot": projectRoot,
+		"checks":      results,
+	}
+	if !ok {
+		payload["errorCode"] = "session_contract_check_failed"
+	}
+	if jsonOut {
+		writeJSON(payload)
+		return boolExit(ok)
+	}
+
+	for _, check := range results {
+		state := "ok"
+		if !check.OK {
+			state = "fail"
+		}
+		if check.Detail != "" {
+			fmt.Printf("%s: %s (%s)\n", check.Name, state, check.Detail)
+		} else {
+			fmt.Printf("%s: %s\n", check.Name, state)
+		}
+	}
+	return boolExit(ok)
+}
+
+func runSessionContractChecks(projectRoot string) ([]sessionContractCheckResult, bool) {
+	results := make([]sessionContractCheckResult, 0, 4)
+	overallOK := true
+
+	schemaRequired := []string{
+		"session status",
+		"session monitor",
+		"session capture",
+		"session packet",
+		"session handoff",
+		"session context-pack",
+		"session route",
+		"session list",
+		"session smoke",
+		"session checkpoint",
+		"session dedupe",
+	}
+	catalog := sessionSchemaCatalog()
+	schemaMissing := make([]string, 0)
+	for _, key := range schemaRequired {
+		if _, ok := catalog[key]; !ok {
+			schemaMissing = append(schemaMissing, key)
+		}
+	}
+	schemaResult := sessionContractCheckResult{
+		Name:    "schema_coverage",
+		OK:      len(schemaMissing) == 0,
+		Checked: len(schemaRequired),
+		Failed:  len(schemaMissing),
+	}
+	if len(schemaMissing) > 0 {
+		schemaResult.Detail = "missing: " + strings.Join(schemaMissing, ", ")
+		overallOK = false
+	}
+	results = append(results, schemaResult)
+
+	commandsPath := filepath.Join(projectRoot, "skills", "lisa", "data", "commands.md")
+	raw, err := os.ReadFile(commandsPath)
+	if err != nil {
+		results = append(results, sessionContractCheckResult{
+			Name:   "skill_commands_doc_read",
+			OK:     false,
+			Detail: err.Error(),
+		})
+		return results, false
+	}
+	text := string(raw)
+	results = append(results, sessionContractCheckResult{
+		Name:    "skill_commands_doc_read",
+		OK:      true,
+		Checked: 1,
+	})
+
+	missingCommands := make([]string, 0)
+	for _, cap := range commandCapabilities {
+		if !strings.Contains(text, cap.Name) {
+			missingCommands = append(missingCommands, cap.Name)
+		}
+	}
+	commandsResult := sessionContractCheckResult{
+		Name:    "skill_command_index_coverage",
+		OK:      len(missingCommands) == 0,
+		Checked: len(commandCapabilities),
+		Failed:  len(missingCommands),
+	}
+	if len(missingCommands) > 0 {
+		commandsResult.Detail = "missing commands: " + strings.Join(missingCommands, ", ")
+		overallOK = false
+	}
+	results = append(results, commandsResult)
+
+	missingFlags := make([]string, 0)
+	checkedFlags := 0
+	for _, cap := range commandCapabilities {
+		for _, flag := range cap.Flags {
+			checkedFlags++
+			if !strings.Contains(text, flag) {
+				missingFlags = append(missingFlags, cap.Name+":"+flag)
+			}
+		}
+	}
+	flagsResult := sessionContractCheckResult{
+		Name:    "skill_flag_surface_coverage",
+		OK:      len(missingFlags) == 0,
+		Checked: checkedFlags,
+		Failed:  len(missingFlags),
+	}
+	if len(missingFlags) > 0 {
+		preview := missingFlags
+		if len(preview) > 6 {
+			preview = preview[:6]
+		}
+		flagsResult.Detail = "missing flags sample: " + strings.Join(preview, ", ")
+		overallOK = false
+	}
+	results = append(results, flagsResult)
+
+	return results, overallOK
 }
 
 func sessionSchemaCatalog() map[string]map[string]any {

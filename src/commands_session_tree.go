@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type sessionTreeNode struct {
@@ -53,14 +55,21 @@ type sessionTreeDelta struct {
 	Count   int              `json:"count"`
 }
 
+type sessionTreeDeltaCursor struct {
+	UpdatedAt string                    `json:"updatedAt"`
+	Rows      map[string]sessionTreeRow `json:"rows"`
+}
+
 func cmdSessionTree(args []string) int {
 	projectRoot := getPWD()
 	sessionFilter := ""
 	allHashes := false
 	activeOnly := false
 	delta := false
+	deltaJSON := false
 	flat := false
 	withState := false
+	cursorFile := ""
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 
@@ -86,10 +95,19 @@ func cmdSessionTree(args []string) int {
 			activeOnly = true
 		case "--delta":
 			delta = true
+		case "--delta-json":
+			deltaJSON = true
+			jsonOut = true
 		case "--flat":
 			flat = true
 		case "--with-state":
 			withState = true
+		case "--cursor-file":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --cursor-file")
+			}
+			cursorFile = strings.TrimSpace(args[i+1])
+			i++
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -100,7 +118,23 @@ func cmdSessionTree(args []string) int {
 		}
 	}
 
+	if delta && deltaJSON {
+		return commandError(jsonOut, "delta_mode_conflict", "--delta cannot be combined with --delta-json")
+	}
+	if cursorFile != "" && !deltaJSON {
+		return commandError(jsonOut, "cursor_file_requires_delta_json", "--cursor-file requires --delta-json")
+	}
 	projectRoot = canonicalProjectRoot(projectRoot)
+	if deltaJSON {
+		if cursorFile == "" {
+			cursorFile = sessionTreeDeltaCursorFile(projectRoot, sessionFilter)
+		}
+		resolvedCursor, err := expandAndCleanPath(cursorFile)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", err)
+		}
+		cursorFile = resolvedCursor
+	}
 	metas, err := loadSessionMetasForProject(projectRoot, allHashes)
 	if err != nil {
 		return commandErrorf(jsonOut, "session_tree_build_failed", "failed to build session tree: %v", err)
@@ -190,6 +224,43 @@ func cmdSessionTree(args []string) int {
 		}
 		result.Delta = deltaResult
 	}
+	deltaAdded := []sessionTreeRow{}
+	deltaRemoved := []sessionTreeRow{}
+	deltaChanged := []sessionTreeRow{}
+	if deltaJSON {
+		current := make(map[string]sessionTreeRow, len(rows))
+		for _, row := range rows {
+			current[row.Session] = row
+		}
+		prev, prevErr := loadSessionTreeDeltaCursor(cursorFile)
+		if prevErr != nil {
+			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", prevErr)
+		}
+		for session, row := range current {
+			prevRow, ok := prev.Rows[session]
+			if !ok {
+				deltaAdded = append(deltaAdded, row)
+				continue
+			}
+			if !sessionTreeRowsEqual(row, prevRow) {
+				deltaChanged = append(deltaChanged, row)
+			}
+		}
+		for session, prevRow := range prev.Rows {
+			if _, ok := current[session]; !ok {
+				deltaRemoved = append(deltaRemoved, prevRow)
+			}
+		}
+		sort.Slice(deltaAdded, func(i, j int) bool { return deltaAdded[i].Session < deltaAdded[j].Session })
+		sort.Slice(deltaRemoved, func(i, j int) bool { return deltaRemoved[i].Session < deltaRemoved[j].Session })
+		sort.Slice(deltaChanged, func(i, j int) bool { return deltaChanged[i].Session < deltaChanged[j].Session })
+		if err := saveSessionTreeDeltaCursor(cursorFile, sessionTreeDeltaCursor{
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+			Rows:      current,
+		}); err != nil {
+			return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --cursor-file: %v", err)
+		}
+	}
 
 	if jsonOut {
 		if jsonMin {
@@ -202,6 +273,14 @@ func cmdSessionTree(args []string) int {
 				payload["added"] = flattenSessionTreeRowsMin(result.Delta.Added)
 				payload["removed"] = flattenSessionTreeRowsMin(result.Delta.Removed)
 				payload["deltaCount"] = result.Delta.Count
+			} else if deltaJSON {
+				payload["delta"] = map[string]any{
+					"added":   flattenSessionTreeRowsMin(deltaAdded),
+					"removed": flattenSessionTreeRowsMin(deltaRemoved),
+					"changed": flattenSessionTreeRowsMin(deltaChanged),
+					"count":   len(deltaAdded) + len(deltaRemoved) + len(deltaChanged),
+				}
+				payload["cursorFile"] = cursorFile
 			} else if flat || withState {
 				payload["rows"] = flattenSessionTreeRowsMin(result.Rows)
 			} else {
@@ -210,7 +289,38 @@ func cmdSessionTree(args []string) int {
 			writeJSON(payload)
 			return 0
 		}
+		if deltaJSON {
+			resultPayload := map[string]any{
+				"session":           result.Session,
+				"projectRoot":       result.ProjectRoot,
+				"allHashes":         result.AllHashes,
+				"activeOnly":        result.ActiveOnly,
+				"flat":              result.Flat,
+				"withState":         result.WithState,
+				"nodeCount":         result.NodeCount,
+				"totalNodeCount":    result.TotalNodeCount,
+				"filteredNodeCount": result.FilteredNodeCount,
+				"delta": map[string]any{
+					"added":   deltaAdded,
+					"removed": deltaRemoved,
+					"changed": deltaChanged,
+					"count":   len(deltaAdded) + len(deltaRemoved) + len(deltaChanged),
+				},
+				"cursorFile": cursorFile,
+			}
+			if flat || withState {
+				resultPayload["rows"] = result.Rows
+			} else {
+				resultPayload["roots"] = result.Roots
+			}
+			writeJSON(resultPayload)
+			return 0
+		}
 		writeJSON(result)
+		return 0
+	}
+	if deltaJSON {
+		fmt.Printf("delta added=%d removed=%d changed=%d cursor=%s\n", len(deltaAdded), len(deltaRemoved), len(deltaChanged), cursorFile)
 		return 0
 	}
 	if flat {
@@ -326,6 +436,62 @@ func computeSessionTreeDelta(projectRoot string, rows []sessionTreeRow) (*sessio
 
 func sessionTreeDeltaStateFile(projectRoot string) string {
 	return fmt.Sprintf("/tmp/.lisa-%s-tree-delta.json", projectHash(projectRoot))
+}
+
+func sessionTreeDeltaCursorFile(projectRoot, sessionFilter string) string {
+	scope := strings.TrimSpace(sessionFilter)
+	if scope == "" {
+		scope = "all"
+	}
+	return fmt.Sprintf("/tmp/.lisa-%s-tree-delta-cursor-%s.json", projectHash(projectRoot), sessionArtifactID(scope))
+}
+
+func loadSessionTreeDeltaCursor(path string) (sessionTreeDeltaCursor, error) {
+	out := sessionTreeDeltaCursor{
+		Rows: map[string]sessionTreeRow{},
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return out, err
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return out, nil
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return out, err
+	}
+	if out.Rows == nil {
+		out.Rows = map[string]sessionTreeRow{}
+	}
+	return out, nil
+}
+
+func saveSessionTreeDeltaCursor(path string, cursor sessionTreeDeltaCursor) error {
+	if cursor.Rows == nil {
+		cursor.Rows = map[string]sessionTreeRow{}
+	}
+	data, err := json.MarshalIndent(cursor, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return writeFileAtomic(path, data)
+}
+
+func sessionTreeRowsEqual(a, b sessionTreeRow) bool {
+	return a.Session == b.Session &&
+		a.ParentSession == b.ParentSession &&
+		a.Agent == b.Agent &&
+		a.Mode == b.Mode &&
+		a.Status == b.Status &&
+		a.SessionState == b.SessionState &&
+		a.ProjectRoot == b.ProjectRoot &&
+		a.CreatedAt == b.CreatedAt
 }
 
 func flattenSessionTreeRowsMin(rows []sessionTreeRow) []map[string]any {

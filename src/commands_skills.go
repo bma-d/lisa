@@ -44,19 +44,25 @@ type skillsDoctorTarget struct {
 	RepoContentHash string   `json:"repoContentHash,omitempty"`
 	Status          string   `json:"status"`
 	MissingCommands []string `json:"missingCommands,omitempty"`
+	MissingFlags    []string `json:"missingFlags,omitempty"`
 	Detail          string   `json:"detail,omitempty"`
 	Remediation     []string `json:"remediation,omitempty"`
+	Fixed           bool     `json:"fixed,omitempty"`
+	FixError        string   `json:"fixError,omitempty"`
 }
 
 type skillsDoctorSummary struct {
-	OK             bool                 `json:"ok"`
-	Deep           bool                 `json:"deep,omitempty"`
-	RepoRoot       string               `json:"repoRoot"`
-	RepoSkillPath  string               `json:"repoSkillPath"`
-	RepoVersion    string               `json:"repoVersion,omitempty"`
-	CapabilityHash string               `json:"capabilityHash"`
-	Targets        []skillsDoctorTarget `json:"targets"`
-	ErrorCode      string               `json:"errorCode,omitempty"`
+	OK             bool                         `json:"ok"`
+	Deep           bool                         `json:"deep,omitempty"`
+	Fix            bool                         `json:"fix,omitempty"`
+	RepoRoot       string                       `json:"repoRoot"`
+	RepoSkillPath  string                       `json:"repoSkillPath"`
+	RepoVersion    string                       `json:"repoVersion,omitempty"`
+	CapabilityHash string                       `json:"capabilityHash"`
+	ContractCheck  bool                         `json:"contractCheck,omitempty"`
+	ContractChecks []sessionContractCheckResult `json:"contractChecks,omitempty"`
+	Targets        []skillsDoctorTarget         `json:"targets"`
+	ErrorCode      string                       `json:"errorCode,omitempty"`
 }
 
 func cmdSkills(args []string) int {
@@ -225,6 +231,8 @@ func cmdSkillsDoctor(args []string) int {
 	jsonOut := hasJSONFlag(args)
 	deep := false
 	explainDrift := false
+	fix := false
+	contractCheck := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -240,6 +248,10 @@ func cmdSkillsDoctor(args []string) int {
 			deep = true
 		case "--explain-drift":
 			explainDrift = true
+		case "--fix":
+			fix = true
+		case "--contract-check":
+			contractCheck = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -257,6 +269,7 @@ func cmdSkillsDoctor(args []string) int {
 	}
 	requiredCommands := requiredSkillCommandNames()
 	capHash := capabilityContractHash()
+	repoRootCanonical := canonicalProjectRoot(repoRoot)
 	repoContentHash := ""
 	if deep {
 		repoContentHash, err = hashDirectoryContents(repoSkillPath)
@@ -276,76 +289,59 @@ func cmdSkillsDoctor(args []string) int {
 				Detail: pathErr.Error(),
 			}
 			if explainDrift {
-				targetErr.Remediation = skillsDoctorRemediation(targetErr, canonicalProjectRoot(repoRoot))
+				targetErr.Remediation = skillsDoctorRemediation(targetErr, repoRootCanonical)
 			}
 			targets = append(targets, targetErr)
 			continue
 		}
-		info := skillsDoctorTarget{
-			Target: target,
-			Path:   path,
-		}
-		if !pathExists(path) {
-			info.Status = "missing"
-			info.Detail = "skill directory not found"
-			if explainDrift {
-				info.Remediation = skillsDoctorRemediation(info, canonicalProjectRoot(repoRoot))
-			}
-			targets = append(targets, info)
-			continue
-		}
-		info.Exists = true
-		version, versionErr := readSkillVersion(filepath.Join(path, "SKILL.md"))
-		if versionErr != nil {
-			info.Status = "error"
-			info.Detail = versionErr.Error()
-			if explainDrift {
-				info.Remediation = skillsDoctorRemediation(info, canonicalProjectRoot(repoRoot))
-			}
-			targets = append(targets, info)
-			continue
-		}
-		info.Version = version
-		info.MissingCommands = detectMissingSkillCommands(filepath.Join(path, "data", "commands.md"), requiredCommands)
-		if deep {
-			info.RepoContentHash = repoContentHash
-			contentHash, hashErr := hashDirectoryContents(path)
-			if hashErr != nil {
-				info.Status = "error"
-				info.Detail = fmt.Sprintf("content hash failed: %v", hashErr)
-				if explainDrift {
-					info.Remediation = skillsDoctorRemediation(info, canonicalProjectRoot(repoRoot))
-				}
-				targets = append(targets, info)
-				continue
-			}
-			info.ContentHash = contentHash
-		}
-		if version == repoVersion && len(info.MissingCommands) == 0 {
-			info.Status = "up_to_date"
-		} else {
-			info.Status = "outdated"
-			if version != repoVersion {
-				info.Detail = fmt.Sprintf("version drift: repo=%s installed=%s", repoVersion, version)
-			}
-			if len(info.MissingCommands) > 0 {
-				if info.Detail != "" {
-					info.Detail += "; "
-				}
-				info.Detail += "command contract drift"
-			}
-		}
-		if deep && info.Status == "up_to_date" && info.ContentHash != info.RepoContentHash {
-			info.Status = "outdated"
-			if info.Detail != "" {
-				info.Detail += "; "
-			}
-			info.Detail += "content drift"
-		}
+		info := inspectSkillsDoctorTarget(path, target, repoVersion, repoContentHash, deep, requiredCommands, contractCheck)
 		if explainDrift {
-			info.Remediation = skillsDoctorRemediation(info, canonicalProjectRoot(repoRoot))
+			info.Remediation = skillsDoctorRemediation(info, repoRootCanonical)
 		}
 		targets = append(targets, info)
+	}
+	if fix {
+		needsFix := false
+		for _, target := range targets {
+			if target.Status != "up_to_date" {
+				needsFix = true
+				break
+			}
+		}
+		if needsFix {
+			sourcePath, cleanupSource, sourceErr := resolveSkillsInstallSource(repoRoot)
+			if sourceErr != nil {
+				return commandErrorf(jsonOut, "skills_doctor_fix_source_failed", "failed resolving install source for --fix: %v", sourceErr)
+			}
+			defer cleanupSource()
+			for idx := range targets {
+				target := &targets[idx]
+				if target.Status == "up_to_date" {
+					continue
+				}
+				if strings.TrimSpace(target.Path) == "" {
+					target.FixError = "target path unavailable for auto-fix"
+					continue
+				}
+				if _, copyErr := copyDirReplace(sourcePath, target.Path); copyErr != nil {
+					target.FixError = copyErr.Error()
+					target.Status = "error"
+					if target.Detail != "" {
+						target.Detail += "; "
+					}
+					target.Detail += "auto-fix install failed"
+					continue
+				}
+				updated := inspectSkillsDoctorTarget(target.Path, target.Target, repoVersion, repoContentHash, deep, requiredCommands, contractCheck)
+				updated.Fixed = true
+				targets[idx] = updated
+			}
+		}
+		if explainDrift {
+			for idx := range targets {
+				targets[idx].Remediation = skillsDoctorRemediation(targets[idx], repoRootCanonical)
+			}
+		}
 	}
 
 	ok := true
@@ -358,11 +354,21 @@ func cmdSkillsDoctor(args []string) int {
 	summary := skillsDoctorSummary{
 		OK:             ok,
 		Deep:           deep,
-		RepoRoot:       canonicalProjectRoot(repoRoot),
+		Fix:            fix,
+		RepoRoot:       repoRootCanonical,
 		RepoSkillPath:  repoSkillPath,
 		RepoVersion:    repoVersion,
 		CapabilityHash: capHash,
+		ContractCheck:  contractCheck,
 		Targets:        targets,
+	}
+	if contractCheck {
+		contractResults, contractOK := runSessionContractChecks(repoRootCanonical)
+		summary.ContractChecks = contractResults
+		if !contractOK {
+			summary.OK = false
+			ok = false
+		}
 	}
 	if !ok {
 		summary.ErrorCode = "skills_doctor_drift_detected"
@@ -381,6 +387,12 @@ func cmdSkillsDoctor(args []string) int {
 		if target.Detail != "" {
 			fmt.Printf("  detail: %s\n", target.Detail)
 		}
+		if target.Fixed {
+			fmt.Println("  fixed: true")
+		}
+		if target.FixError != "" {
+			fmt.Printf("  fix_error: %s\n", target.FixError)
+		}
 		if len(target.MissingCommands) > 0 {
 			fmt.Printf("  missing: %s\n", strings.Join(target.MissingCommands, ", "))
 		}
@@ -391,6 +403,69 @@ func cmdSkillsDoctor(args []string) int {
 		}
 	}
 	return boolExit(ok)
+}
+
+func inspectSkillsDoctorTarget(path, target, repoVersion, repoContentHash string, deep bool, requiredCommands []string, contractCheck bool) skillsDoctorTarget {
+	info := skillsDoctorTarget{
+		Target: target,
+		Path:   path,
+	}
+	if !pathExists(path) {
+		info.Status = "missing"
+		info.Detail = "skill directory not found"
+		return info
+	}
+
+	info.Exists = true
+	version, versionErr := readSkillVersion(filepath.Join(path, "SKILL.md"))
+	if versionErr != nil {
+		info.Status = "error"
+		info.Detail = versionErr.Error()
+		return info
+	}
+	info.Version = version
+	info.MissingCommands = detectMissingSkillCommands(filepath.Join(path, "data", "commands.md"), requiredCommands)
+	if contractCheck {
+		info.MissingFlags = detectMissingSkillFlags(filepath.Join(path, "data", "commands.md"), commandCapabilities)
+	}
+	if deep {
+		info.RepoContentHash = repoContentHash
+		contentHash, hashErr := hashDirectoryContents(path)
+		if hashErr != nil {
+			info.Status = "error"
+			info.Detail = fmt.Sprintf("content hash failed: %v", hashErr)
+			return info
+		}
+		info.ContentHash = contentHash
+	}
+	if version == repoVersion && len(info.MissingCommands) == 0 && len(info.MissingFlags) == 0 {
+		info.Status = "up_to_date"
+	} else {
+		info.Status = "outdated"
+		if version != repoVersion {
+			info.Detail = fmt.Sprintf("version drift: repo=%s installed=%s", repoVersion, version)
+		}
+		if len(info.MissingCommands) > 0 {
+			if info.Detail != "" {
+				info.Detail += "; "
+			}
+			info.Detail += "command contract drift"
+		}
+		if len(info.MissingFlags) > 0 {
+			if info.Detail != "" {
+				info.Detail += "; "
+			}
+			info.Detail += "flag surface drift"
+		}
+	}
+	if deep && info.Status == "up_to_date" && info.ContentHash != info.RepoContentHash {
+		info.Status = "outdated"
+		if info.Detail != "" {
+			info.Detail += "; "
+		}
+		info.Detail += "content drift"
+	}
+	return info
 }
 
 func skillsDoctorRemediation(target skillsDoctorTarget, repoRoot string) []string {
@@ -408,6 +483,9 @@ func skillsDoctorRemediation(target skillsDoctorTarget, repoRoot string) []strin
 		hints = append(hints, baseInstall)
 		if len(target.MissingCommands) > 0 {
 			hints = append(hints, "command drift detected; verify commands.md contract after install")
+		}
+		if len(target.MissingFlags) > 0 {
+			hints = append(hints, "flag drift detected; regenerate commands.md flag tables from lisa capabilities")
 		}
 		hints = append(hints, "if local customizations are required, sync first: "+baseSync)
 		hints = append(hints, "rerun with deep hash check: ./lisa skills doctor --repo-root "+shellQuote(repoRoot)+" --deep --json")
@@ -601,6 +679,29 @@ func detectMissingSkillCommands(commandsPath string, required []string) []string
 	return missing
 }
 
+func detectMissingSkillFlags(commandsPath string, capabilities []commandCapability) []string {
+	raw, err := os.ReadFile(commandsPath)
+	if err != nil {
+		missing := make([]string, 0)
+		for _, cap := range capabilities {
+			for _, flag := range cap.Flags {
+				missing = append(missing, cap.Name+":"+flag)
+			}
+		}
+		return missing
+	}
+	text := string(raw)
+	missing := make([]string, 0)
+	for _, cap := range capabilities {
+		for _, flag := range cap.Flags {
+			if !strings.Contains(text, flag) {
+				missing = append(missing, cap.Name+":"+flag)
+			}
+		}
+	}
+	return missing
+}
+
 func hashDirectoryContents(root string) (string, error) {
 	root = filepath.Clean(strings.TrimSpace(root))
 	if root == "" {
@@ -698,10 +799,18 @@ func copyDirReplace(sourcePath, destinationPath string) (skillsCopySummary, erro
 		return skillsCopySummary{}, fmt.Errorf("source is not a directory: %s", sourcePath)
 	}
 
-	if err := os.RemoveAll(destinationPath); err != nil {
+	parentDir := filepath.Dir(destinationPath)
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
 		return skillsCopySummary{}, err
 	}
-	if err := os.MkdirAll(destinationPath, info.Mode().Perm()); err != nil {
+
+	stageRoot, err := os.MkdirTemp(parentDir, ".lisa-skill-stage-*")
+	if err != nil {
+		return skillsCopySummary{}, err
+	}
+	stagePath := filepath.Join(stageRoot, "next")
+	if err := os.MkdirAll(stagePath, info.Mode().Perm()); err != nil {
+		_ = os.RemoveAll(stageRoot)
 		return skillsCopySummary{}, err
 	}
 
@@ -709,8 +818,50 @@ func copyDirReplace(sourcePath, destinationPath string) (skillsCopySummary, erro
 		Source:      sourcePath,
 		Destination: destinationPath,
 	}
+	if err := copyDirContents(sourcePath, stagePath, &summary); err != nil {
+		_ = os.RemoveAll(stageRoot)
+		return skillsCopySummary{}, err
+	}
 
-	err = filepath.WalkDir(sourcePath, func(path string, d fs.DirEntry, walkErr error) error {
+	destInfo, err := os.Lstat(destinationPath)
+	if err != nil && !os.IsNotExist(err) {
+		_ = os.RemoveAll(stageRoot)
+		return skillsCopySummary{}, err
+	}
+	if err != nil && os.IsNotExist(err) {
+		if err := os.Rename(stagePath, destinationPath); err != nil {
+			_ = os.RemoveAll(stageRoot)
+			return skillsCopySummary{}, err
+		}
+		_ = os.RemoveAll(stageRoot)
+		return summary, nil
+	}
+	if destInfo == nil {
+		_ = os.RemoveAll(stageRoot)
+		return skillsCopySummary{}, fmt.Errorf("destination stat unavailable: %s", destinationPath)
+	}
+
+	backupPath := filepath.Join(parentDir, fmt.Sprintf(".lisa-skill-backup-%d", time.Now().UnixNano()))
+	if err := os.Rename(destinationPath, backupPath); err != nil {
+		_ = os.RemoveAll(stageRoot)
+		return skillsCopySummary{}, err
+	}
+	if err := os.Rename(stagePath, destinationPath); err != nil {
+		rollbackErr := os.Rename(backupPath, destinationPath)
+		_ = os.RemoveAll(stageRoot)
+		if rollbackErr != nil {
+			return skillsCopySummary{}, fmt.Errorf("replace failed: %v (rollback failed: %v)", err, rollbackErr)
+		}
+		return skillsCopySummary{}, err
+	}
+	_ = os.RemoveAll(backupPath)
+	_ = os.RemoveAll(stageRoot)
+
+	return summary, nil
+}
+
+func copyDirContents(sourcePath, destinationPath string, summary *skillsCopySummary) error {
+	return filepath.WalkDir(sourcePath, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -754,11 +905,6 @@ func copyDirReplace(sourcePath, destinationPath string) (skillsCopySummary, erro
 		}
 		return nil
 	})
-	if err != nil {
-		return skillsCopySummary{}, err
-	}
-
-	return summary, nil
 }
 
 func copyFile(sourcePath, destinationPath string, mode fs.FileMode) error {

@@ -24,27 +24,30 @@ type smokePromptProbe struct {
 }
 
 type sessionSmokeSummary struct {
-	OK             bool               `json:"ok"`
-	ProjectRoot    string             `json:"projectRoot"`
-	Levels         int                `json:"levels"`
-	Model          string             `json:"model,omitempty"`
-	PromptStyle    string             `json:"promptStyle,omitempty"`
-	PromptProbe    *smokePromptProbe  `json:"promptProbe,omitempty"`
-	PromptMatrix   []smokeMatrixProbe `json:"promptMatrix,omitempty"`
-	Chaos          string             `json:"chaos,omitempty"`
-	WorkDir        string             `json:"workDir"`
-	KeepSessions   bool               `json:"keepSessions"`
-	ReportMin      bool               `json:"reportMin,omitempty"`
-	ChaosReport    bool               `json:"chaosReport,omitempty"`
-	ChaosResult    map[string]any     `json:"chaosResult,omitempty"`
-	Sessions       []string           `json:"sessions"`
-	Markers        []string           `json:"markers"`
-	MissingMarkers []string           `json:"missingMarkers,omitempty"`
-	Monitor        monitorResult      `json:"monitor"`
-	Tree           *sessionTreeResult `json:"tree,omitempty"`
-	Error          string             `json:"error,omitempty"`
-	ErrorCode      string             `json:"errorCode,omitempty"`
-	CleanupErrors  []string           `json:"cleanupErrors,omitempty"`
+	OK              bool               `json:"ok"`
+	ProjectRoot     string             `json:"projectRoot"`
+	Levels          int                `json:"levels"`
+	Model           string             `json:"model,omitempty"`
+	PromptStyle     string             `json:"promptStyle,omitempty"`
+	PromptProbe     *smokePromptProbe  `json:"promptProbe,omitempty"`
+	PromptMatrix    []smokeMatrixProbe `json:"promptMatrix,omitempty"`
+	Chaos           string             `json:"chaos,omitempty"`
+	WorkDir         string             `json:"workDir"`
+	KeepSessions    bool               `json:"keepSessions"`
+	ReportMin       bool               `json:"reportMin,omitempty"`
+	ChaosReport     bool               `json:"chaosReport,omitempty"`
+	ChaosResult     map[string]any     `json:"chaosResult,omitempty"`
+	ExportArtifacts string             `json:"exportArtifacts,omitempty"`
+	ExportedPath    string             `json:"exportedPath,omitempty"`
+	ExportError     string             `json:"exportError,omitempty"`
+	Sessions        []string           `json:"sessions"`
+	Markers         []string           `json:"markers"`
+	MissingMarkers  []string           `json:"missingMarkers,omitempty"`
+	Monitor         monitorResult      `json:"monitor"`
+	Tree            *sessionTreeResult `json:"tree,omitempty"`
+	Error           string             `json:"error,omitempty"`
+	ErrorCode       string             `json:"errorCode,omitempty"`
+	CleanupErrors   []string           `json:"cleanupErrors,omitempty"`
 }
 
 type smokeMatrixProbe struct {
@@ -68,6 +71,7 @@ func cmdSessionSmoke(args []string) int {
 	keepSessions := false
 	reportMin := false
 	chaosReport := false
+	exportArtifacts := ""
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -140,6 +144,12 @@ func cmdSessionSmoke(args []string) int {
 			reportMin = true
 		case "--chaos-report":
 			chaosReport = true
+		case "--export-artifacts":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --export-artifacts")
+			}
+			exportArtifacts = args[i+1]
+			i++
 		case "--json":
 			jsonOut = true
 		default:
@@ -165,6 +175,13 @@ func cmdSessionSmoke(args []string) int {
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
+	if strings.TrimSpace(exportArtifacts) != "" {
+		exportPath, pathErr := expandAndCleanPath(exportArtifacts)
+		if pathErr != nil {
+			return commandErrorf(jsonOut, "invalid_export_artifacts", "invalid --export-artifacts: %v", pathErr)
+		}
+		exportArtifacts = exportPath
+	}
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 
@@ -198,18 +215,19 @@ func cmdSessionSmoke(args []string) int {
 	}
 
 	summary := sessionSmokeSummary{
-		OK:           false,
-		ProjectRoot:  projectRoot,
-		Levels:       levels,
-		Model:        model,
-		PromptStyle:  promptStyle,
-		Chaos:        chaos,
-		WorkDir:      workDir,
-		KeepSessions: keepSessions,
-		ReportMin:    reportMin,
-		ChaosReport:  chaosReport,
-		Sessions:     sessions,
-		Markers:      markers,
+		OK:              false,
+		ProjectRoot:     projectRoot,
+		Levels:          levels,
+		Model:           model,
+		PromptStyle:     promptStyle,
+		Chaos:           chaos,
+		WorkDir:         workDir,
+		KeepSessions:    keepSessions,
+		ReportMin:       reportMin,
+		ChaosReport:     chaosReport,
+		ExportArtifacts: exportArtifacts,
+		Sessions:        sessions,
+		Markers:         markers,
 	}
 
 	if !keepSessions {
@@ -252,7 +270,7 @@ func cmdSessionSmoke(args []string) int {
 				spawnLine = strings.TrimSuffix(spawnLine, " --json") + " --model " + shellQuote(model) + " --json"
 			}
 			lines = append(lines, spawnLine,
-				fmt.Sprintf(`"$BIN" session monitor --session %s --project-root "$ROOT" --poll-interval %d --max-polls %d --expect terminal --json`,
+				fmt.Sprintf(`"$BIN" session monitor --session %s --project-root "$ROOT" --poll-interval %d --max-polls %d --stop-on-waiting false --expect terminal --json`,
 					shellQuote(child), pollInterval, maxPolls),
 				fmt.Sprintf(`"$BIN" session capture --session %s --project-root "$ROOT" --raw --lines %d`,
 					shellQuote(child), 120+idx*80),
@@ -370,11 +388,11 @@ func cmdSessionSmoke(args []string) int {
 	if summary.ChaosReport {
 		expectedFailure, expectedCodes := smokeChaosContract(summary.Chaos)
 		chaosResult := map[string]any{
-			"expectedFailure":   expectedFailure,
+			"expectedFailure":    expectedFailure,
 			"expectedErrorCodes": expectedCodes,
-			"observedFailure":   false,
-			"observedErrorCode": "",
-			"matched":           !expectedFailure,
+			"observedFailure":    false,
+			"observedErrorCode":  "",
+			"matched":            !expectedFailure,
 		}
 		summary.ChaosResult = chaosResult
 		if expectedFailure {
@@ -390,14 +408,22 @@ func cmdSessionSmoke(args []string) int {
 		}
 	}
 	if jsonOut {
+		maybeExportSmokeArtifacts(&summary)
 		writeSmokeSummaryJSON(summary, reportMin)
 		return 0
 	}
+	maybeExportSmokeArtifacts(&summary)
 	fmt.Printf("PASS: nested smoke %d-level\n", levels)
 	for i, session := range sessions {
 		fmt.Printf("L%d=%s\n", i+1, session)
 	}
 	fmt.Printf("Artifacts: %s\n", workDir)
+	if summary.ExportedPath != "" {
+		fmt.Printf("Exported: %s\n", summary.ExportedPath)
+	}
+	if summary.ExportError != "" {
+		fmt.Fprintf(os.Stderr, "export warning: %s\n", summary.ExportError)
+	}
 	return 0
 }
 
@@ -417,11 +443,11 @@ func emitSmokeFailure(jsonOut bool, reportMin bool, summary *sessionSmokeSummary
 			}
 		}
 		summary.ChaosResult = map[string]any{
-			"expectedFailure":   expectedFailure,
+			"expectedFailure":    expectedFailure,
 			"expectedErrorCodes": expectedCodes,
-			"observedFailure":   true,
-			"observedErrorCode": errorCode,
-			"matched":           matched,
+			"observedFailure":    true,
+			"observedErrorCode":  errorCode,
+			"matched":            matched,
 		}
 		if matched {
 			summary.OK = true
@@ -435,6 +461,7 @@ func emitSmokeFailure(jsonOut bool, reportMin bool, summary *sessionSmokeSummary
 			return 0
 		}
 	}
+	maybeExportSmokeArtifacts(summary)
 	if jsonOut {
 		writeSmokeSummaryJSON(*summary, reportMin)
 		return 1
@@ -473,6 +500,12 @@ func writeSmokeSummaryJSON(summary sessionSmokeSummary, reportMin bool) {
 	if len(summary.CleanupErrors) > 0 {
 		payload["cleanupErrorCount"] = len(summary.CleanupErrors)
 	}
+	if summary.ExportedPath != "" {
+		payload["exportedPath"] = summary.ExportedPath
+	}
+	if summary.ExportError != "" {
+		payload["exportError"] = summary.ExportError
+	}
 	if len(summary.PromptMatrix) > 0 {
 		failed := make([]map[string]any, 0)
 		for _, probe := range summary.PromptMatrix {
@@ -490,6 +523,25 @@ func writeSmokeSummaryJSON(summary sessionSmokeSummary, reportMin bool) {
 		}
 	}
 	writeJSON(payload)
+}
+
+func maybeExportSmokeArtifacts(summary *sessionSmokeSummary) {
+	if summary == nil {
+		return
+	}
+	if strings.TrimSpace(summary.ExportArtifacts) == "" || strings.TrimSpace(summary.WorkDir) == "" {
+		return
+	}
+	if summary.ExportedPath != "" || summary.ExportError != "" {
+		return
+	}
+	runLabel := filepath.Base(summary.WorkDir)
+	destination := filepath.Join(summary.ExportArtifacts, runLabel)
+	if _, err := copyDirReplace(summary.WorkDir, destination); err != nil {
+		summary.ExportError = err.Error()
+		return
+	}
+	summary.ExportedPath = destination
 }
 
 func smokeChaosContract(mode string) (bool, []string) {

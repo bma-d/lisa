@@ -1,10 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +17,7 @@ var computeSessionStatusFn = computeSessionStatus
 var monitorWaitingTurnCompleteFn = monitorWaitingTurnComplete
 var captureSessionTranscriptFn = captureSessionTranscript
 var shouldUseTranscriptCaptureFn = shouldUseTranscriptCapture
+var monitorWebhookHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 type waitingTurnCompleteResult struct {
 	Ready        bool
@@ -436,6 +440,8 @@ func cmdSessionMonitor(args []string) int {
 	expect := "any"
 	pollInterval := defaultPollIntervalSeconds
 	maxPolls := defaultMaxPolls
+	maxPollsSet := false
+	timeoutSeconds := 0
 	stopOnWaiting := true
 	waitingRequiresTurnComplete := false
 	untilMarker := ""
@@ -449,6 +455,7 @@ func cmdSessionMonitor(args []string) int {
 	emitHandoff := false
 	handoffCursorFile := ""
 	eventBudget := 0
+	webhook := ""
 	verbose := false
 
 	for i := 0; i < len(args); i++ {
@@ -509,6 +516,17 @@ func cmdSessionMonitor(args []string) int {
 				return commandError(jsonOut, "invalid_max_polls", "invalid --max-polls")
 			}
 			maxPolls = n
+			maxPollsSet = true
+			i++
+		case "--timeout-seconds":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --timeout-seconds")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n <= 0 {
+				return commandError(jsonOut, "invalid_timeout_seconds", "invalid --timeout-seconds")
+			}
+			timeoutSeconds = n
 			i++
 		case "--stop-on-waiting":
 			if i+1 >= len(args) {
@@ -580,6 +598,12 @@ func cmdSessionMonitor(args []string) int {
 			}
 			eventBudget = n
 			i++
+		case "--webhook":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --webhook")
+			}
+			webhook = strings.TrimSpace(args[i+1])
+			i++
 		case "--verbose":
 			verbose = true
 		default:
@@ -618,6 +642,26 @@ func cmdSessionMonitor(args []string) int {
 			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --handoff-cursor-file: %v", expandErr)
 		}
 		handoffCursorFile = expandedCursor
+	}
+	if webhook != "" {
+		normalizedWebhook, webhookErr := normalizeMonitorWebhookTarget(webhook)
+		if webhookErr != nil {
+			return commandErrorf(jsonOut, "invalid_webhook", "invalid --webhook: %v", webhookErr)
+		}
+		webhook = normalizedWebhook
+	}
+	if timeoutSeconds > 0 {
+		timeoutPolls := int(math.Ceil(float64(timeoutSeconds) / float64(pollInterval)))
+		if timeoutPolls < 1 {
+			timeoutPolls = 1
+		}
+		if maxPollsSet {
+			if timeoutPolls < maxPolls {
+				maxPolls = timeoutPolls
+			}
+		} else {
+			maxPolls = timeoutPolls
+		}
 	}
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
@@ -674,6 +718,21 @@ func cmdSessionMonitor(args []string) int {
 				} else {
 					writeMonitorStreamHandoff(status, poll, jsonMin)
 				}
+			}
+		}
+		if webhook != "" {
+			pollPayload := map[string]any{
+				"event":        "poll",
+				"poll":         poll,
+				"session":      status.Session,
+				"status":       normalizeMonitorFinalStatus(status.SessionState, status.Status),
+				"sessionState": status.SessionState,
+				"todosDone":    status.TodosDone,
+				"todosTotal":   status.TodosTotal,
+				"waitEstimate": status.WaitEstimate,
+			}
+			if err := emitMonitorWebhook(webhook, pollPayload); err != nil {
+				return commandErrorf(jsonOut, "webhook_emit_failed", "failed delivering --webhook poll payload: %v", err)
 			}
 		}
 
@@ -772,6 +831,29 @@ func cmdSessionMonitor(args []string) int {
 					return 1
 				}
 			}
+			if webhook != "" {
+				errorCode := ""
+				if !expectationMet {
+					errorCode = "monitor_expectation_mismatch"
+				} else if !untilStateMatched && !untilJSONPathMatched && !(reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input")) {
+					errorCode = "monitor_" + reason
+				}
+				finalPayload := map[string]any{
+					"event":       "final",
+					"session":     result.Session,
+					"finalState":  result.FinalState,
+					"finalStatus": result.FinalStatus,
+					"exitReason":  result.ExitReason,
+					"polls":       result.Polls,
+					"nextOffset":  result.NextOffset,
+				}
+				if errorCode != "" {
+					finalPayload["errorCode"] = errorCode
+				}
+				if err := emitMonitorWebhook(webhook, finalPayload); err != nil {
+					return commandErrorf(jsonOut, "webhook_emit_failed", "failed delivering --webhook final payload: %v", err)
+				}
+			}
 			if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+finalReason); err != nil {
 				fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 			}
@@ -819,6 +901,21 @@ func cmdSessionMonitor(args []string) int {
 			return 1
 		}
 	}
+	if webhook != "" {
+		finalPayload := map[string]any{
+			"event":       "final",
+			"session":     result.Session,
+			"finalState":  result.FinalState,
+			"finalStatus": result.FinalStatus,
+			"exitReason":  result.ExitReason,
+			"polls":       result.Polls,
+			"nextOffset":  result.NextOffset,
+			"errorCode":   "monitor_timeout",
+		}
+		if err := emitMonitorWebhook(webhook, finalPayload); err != nil {
+			return commandErrorf(jsonOut, "webhook_emit_failed", "failed delivering --webhook final payload: %v", err)
+		}
+	}
 	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+result.ExitReason); err != nil {
 		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
 	}
@@ -837,6 +934,58 @@ func monitorEventLimitFromBudget(eventBudget int) int {
 		limit = 24
 	}
 	return limit
+}
+
+func normalizeMonitorWebhookTarget(raw string) (string, error) {
+	target := strings.TrimSpace(raw)
+	if target == "" {
+		return "", fmt.Errorf("value is required")
+	}
+	lower := strings.ToLower(target)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return target, nil
+	}
+	return expandAndCleanPath(target)
+}
+
+func emitMonitorWebhook(target string, payload map[string]any) error {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["at"] = nowFn().UTC().Format(time.RFC3339)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	lower := strings.ToLower(strings.TrimSpace(target))
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		req, reqErr := http.NewRequest(http.MethodPost, target, bytes.NewReader(data))
+		if reqErr != nil {
+			return reqErr
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, postErr := monitorWebhookHTTPClient.Do(req)
+		if postErr != nil {
+			return postErr
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := file.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	return nil
 }
 
 func computeSessionCaptureNextOffset(session string) int {

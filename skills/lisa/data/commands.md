@@ -5,6 +5,24 @@ Subcommands are separate argv tokens: `$LISA_BIN session spawn ...` (not `$LISA_
 For `--json` workflows, parse `stdout` as contract data and treat `stderr` as advisory/logging.
 Use `--project-root` across session flows (and optionally `agent build-cmd`) for deterministic root context.
 
+## Command index
+
+Contract coverage list (must stay aligned with `lisa capabilities`):
+`capabilities`, `doctor`, `cleanup`, `version`,
+`session name`, `session spawn`, `session detect-nested`, `session send`, `session snapshot`, `session status`, `session explain`,
+`session monitor`, `session capture`, `session packet`, `session contract-check`, `session schema`, `session checkpoint`, `session dedupe`,
+`session next`, `session aggregate`, `session prompt-lint`, `session diff-pack`, `session anomaly`, `session budget-enforce`, `session replay`,
+`session handoff`, `session context-pack`, `session route`, `session autopilot`, `session guard`, `session tree`, `session smoke`,
+`session preflight`, `session list`, `session exists`, `session kill`, `session kill-all`,
+`agent build-cmd`,
+`oauth add`, `oauth list`, `oauth remove`,
+`skills sync`, `skills doctor`, `skills install`.
+
+## Contract flag lexicon
+
+Canonical flag surface mirror for `session contract-check` / `skills doctor --contract-check`.
+`--json --dry-run --include-tmux-default --version -version -v --agent --mode --project-root --tag --nested-policy --nesting-intent --session --prompt --command --agent-args --model --width --height --cleanup-all-hashes --detect-nested --no-dangerously-skip-permissions --rewrite --why --text --keys --enter --json-min --lines --delta-from --markers --keep-noise --strip-noise --fail-not-found --full --events --recent --since --poll-interval --max-polls --timeout-seconds --stop-on-waiting --waiting-requires-turn-complete --until-marker --until-state --until-jsonpath --expect --stream-json --emit-handoff --handoff-cursor-file --event-budget --webhook --verbose --raw --cursor-file --markers-json --summary --summary-style --token-budget --semantic-delta --fields --action --file --strategy --task-hash --release --budget --sessions --dedupe --strict --redact --from --max-tokens --max-seconds --max-steps --tokens --seconds --steps --from-checkpoint --compress --for --from-handoff --goal --profile --topology --cost-estimate --from-state --emit-runbook --capture-lines --kill-after --resume-from --shared-tmux --enforce --advice-only --machine-policy --all-hashes --active-only --delta --delta-json --flat --with-state --levels --prompt-style --matrix-file --chaos --chaos-report --keep-sessions --report-min --export-artifacts --auto-model --auto-model-candidates --fast --all-sockets --project-only --with-next-action --priority --stale --prune-preview --watch-json --watch-interval --watch-cycles --token --stdin --id --path --repo-root --deep --explain-drift --fix --contract-check --to --project-path`
+
 ## session spawn
 
 Create/start an agent session.
@@ -259,7 +277,11 @@ Notes:
 
 Compact handoff packet for another orchestrator/agent loop.
 
-Flags: `--session` (required), `--project-root`, `--agent`, `--mode`, `--events`, `--delta-from`, `--cursor-file`, `--json`, `--json-min`.
+Flags: `--session` (required), `--project-root`, `--agent`, `--mode`, `--events`, `--delta-from`, `--cursor-file`, `--compress`, `--json`, `--json-min`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--compress` | `none` | `none|zstd`; `zstd` emits `compression`,`encoding`,`compressedPayload`,`uncompressedBytes`,`compressedBytes` and omits `recent` |
 
 JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","summary","recent?","deltaFrom?","nextDeltaOffset?","deltaCount?"}`.
 
@@ -267,7 +289,11 @@ JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","su
 
 Token-budgeted context packet with state + recent events + capture tail.
 
-Flags: `--for` (alias `--session`, required), `--project-root`, `--agent`, `--mode`, `--events`, `--lines`, `--token-budget`, `--strategy`, `--from-handoff`, `--json`, `--json-min`.
+Flags: `--for` (alias `--session`, required), `--project-root`, `--agent`, `--mode`, `--events`, `--lines`, `--token-budget`, `--strategy`, `--from-handoff`, `--redact`, `--json`, `--json-min`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--redact` | `none` | Apply redaction rules to `pack` (`none|all|paths|emails|secrets|numbers|tokens`) |
 
 JSON: `{"session","sessionState","status","reason","nextAction","nextOffset","strategy","pack","tokenBudget","truncated"}`.
 
@@ -275,10 +301,19 @@ JSON: `{"session","sessionState","status","reason","nextAction","nextOffset","st
 
 Recommend mode/policy/model defaults for orchestration goal.
 
-Flags: `--goal` (`nested|analysis|exec`), `--agent`, `--prompt`, `--model`, `--budget`, `--from-state`, `--project-root`, `--emit-runbook`, `--json`.
+Flags: `--goal` (`nested|analysis|exec`), `--agent`, `--prompt`, `--model`, `--profile`, `--budget`, `--topology`, `--cost-estimate`, `--from-state`, `--project-root`, `--emit-runbook`, `--json`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--profile` | `""` | Route preset (`codex-spark|claude`); sets agent/default model |
+| `--topology` | `""` | Optional roles CSV (`planner|workers|reviewer`); emits topology graph |
+| `--cost-estimate` | false | Include `costEstimate` token/time estimate in JSON |
 
 JSON includes command preview + routing rationale:
 `{"goal","agent","mode","nestedPolicy","nestingIntent","model","command","monitorHint","nestedDetection","rationale","fromState?","runbook?"}`.
+
+Route shape note:
+- `runbook` is an object with `steps[]` (not a flat array).
 
 ## session guard
 
@@ -307,7 +342,7 @@ Resume input:
 
 | Command | Key Flags | Output |
 |---|---|---|
-| `session list` | `--all-sockets`, `--project-only`, `--active-only`, `--with-next-action`, `--stale`, `--prune-preview`, `--delta-json`, `--cursor-file` (for `--delta-json`), `--project-root`, `--json`, `--json-min` | names (text) or JSON |
+| `session list` | `--all-sockets`, `--project-only`, `--active-only`, `--with-next-action`, `--stale`, `--prune-preview`, `--delta-json`, `--cursor-file` (for `--delta-json`), `--watch-json`, `--watch-interval`, `--watch-cycles`, `--project-root`, `--json`, `--json-min` | names (text) or JSON |
 | `session exists` | `--session`, `--project-root`, `--json` | `true`/`false` (exit 0/1) or JSON |
 | `session kill` | `--session`, `--project-root`, `--cleanup-all-hashes`, `--json` | `ok` or JSON (`found:false` + exit `1` when missing) |
 | `session kill-all` | `--project-only`, `--project-root`, `--cleanup-all-hashes`, `--json` | `killed N sessions` or JSON |
@@ -317,11 +352,15 @@ Scope/retention:
 - `session kill`/`kill-all` preserve event files for post-mortem.
 - `session list` is socket-bound; pass explicit `--project-root` for deterministic scope.
 - `session list --all-sockets` scans metadata-known project roots and returns active sessions only.
+- `session list --json-min --with-next-action` includes `items[]` detail rows plus `sessions[]` names.
 - `session list --stale` adds metadata stale analysis (`historicalCount`, `staleCount`, and stale list in full JSON/text).
 - `session list --stale --prune-preview` adds safe stale-session cleanup plans (`prunePreview`).
 - `session list --delta-json` emits `delta.added|removed|changed` vs previous cursor snapshot.
-- `session list --cursor-file` is consumed/emitted only in `--delta-json` mode.
+- `session list --cursor-file` without `--delta-json` is a usage error (`errorCode:"cursor_file_requires_delta_json"`, exit `1`).
 - `session list --delta-json --cursor-file <PATH>` persists snapshot state for stable incremental diffing.
+- `session list --watch-json` runs polling list mode; forces `--delta-json` and `--json-min`.
+- `session list --watch-interval <N>` sets poll sleep seconds in watch mode (`N` must be positive integer).
+- `session list --watch-cycles <N>` stops after `N` watch polls; omitted means unbounded (`N` must be positive integer).
 
 ## session tree
 
@@ -334,6 +373,8 @@ Inspect metadata parent/child links for nested orchestration.
 | `--all-hashes` | false | Include metadata from all project hashes |
 | `--active-only` | false | Include only sessions currently active in tmux |
 | `--delta` | false | Emit added/removed topology edges since last tree snapshot |
+| `--delta-json` | false | Emit added/removed/changed rows vs a persisted cursor snapshot |
+| `--cursor-file` | `""` | Cursor file path for `--delta-json` state |
 | `--flat` | false | Machine-friendly parent/child rows |
 | `--with-state` | false | Attach `status` + `sessionState` snapshots |
 | `--json-min` | false | Minimal JSON output (`nodeCount`,`totalNodeCount`,`filteredNodeCount` + rows/roots) |
@@ -345,13 +386,41 @@ Tree semantics:
 - `session tree` is metadata-first and can show historical roots even when no active session exists.
 - For active-only checks, use `--active-only` (or pair with `session list` / `session exists`).
 - `--delta` persists a previous topology snapshot per project hash and reports added/removed edges.
+- `--delta-json` persists a cursor snapshot and reports `delta.added|removed|changed` row sets.
+- `--cursor-file` without `--delta-json` is a usage error (`errorCode:"cursor_file_requires_delta_json"`, exit `1`).
 - `--with-state` can emit low-token `rows` payloads with topology + current status in one call.
+
+## session schema / checkpoint / dedupe / next / aggregate / prompt-lint / diff-pack / anomaly / budget-enforce / replay
+
+| Command | Key flags | Core value |
+|---|---|---|
+| `session schema` | `--command`, `--json` | Emit JSON schema for command payload contracts |
+| `session checkpoint` | `save|resume`, `--session`, `--file`, `--strategy`, `--token-budget`, `--json` | Save/resume orchestration state bundles |
+| `session dedupe` | `--task-hash`, `--session`, `--release`, `--project-root`, `--json` | Claim/release task ownership across agents |
+| `session next` | `--session`, `--budget`, `--project-root`, `--json` | Recommend deterministic next executable command |
+| `session aggregate` | `--sessions`, `--strategy`, `--events`, `--lines`, `--token-budget`, `--json` | Build multi-session consolidated context pack |
+| `session prompt-lint` | `--prompt`, `--markers`, `--budget`, `--nested-policy`, `--json` | Score prompt risks (budget, markers, nested bypass) |
+| `session diff-pack` | `--session`, `--cursor-file`, `--redact`, `--token-budget`, `--json` | Incremental context-pack diff for low-noise loops |
+| `session anomaly` | `--session`, `--events`, `--project-root`, `--json` | Severity-ranked anomaly findings from event tails |
+| `session budget-enforce` | `--from`, `--max-tokens`, `--max-seconds`, `--max-steps`, `--json` | Hard budget policy gate over observed metrics |
+| `session replay` | `--from-checkpoint`, `--project-root`, `--json` | Deterministic replay command sequence from checkpoint |
+
+Output shape notes:
+- `session prompt-lint` returns `score`, `tokenEstimate`, and `warnings[]` (not `issues[]`).
+- `session checkpoint save|resume` success payloads do not include `ok:true`; rely on exit code + fields (`action`,`file`,`checkpoint`).
+- `session dedupe` success payloads are intent-specific (`claimed|released|duplicate`) and also omit `ok:true`.
+- `session aggregate` returns `combinedPack` + `items[]`; `truncated:true` can appear even when partial content is included.
 
 ## session smoke
 
 Deterministic nested smoke (`L1 -> ... -> LN`) with marker assertions.
 
-Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|dot-slash|spawn|nested|neutral`), `--matrix-file` (`mode|prompt` lines; mode=`bypass|full-auto|any`), `--chaos` (`none|delay|drop-marker|fail-child|mixed`), `--model`, `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--report-min`, `--json`.
+Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|dot-slash|spawn|nested|neutral`), `--matrix-file` (`mode|prompt` lines; mode=`bypass|full-auto|any`), `--chaos` (`none|delay|drop-marker|fail-child|mixed`), `--chaos-report`, `--model`, `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--report-min`, `--export-artifacts`, `--json`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--chaos-report` | false | Normalize chaos outcome against expected-failure contract; emit `chaosResult` |
+| `--export-artifacts` | `""` | Copy smoke run artifacts to `<PATH>/<run-id>`; emit `exportedPath`/`exportError` |
 
 Behavior: uses nested `session spawn/monitor/capture`, asserts all level markers, non-zero exit on spawn/monitor/marker failure.
 `--prompt-style` adds a pre-smoke dry-run probe that validates nested wording detection.
@@ -359,6 +428,7 @@ Behavior: uses nested `session spawn/monitor/capture`, asserts all level markers
 `--model` pins model on smoke `session spawn` calls. Smoke validates Lisa orchestration plumbing, not model answer quality.
 Prompt-style JSON probe fields are under `promptProbe.detection.*` (not `promptProbe.nestedDetection.*`).
 `--report-min` emits compact CI-focused JSON (`ok`,`errorCode`,`finalState`,`missingMarkers`,`failedMatrix?`).
+`--report-min` omits rich probe/tree payloads (for example `promptProbe`) and may emit `errorCode:""` on success.
 
 ## session preflight
 
@@ -416,7 +486,7 @@ Flags: `--id`, `--json`.
 | `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--nested-policy`, `--nesting-intent`, `--project-root`, `--prompt`, `--agent-args`, `--model`, `--no-dangerously-skip-permissions`, `--json`) |
 | `skills sync` | Sync external skill into repo `skills/lisa` (`--json`: `{"source","destination","files","directories","symlinks"}`) |
 | `skills doctor` | Verify installed Codex/Claude skill drift vs repo capability contract (`--deep` adds recursive content hash checks, `--explain-drift` adds remediation hints) |
-| `skills install` | Install repo `skills/lisa` to `codex`, `claude`, or `project` (`--json`: `{"source","destination","files","directories","symlinks","noop?"}`; same source/destination now returns `noop:true`) |
+| `skills install` | Install repo `skills/lisa` to `codex`, `claude`, or `project` (`--to`, `--project-path`, `--path`, `--repo-root`; `--json`: `{"source","destination","files","directories","symlinks","noop?"}`; same source/destination returns `noop:true`) |
 | `version` | Print build version (`version`, `--version`, `-v`) |
 
 ## Modes

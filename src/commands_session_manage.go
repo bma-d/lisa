@@ -43,6 +43,9 @@ func cmdSessionList(args []string) int {
 	stale := false
 	prunePreview := false
 	deltaJSON := false
+	watchJSON := false
+	watchInterval := 2
+	watchCycles := 0
 	cursorFile := ""
 	projectRoot := getPWD()
 	jsonOut := hasJSONFlag(args)
@@ -70,6 +73,29 @@ func cmdSessionList(args []string) int {
 		case "--delta-json":
 			deltaJSON = true
 			jsonOut = true
+		case "--watch-json":
+			watchJSON = true
+			jsonOut = true
+		case "--watch-interval":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --watch-interval")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--watch-interval")
+			if err != nil {
+				return commandError(jsonOut, "invalid_watch_interval", err.Error())
+			}
+			watchInterval = n
+			i++
+		case "--watch-cycles":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --watch-cycles")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--watch-cycles")
+			if err != nil {
+				return commandError(jsonOut, "invalid_watch_cycles", err.Error())
+			}
+			watchCycles = n
+			i++
 		case "--cursor-file":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --cursor-file")
@@ -93,6 +119,13 @@ func cmdSessionList(args []string) int {
 	}
 
 	projectRoot = canonicalProjectRoot(projectRoot)
+	if watchJSON {
+		deltaJSON = true
+		jsonOut = true
+		if !jsonMin {
+			jsonMin = true
+		}
+	}
 	if prunePreview && !stale {
 		return commandError(jsonOut, "prune_preview_requires_stale", "--prune-preview requires --stale")
 	}
@@ -111,6 +144,9 @@ func cmdSessionList(args []string) int {
 			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", err)
 		}
 		cursorFile = cursorFileResolved
+	}
+	if watchJSON {
+		return cmdSessionListWatch(args, watchInterval, watchCycles)
 	}
 	list := []string{}
 	var err error
@@ -311,6 +347,59 @@ func cmdSessionList(args []string) int {
 		}
 	}
 	return 0
+}
+
+func cmdSessionListWatch(args []string, watchInterval, watchCycles int) int {
+	binPath, err := osExecutableFn()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to resolve lisa binary path: %v\n", err)
+		return 1
+	}
+	watchArgs := make([]string, 0, len(args)+4)
+	haveDelta := false
+	haveJSON := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--watch-json":
+			continue
+		case "--watch-interval", "--watch-cycles":
+			i++
+			continue
+		}
+		if arg == "--delta-json" {
+			haveDelta = true
+		}
+		if arg == "--json" || arg == "--json-min" {
+			haveJSON = true
+		}
+		watchArgs = append(watchArgs, arg)
+	}
+	if !haveDelta {
+		watchArgs = append(watchArgs, "--delta-json")
+	}
+	if !haveJSON {
+		watchArgs = append(watchArgs, "--json-min")
+	}
+
+	cycles := 0
+	for {
+		out, stderrText, runErr := runLisaSubcommandFn(binPath, append([]string{"session", "list"}, watchArgs...)...)
+		if strings.TrimSpace(out) != "" {
+			fmt.Println(strings.TrimSpace(out))
+		}
+		if runErr != nil {
+			if strings.TrimSpace(stderrText) != "" {
+				fmt.Fprintln(os.Stderr, strings.TrimSpace(stderrText))
+			}
+			return 1
+		}
+		cycles++
+		if watchCycles > 0 && cycles >= watchCycles {
+			return 0
+		}
+		time.Sleep(time.Duration(watchInterval) * time.Second)
+	}
 }
 
 func listStaleSessions(projectRoot string, activeSessions []string) ([]string, []staleSessionInfo, int, error) {

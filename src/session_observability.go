@@ -44,6 +44,7 @@ func stateLockTimeoutWaitMS(err error) (int, bool) {
 type sessionEventTail struct {
 	Events       []sessionEvent `json:"events"`
 	DroppedLines int            `json:"droppedLines"`
+	NextCursor   int            `json:"nextCursor,omitempty"`
 }
 
 func ensureHeartbeatWritable(path string) error {
@@ -366,7 +367,7 @@ func readSessionEventTail(projectRoot, session string, max int) (sessionEventTai
 			}
 			events = append(events, event)
 		}
-		tail = sessionEventTail{Events: events, DroppedLines: dropped}
+		tail = sessionEventTail{Events: events, DroppedLines: dropped, NextCursor: readLines}
 		return nil
 	})
 	if err != nil {

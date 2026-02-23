@@ -98,7 +98,10 @@ Exit/contract quick-map:
 - `monitor` success exit `0`: `completed|waiting_input|waiting_input_turn_complete|marker_found|until-state match|until-jsonpath match` (`exitReason`: matched state or `jsonpath_matched`)
 - `monitor` non-success exit `2`: `crashed|stuck|not_found|max_polls_exceeded|degraded_max_polls_exceeded|expected_*`
 - Usage/flag/runtime errors exit `1` (for example `--expect marker` without `--until-marker`)
-- `session list --cursor-file` is cursor snapshot I/O for `--delta-json` mode.
+- Use bounded monitor windows during tests (`--poll-interval 1 --max-polls <N>`) to avoid long default waits.
+- `session list/tree --cursor-file` requires `--delta-json` (hard error: `cursor_file_requires_delta_json`).
+- `session list --json-min --with-next-action` returns `items[]` detail rows plus `sessions[]` names.
+- `session detect-nested --why` can return `why.spans: []` on non-trigger prompts.
 - `autopilot` propagates failing step exit (`monitor` often `2` for timeout/terminal mismatch)
 
 ## Router (JIT)

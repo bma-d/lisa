@@ -47,10 +47,26 @@ func cmdSession(args []string) int {
 		return cmdSessionPacket(args[1:])
 	case "schema":
 		return cmdSessionSchema(args[1:])
+	case "contract-check":
+		return cmdSessionContractCheck(args[1:])
 	case "checkpoint":
 		return cmdSessionCheckpoint(args[1:])
 	case "dedupe":
 		return cmdSessionDedupe(args[1:])
+	case "next":
+		return cmdSessionNext(args[1:])
+	case "aggregate":
+		return cmdSessionAggregate(args[1:])
+	case "prompt-lint":
+		return cmdSessionPromptLint(args[1:])
+	case "diff-pack":
+		return cmdSessionDiffPack(args[1:])
+	case "anomaly":
+		return cmdSessionAnomaly(args[1:])
+	case "budget-enforce":
+		return cmdSessionBudgetEnforce(args[1:])
+	case "replay":
+		return cmdSessionReplay(args[1:])
 	case "handoff":
 		return cmdSessionHandoff(args[1:])
 	case "context-pack":

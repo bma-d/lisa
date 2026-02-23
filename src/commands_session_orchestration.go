@@ -1,6 +1,9 @@
 package app
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -84,6 +87,7 @@ func cmdSessionHandoff(args []string) int {
 	events := 8
 	deltaFrom := -1
 	cursorFile := ""
+	compressMode := "none"
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 
@@ -142,6 +146,12 @@ func cmdSessionHandoff(args []string) int {
 			}
 			cursorFile = strings.TrimSpace(args[i+1])
 			i++
+		case "--compress":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --compress")
+			}
+			compressMode = strings.TrimSpace(args[i+1])
+			i++
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -154,6 +164,11 @@ func cmdSessionHandoff(args []string) int {
 
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
+	}
+	var err error
+	compressMode, err = parseHandoffCompressMode(compressMode)
+	if err != nil {
+		return commandError(jsonOut, "invalid_compress_mode", err.Error())
 	}
 	if cursorFile != "" {
 		cursorFileResolved, resolveErr := expandAndCleanPath(cursorFile)
@@ -174,7 +189,6 @@ func cmdSessionHandoff(args []string) int {
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 
-	var err error
 	agentHint, err = parseAgentHint(agentHint)
 	if err != nil {
 		return commandError(jsonOut, "invalid_agent_hint", err.Error())
@@ -252,6 +266,36 @@ func cmdSessionHandoff(args []string) int {
 		if status.SessionState == "not_found" {
 			payload["errorCode"] = "session_not_found"
 		}
+		if compressMode != "none" {
+			compressInput := map[string]any{
+				"session":      payload["session"],
+				"status":       payload["status"],
+				"sessionState": payload["sessionState"],
+				"reason":       payload["reason"],
+				"nextAction":   payload["nextAction"],
+				"nextOffset":   payload["nextOffset"],
+				"summary":      payload["summary"],
+			}
+			if recent, ok := payload["recent"]; ok {
+				compressInput["recent"] = recent
+			}
+			if deltaFrom >= 0 {
+				compressInput["deltaFrom"] = payload["deltaFrom"]
+				compressInput["nextDeltaOffset"] = payload["nextDeltaOffset"]
+				compressInput["deltaCount"] = payload["deltaCount"]
+			}
+			encoded, uncompressed, compressed, compressErr := compressJSONPayloadStdlib(compressInput)
+			if compressErr != nil {
+				return commandErrorf(jsonOut, "handoff_compress_failed", "failed to compress handoff payload: %v", compressErr)
+			}
+			payload["compression"] = compressMode
+			payload["encoding"] = "base64-gzip"
+			payload["compressedPayload"] = encoded
+			payload["uncompressedBytes"] = uncompressed
+			payload["compressedBytes"] = compressed
+			// Prefer compressed transfer packet when explicitly requested.
+			delete(payload, "recent")
+		}
 		writeJSON(payload)
 		if status.SessionState == "not_found" {
 			return 1
@@ -273,6 +317,36 @@ func cmdSessionHandoff(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func parseHandoffCompressMode(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "none":
+		return "none", nil
+	case "zstd":
+		// stdlib-only build: expose zstd contract but use gzip transport backend.
+		return "zstd", nil
+	default:
+		return "", fmt.Errorf("invalid --compress: %s (expected none|zstd)", raw)
+	}
+}
+
+func compressJSONPayloadStdlib(payload map[string]any) (string, int, int, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(raw); err != nil {
+		_ = zw.Close()
+		return "", 0, 0, err
+	}
+	if err := zw.Close(); err != nil {
+		return "", 0, 0, err
+	}
+	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
+	return encoded, len(raw), buf.Len(), nil
 }
 
 func cmdSessionContextPack(args []string) int {
@@ -536,6 +610,7 @@ func cmdSessionRoute(args []string) int {
 	projectRoot := getPWD()
 	prompt := ""
 	model := ""
+	profile := ""
 	budget := 0
 	emitRunbook := false
 	topologyRaw := ""
@@ -576,6 +651,12 @@ func cmdSessionRoute(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --model")
 			}
 			model = args[i+1]
+			i++
+		case "--profile":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --profile")
+			}
+			profile = strings.TrimSpace(args[i+1])
 			i++
 		case "--budget":
 			if i+1 >= len(args) {
@@ -620,6 +701,16 @@ func cmdSessionRoute(args []string) int {
 		return commandError(jsonOut, "invalid_agent", err.Error())
 	}
 	projectRoot = canonicalProjectRoot(projectRoot)
+	if strings.TrimSpace(profile) != "" {
+		presetAgent, presetModel, presetErr := parseRouteProfile(profile)
+		if presetErr != nil {
+			return commandError(jsonOut, "invalid_profile", presetErr.Error())
+		}
+		agent = presetAgent
+		if strings.TrimSpace(model) == "" {
+			model = presetModel
+		}
+	}
 
 	mode, nestedPolicy, nestingIntent, defaultPrompt, defaultModel := sessionRouteDefaults(goal)
 	topologyRoles, err := parseTopologyRoles(topologyRaw)
@@ -693,6 +784,7 @@ func cmdSessionRoute(args []string) int {
 		"nestingIntent":   nestingIntent,
 		"prompt":          prompt,
 		"model":           model,
+		"profile":         profile,
 		"command":         command,
 		"monitorHint":     monitorHint,
 		"nestedDetection": detection,
@@ -719,6 +811,17 @@ func cmdSessionRoute(args []string) int {
 	}
 	fmt.Printf("%s\n%s\n", command, strings.Join(rationale, " | "))
 	return 0
+}
+
+func parseRouteProfile(raw string) (agent string, model string, err error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "codex-spark":
+		return "codex", "gpt-5.3-codex-spark", nil
+	case "claude":
+		return "claude", "", nil
+	default:
+		return "", "", fmt.Errorf("invalid --profile: %s (expected codex-spark|claude)", raw)
+	}
 }
 
 func cmdSessionGuard(args []string) int {
