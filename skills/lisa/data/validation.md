@@ -24,13 +24,13 @@ Validated: 2026-02-23
 - `session monitor --stream-json --emit-handoff` emits both `type:"poll"` and `type:"handoff"` lines before final payload.
 - `session monitor --handoff-cursor-file <PATH>` emits incremental handoff deltas and persists `nextDeltaOffset`.
 - `session monitor --webhook <URL>` fails hard on delivery failure (`errorCode:"webhook_emit_failed"`, exit `1`).
-- `session handoff --json-min` and `session context-pack --json-min` provide compact transfer payloads for multi-agent loops.
+- `session handoff --json-min` and `session context-pack --json-min` provide compact transfer payloads for multi-agent loops (note: active lane contracts like `handoff_v2_required` require `session handoff --schema v2|v3`).
 - `session handoff --delta-from <N>` returns incremental `recent` events + `nextDeltaOffset`.
 - `session handoff --cursor-file /tmp/handoff.cursor` persists/reuses `nextDeltaOffset` across loops.
 - `session packet --json-min` provides one-call status + summary + recent handoff items.
 - `session packet --cursor-file <PATH>` persists/reuses handoff event delta offsets.
 - `session context-pack --strategy terse|balanced|full` applies deterministic default budgets.
-- `session context-pack --from-handoff <path|->` builds pack without live status polling.
+- `session context-pack --from-handoff <path|->` builds pack without live status polling, including handoff payloads where `nextAction` is an object (`schema v2|v3`).
 - Nested diagnostics path: `session spawn --dry-run --detect-nested --json` or `session detect-nested --json`.
 - `session detect-nested --rewrite` emits trigger-safe prompt rewrites.
 - `session detect-nested --why` emits hint-span reasoning payload (`why.spans`), which can be an empty list for non-trigger prompts.

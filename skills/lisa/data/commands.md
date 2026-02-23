@@ -294,17 +294,23 @@ Flags: `--session` (required), `--project-root`, `--agent`, `--mode`, `--events`
 
 JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","summary","recent?","deltaFrom?","nextDeltaOffset?","deltaCount?"}`.
 
+Notes:
+- Active lane contracts such as `handoff_v2_required` require `--schema v2` (or `v3`), otherwise handoff returns `errorCode:"handoff_schema_v2_required"`.
+
 ## session context-pack
 
 Token-budgeted context packet with state + recent events + capture tail.
 
-Flags: `--for` (alias `--session`, required), `--project-root`, `--agent`, `--mode`, `--events`, `--lines`, `--token-budget`, `--strategy`, `--from-handoff`, `--redact`, `--json`, `--json-min`.
+Flags: `--for` (alias `--session`, required unless provided by `--from-handoff` payload session), `--project-root`, `--agent`, `--mode`, `--events`, `--lines`, `--token-budget`, `--strategy`, `--from-handoff`, `--redact`, `--json`, `--json-min`.
 
 | Flag | Default | Description |
 |---|---|---|
 | `--redact` | `none` | Apply redaction rules to `pack` (`none|all|paths|emails|secrets|numbers|tokens`) |
 
 JSON: `{"session","sessionState","status","reason","nextAction","nextOffset","strategy","pack","tokenBudget","truncated"}`.
+
+Notes:
+- `--from-handoff` accepts `nextAction` as either string payloads (v1) or object payloads (`name`/`command` in v2/v3).
 
 ## session route
 
@@ -504,7 +510,7 @@ Flags: `--id`, `--json`.
 | `capabilities [--json]` | Emit command/flag capability matrix for orchestrator contract checks |
 | `agent build-cmd` | Preview agent CLI command (`--agent`, `--mode`, `--nested-policy`, `--nesting-intent`, `--project-root`, `--prompt`, `--agent-args`, `--model`, `--no-dangerously-skip-permissions`, `--json`) |
 | `skills sync` | Sync external skill into repo `skills/lisa` (`--json`: `{"source","destination","files","directories","symlinks"}`) |
-| `skills doctor` | Verify installed Codex/Claude skill drift vs repo capability contract (`--deep` adds recursive content hash checks, `--explain-drift` adds remediation hints, `--fix` auto-installs drifted targets, `--contract-check` adds command/flag drift checks, `--sync-plan` emits install/sync action plan) |
+| `skills doctor` | Verify installed Codex/Claude skill drift vs repo capability contract (`--deep` adds recursive content hash checks, `--explain-drift` adds remediation hints, `--sync-plan` emits install/sync action plan) |
 | `skills install` | Install repo `skills/lisa` to `codex`, `claude`, or `project` (`--to`, `--project-path`, `--path`, `--repo-root`; `--json`: `{"source","destination","files","directories","symlinks","noop?"}`; same source/destination returns `noop:true`) |
 | `version` | Print build version (`version`, `--version`, `-v`) |
 

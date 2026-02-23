@@ -678,6 +678,13 @@ func cmdSessionContextPack(args []string) int {
 		nextOffset = computeSessionCaptureNextOffset(session)
 	}
 
+	nextAction := nextActionForState(status.SessionState)
+	if handoffInput != nil {
+		if handoffNext := strings.TrimSpace(handoffInput.NextAction); handoffNext != "" {
+			nextAction = handoffNext
+		}
+	}
+
 	meta, _ := loadSessionMeta(projectRoot, session)
 	objective := objectivePayloadFromMeta(meta)
 	memoryPayload, hasMemory := loadSessionMemoryCompact(projectRoot, session, 8)
@@ -699,7 +706,7 @@ func cmdSessionContextPack(args []string) int {
 			"sessionState": status.SessionState,
 			"status":       status.Status,
 			"reason":       status.ClassificationReason,
-			"nextAction":   nextActionForState(status.SessionState),
+			"nextAction":   nextAction,
 			"nextOffset":   nextOffset,
 			"strategy":     strategyConfig.Name,
 			"tokenBudget":  tokenBudget,
@@ -2312,15 +2319,37 @@ func loadHandoffInputPayload(from string) (*handoffInputPayload, error) {
 		return nil, err
 	}
 	payload := handoffInputPayload{}
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	if err := json.Unmarshal(raw, &payload); err == nil {
+		payload.Session = strings.TrimSpace(payload.Session)
+		payload.Status = strings.TrimSpace(payload.Status)
+		payload.SessionState = strings.TrimSpace(payload.SessionState)
+		payload.Reason = strings.TrimSpace(payload.Reason)
+		payload.NextAction = strings.TrimSpace(payload.NextAction)
+		payload.CaptureTail = strings.TrimSpace(payload.CaptureTail)
+		return &payload, nil
+	}
+
+	// Accept v2/v3 handoff shapes where nextAction is an object instead of a string.
+	var generic map[string]any
+	if err := json.Unmarshal(raw, &generic); err != nil {
 		return nil, err
 	}
-	payload.Session = strings.TrimSpace(payload.Session)
-	payload.Status = strings.TrimSpace(payload.Status)
-	payload.SessionState = strings.TrimSpace(payload.SessionState)
-	payload.Reason = strings.TrimSpace(payload.Reason)
-	payload.NextAction = strings.TrimSpace(payload.NextAction)
-	payload.CaptureTail = strings.TrimSpace(payload.CaptureTail)
+	payload.Session = mapStringValue(generic, "session")
+	payload.Status = mapStringValue(generic, "status")
+	payload.SessionState = mapStringValue(generic, "sessionState")
+	payload.Reason = mapStringValue(generic, "reason")
+	payload.NextAction = handoffNextActionValue(generic["nextAction"])
+	payload.NextOffset = mapIntValue(generic, "nextOffset")
+	payload.CaptureTail = mapStringValue(generic, "captureTail")
+	if recentRaw, ok := generic["recent"]; ok && recentRaw != nil {
+		buf, marshalErr := json.Marshal(recentRaw)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("invalid handoff recent: marshal failed: %w", marshalErr)
+		}
+		if unmarshalErr := json.Unmarshal(buf, &payload.Recent); unmarshalErr != nil {
+			return nil, fmt.Errorf("invalid handoff recent: expected []sessionHandoffItem: %w", unmarshalErr)
+		}
+	}
 	return &payload, nil
 }
 
@@ -2402,6 +2431,53 @@ func mapStringValue(m map[string]any, key string) string {
 	switch typed := value.(type) {
 	case string:
 		return strings.TrimSpace(typed)
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", typed))
+	}
+}
+
+func mapIntValue(m map[string]any, key string) int {
+	value, ok := m[key]
+	if !ok || value == nil {
+		return 0
+	}
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case int32:
+		return int(typed)
+	case uint:
+		return int(typed)
+	case uint64:
+		return int(typed)
+	case uint32:
+		return int(typed)
+	case json.Number:
+		if n, err := typed.Int64(); err == nil {
+			return int(n)
+		}
+	}
+	return 0
+}
+
+func handoffNextActionValue(raw any) string {
+	switch typed := raw.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]any:
+		name := mapStringValue(typed, "name")
+		if name != "" {
+			return name
+		}
+		return mapStringValue(typed, "command")
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%v", typed))
 	}

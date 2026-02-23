@@ -126,6 +126,7 @@ Exit/contract quick-map:
 - `autopilot` propagates failing step exit (`monitor` often `2` for timeout/terminal mismatch)
 - `monitor --webhook` returns exit `1` (`errorCode:"webhook_emit_failed"`) if payload delivery fails.
 - `session guard --machine-policy strict` can return exit `1` (`errorCode:"shared_tmux_risk_detected"`) without `--enforce`.
+- If active lane contract includes `handoff_v2_required`, `session handoff --json-min` requires `--schema v2` (or `v3`) and otherwise returns `errorCode:"handoff_schema_v2_required"`.
 
 Validated edge contracts (2026-02-23):
 - `cleanup --project-root ...` is an unknown flag (`errorCode:"unknown_flag"`).

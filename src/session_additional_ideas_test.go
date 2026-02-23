@@ -174,6 +174,73 @@ func TestSessionContextPackFromHandoff(t *testing.T) {
 	}
 }
 
+func TestSessionContextPackFromHandoffSchemaV2NextActionObject(t *testing.T) {
+	root := t.TempDir()
+	payloadPath := filepath.Join(root, "handoff-v2.json")
+	raw := `{"session":"lisa-pack-from-handoff-v2","status":"idle","sessionState":"waiting_input","reason":"interactive_idle_cpu","nextAction":{"name":"session send","command":"./lisa session send --json-min"},"nextOffset":77,"recent":[{"at":"t1","state":"waiting_input","status":"idle","reason":"interactive_idle_cpu"}]}`
+	if err := os.WriteFile(payloadPath, []byte(raw), 0o644); err != nil {
+		t.Fatalf("failed writing handoff payload: %v", err)
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionContextPack([]string{
+			"--from-handoff", payloadPath,
+			"--strategy", "terse",
+			"--json-min",
+		})
+		if code != 0 {
+			t.Fatalf("expected success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	payload := parseJSONMap(t, stdout)
+	if payload["session"] != "lisa-pack-from-handoff-v2" {
+		t.Fatalf("unexpected session: %v", payload["session"])
+	}
+	if payload["nextAction"] != "session send" {
+		t.Fatalf("expected nextAction session send, got %v", payload["nextAction"])
+	}
+	if payload["nextOffset"].(float64) != 77 {
+		t.Fatalf("expected nextOffset=77, got %v", payload["nextOffset"])
+	}
+	pack := payload["pack"].(string)
+	if !strings.Contains(pack, "t1 waiting_input/idle interactive_idle_cpu") {
+		t.Fatalf("expected recent entry in pack, got %q", pack)
+	}
+}
+
+func TestSessionContextPackFromHandoffSchemaV2NextActionCommandFallback(t *testing.T) {
+	root := t.TempDir()
+	payloadPath := filepath.Join(root, "handoff-v2-command.json")
+	raw := `{"session":"lisa-pack-from-handoff-v2-command","status":"idle","sessionState":"waiting_input","reason":"interactive_idle_cpu","nextAction":{"command":"./lisa session send --json-min"},"nextOffset":77,"recent":[{"at":"t1","state":"waiting_input","status":"idle","reason":"interactive_idle_cpu"}]}`
+	if err := os.WriteFile(payloadPath, []byte(raw), 0o644); err != nil {
+		t.Fatalf("failed writing handoff payload: %v", err)
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionContextPack([]string{
+			"--from-handoff", payloadPath,
+			"--strategy", "terse",
+			"--json-min",
+		})
+		if code != 0 {
+			t.Fatalf("expected success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	payload := parseJSONMap(t, stdout)
+	if payload["session"] != "lisa-pack-from-handoff-v2-command" {
+		t.Fatalf("unexpected session: %v", payload["session"])
+	}
+	if payload["nextAction"] != "./lisa session send --json-min" {
+		t.Fatalf("expected nextAction command fallback, got %v", payload["nextAction"])
+	}
+}
+
 func TestSessionContextPackFromHandoffSessionMismatch(t *testing.T) {
 	root := t.TempDir()
 	payloadPath := filepath.Join(root, "handoff.json")
@@ -198,6 +265,35 @@ func TestSessionContextPackFromHandoffSessionMismatch(t *testing.T) {
 	payload := parseJSONMap(t, stdout)
 	if payload["errorCode"] != "from_handoff_session_mismatch" {
 		t.Fatalf("expected from_handoff_session_mismatch, got %v", payload["errorCode"])
+	}
+}
+
+func TestSessionContextPackFromHandoffInvalidRecent(t *testing.T) {
+	root := t.TempDir()
+	payloadPath := filepath.Join(root, "handoff-invalid-recent.json")
+	raw := `{"session":"lisa-pack-from-handoff-invalid-recent","status":"idle","sessionState":"waiting_input","reason":"interactive_idle_cpu","nextOffset":77,"recent":"invalid"}`
+	if err := os.WriteFile(payloadPath, []byte(raw), 0o644); err != nil {
+		t.Fatalf("failed writing handoff payload: %v", err)
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionContextPack([]string{
+			"--from-handoff", payloadPath,
+			"--json-min",
+		})
+		if code == 0 {
+			t.Fatalf("expected failure for invalid recent payload")
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	payload := parseJSONMap(t, stdout)
+	if payload["errorCode"] != "invalid_from_handoff" {
+		t.Fatalf("expected invalid_from_handoff, got %v", payload["errorCode"])
+	}
+	if !strings.Contains(mapStringValue(payload, "error"), "invalid handoff recent") {
+		t.Fatalf("expected error to include invalid handoff recent, got %v", payload["error"])
 	}
 }
 

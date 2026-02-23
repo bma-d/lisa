@@ -363,7 +363,7 @@ $LISA_BIN session handoff --session "$S" --project-root . \
   --cursor-file /tmp/lisa.handoff.cursor --json-min
 
 # repack from handoff payload without re-polling live session
-$LISA_BIN session handoff --session "$S" --project-root . --json > /tmp/handoff.json
+$LISA_BIN session handoff --session "$S" --project-root . --schema v2 --json > /tmp/handoff.json
 $LISA_BIN session context-pack --from-handoff /tmp/handoff.json \
   --strategy balanced --token-budget 480 --json-min
 ```

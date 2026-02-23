@@ -696,6 +696,7 @@ Delta handoff behavior:
 
 - `--delta-from` returns events after that offset and includes `nextDeltaOffset` for next incremental pull.
 - `--json-min` still includes the compact `recent` delta list when `--delta-from` is used.
+- If active lane contract includes `handoff_v2_required`, handoff requires `--schema v2` (or `v3`) and returns `errorCode=handoff_schema_v2_required` otherwise.
 
 ### `session packet`
 
@@ -739,7 +740,7 @@ lisa session context-pack --for <NAME> --token-budget 700 --json-min
 
 Flags:
 
-- `--for` / `--session` (required)
+- `--for` / `--session` (required unless `--from-handoff` payload includes `session`)
 - `--project-root`
 - `--agent`: `auto|claude|codex`
 - `--mode`: `auto|interactive|exec`
@@ -756,6 +757,7 @@ Behavior notes:
 
 - `--from-handoff` builds from handoff JSON payload fields instead of live tmux state polling.
 - `--for` and `--from-handoff` must reference the same session when both are set.
+- `--from-handoff` accepts `nextAction` as either string (v1) or object payload (`name`/`command` in v2/v3).
 - `--redact` applies in-pack redaction before JSON emission; `none` cannot be combined with other rules.
 - Active redaction rules are returned in `redactRules` (`--json` and `--json-min`).
 

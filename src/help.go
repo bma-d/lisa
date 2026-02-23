@@ -679,7 +679,7 @@ func helpSessionContextPack() {
 	fmt.Fprintln(os.Stderr, "Usage: lisa session context-pack [flags]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
-	fmt.Fprintln(os.Stderr, "  --for NAME            Session name (required; alias: --session)")
+	fmt.Fprintln(os.Stderr, "  --for NAME            Session name (required unless provided by --from-handoff; alias: --session)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --agent NAME          Agent hint: auto|claude|codex (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Mode hint: auto|interactive|exec (default: auto)")
