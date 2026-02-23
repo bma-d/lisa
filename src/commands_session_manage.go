@@ -161,11 +161,18 @@ func cmdSessionList(args []string) int {
 		return commandErrorf(jsonOut, "session_list_failed", "failed to list sessions: %v", err)
 	}
 	items := []sessionListItem{}
+	ambiguousBySession := map[string]string{}
 	if withNextAction || activeOnly || priority {
 		filtered := make([]string, 0, len(list))
 		items = make([]sessionListItem, 0, len(list))
 		for _, session := range list {
-			resolvedRoot := resolveSessionProjectRoot(session, projectRoot, false)
+			resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, false)
+			if resolveErr != nil {
+				if isSessionMetaAmbiguousError(resolveErr) {
+					ambiguousBySession[session] = resolveErr.Error()
+				}
+				resolvedRoot = projectRoot
+			}
 			restoreRuntime := withProjectRuntimeEnv(resolvedRoot)
 			status, statusErr := computeSessionStatusFn(session, resolvedRoot, "auto", "auto", false, 0)
 			restoreRuntime()
@@ -238,7 +245,13 @@ func cmdSessionList(args []string) int {
 			}
 		} else {
 			for _, session := range list {
-				resolvedRoot := resolveSessionProjectRoot(session, projectRoot, false)
+				resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, false)
+				if resolveErr != nil {
+					if isSessionMetaAmbiguousError(resolveErr) {
+						ambiguousBySession[session] = resolveErr.Error()
+					}
+					resolvedRoot = projectRoot
+				}
 				current[session] = sessionListItem{
 					Session:     session,
 					ProjectRoot: resolvedRoot,
@@ -273,6 +286,22 @@ func cmdSessionList(args []string) int {
 			Items:     current,
 		}); err != nil {
 			return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --cursor-file: %v", err)
+		}
+	}
+	ambiguousWarnings := make([]map[string]any, 0, len(ambiguousBySession))
+	if len(ambiguousBySession) > 0 {
+		sessions := make([]string, 0, len(ambiguousBySession))
+		for session := range ambiguousBySession {
+			sessions = append(sessions, session)
+		}
+		sort.Strings(sessions)
+		for _, session := range sessions {
+			ambiguousWarnings = append(ambiguousWarnings, map[string]any{
+				"session":   session,
+				"errorCode": "ambiguous_project_root",
+				"message":   ambiguousBySession[session],
+				"fallback":  projectRoot,
+			})
 		}
 	}
 	if jsonOut {
@@ -310,8 +339,14 @@ func cmdSessionList(args []string) int {
 			payload["priority"] = priority
 			payload["projectRoot"] = projectRoot
 		}
+		if len(ambiguousWarnings) > 0 {
+			payload["warnings"] = ambiguousWarnings
+		}
 		writeJSON(payload)
 		return 0
+	}
+	for _, warning := range ambiguousWarnings {
+		fmt.Fprintf(os.Stderr, "warning: session=%s %s\n", mapStringValue(warning, "session"), mapStringValue(warning, "message"))
 	}
 	if deltaJSON {
 		fmt.Printf("delta added=%d removed=%d changed=%d cursor=%s\n", len(deltaAdded), len(deltaRemoved), len(deltaChanged), cursorFile)
@@ -604,7 +639,11 @@ func cmdSessionExists(args []string) int {
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	exists := tmuxHasSessionFn(session)
@@ -665,7 +704,11 @@ func cmdSessionKill(args []string) int {
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	cleanupOpts := cleanupOptions{

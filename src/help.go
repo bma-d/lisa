@@ -33,7 +33,10 @@ var helpFuncs = map[string]func(){
 	"session aggregate":      helpSessionAggregate,
 	"session prompt-lint":    helpSessionPromptLint,
 	"session diff-pack":      helpSessionDiffPack,
+	"session loop":           helpSessionLoop,
+	"session context-cache":  helpSessionContextCache,
 	"session anomaly":        helpSessionAnomaly,
+	"session budget-observe": helpSessionBudgetObserve,
 	"session budget-enforce": helpSessionBudgetEnforce,
 	"session budget-plan":    helpSessionBudgetPlan,
 	"session replay":         helpSessionReplay,
@@ -100,7 +103,10 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session aggregate     Build multi-session context pack")
 	fmt.Fprintln(os.Stderr, "  session prompt-lint   Validate prompt nesting/budget risks")
 	fmt.Fprintln(os.Stderr, "  session diff-pack     Emit cursor-based context-pack deltas")
+	fmt.Fprintln(os.Stderr, "  session loop          Monitor->diff->handoff->next orchestration loop")
+	fmt.Fprintln(os.Stderr, "  session context-cache Shared deduplicated semantic context cache")
 	fmt.Fprintln(os.Stderr, "  session anomaly       Detect session behavior anomalies")
+	fmt.Fprintln(os.Stderr, "  session budget-observe Normalize observed usage payloads for budget checks")
 	fmt.Fprintln(os.Stderr, "  session budget-enforce Validate observed usage against hard limits")
 	fmt.Fprintln(os.Stderr, "  session budget-plan   Simulate route/topology budget plan + hard stops")
 	fmt.Fprintln(os.Stderr, "  session replay        Generate deterministic replay steps from checkpoint")
@@ -186,7 +192,10 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  aggregate  Build multi-session context pack")
 	fmt.Fprintln(os.Stderr, "  prompt-lint Validate prompt nesting/budget risks")
 	fmt.Fprintln(os.Stderr, "  diff-pack  Emit cursor-based context-pack deltas")
+	fmt.Fprintln(os.Stderr, "  loop       Monitor->diff->handoff->next orchestration loop")
+	fmt.Fprintln(os.Stderr, "  context-cache Shared deduplicated semantic context cache")
 	fmt.Fprintln(os.Stderr, "  anomaly    Detect session behavior anomalies")
+	fmt.Fprintln(os.Stderr, "  budget-observe Normalize observed usage payloads for budget checks")
 	fmt.Fprintln(os.Stderr, "  budget-enforce Validate observed usage against hard limits")
 	fmt.Fprintln(os.Stderr, "  budget-plan Simulate route/topology budgets and hard-stop contract")
 	fmt.Fprintln(os.Stderr, "  replay     Generate deterministic replay steps from checkpoint")
@@ -488,6 +497,8 @@ func helpSessionAggregate() {
 	fmt.Fprintln(os.Stderr, "  --lines N             Capture lines per session (default: 120)")
 	fmt.Fprintln(os.Stderr, "  --token-budget N      Combined token budget target (default: 900)")
 	fmt.Fprintln(os.Stderr, "  --dedupe              Remove duplicate semantic-pack lines")
+	fmt.Fprintln(os.Stderr, "  --delta-json          Emit added/removed/changed item deltas from cursor")
+	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Cursor file for --delta-json snapshots")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
@@ -508,6 +519,7 @@ func helpSessionPromptLint() {
 	fmt.Fprintln(os.Stderr, "  --markers CSV         Marker strings to flag if prompt includes them")
 	fmt.Fprintln(os.Stderr, "  --budget N            Token budget target (default: 320)")
 	fmt.Fprintln(os.Stderr, "  --strict              Exit non-zero when high-severity findings exist")
+	fmt.Fprintln(os.Stderr, "  --rewrite             Emit trigger-safe rewritten prompt suggestions")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -530,6 +542,49 @@ func helpSessionDiffPack() {
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
 
+func helpSessionLoop() {
+	fmt.Fprintln(os.Stderr, "lisa session loop — run monitor->diff-pack->handoff->next loop")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session loop [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --poll-interval N     Monitor poll interval seconds (default: 2)")
+	fmt.Fprintln(os.Stderr, "  --max-polls N         Max polls per loop step (default: 40)")
+	fmt.Fprintln(os.Stderr, "  --strategy MODE       Diff-pack strategy: terse|balanced|full")
+	fmt.Fprintln(os.Stderr, "  --events N            Diff-pack recent events count (default: 8)")
+	fmt.Fprintln(os.Stderr, "  --lines N             Diff-pack capture lines (default: 120)")
+	fmt.Fprintln(os.Stderr, "  --token-budget N      Diff/next token budget hint (default: 700)")
+	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Diff-pack cursor file")
+	fmt.Fprintln(os.Stderr, "  --handoff-cursor-file PATH  Handoff delta cursor file")
+	fmt.Fprintln(os.Stderr, "  --schema MODE         Handoff schema: v1|v2|v3 (default: v2)")
+	fmt.Fprintln(os.Stderr, "  --steps N             Number of loop cycles (default: 1)")
+	fmt.Fprintln(os.Stderr, "  --max-tokens N        Optional hard-stop token cap across cycles")
+	fmt.Fprintln(os.Stderr, "  --max-seconds N       Optional hard-stop elapsed-seconds cap")
+	fmt.Fprintln(os.Stderr, "  --max-steps N         Optional hard-stop completed-step cap")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
+}
+
+func helpSessionContextCache() {
+	fmt.Fprintln(os.Stderr, "lisa session context-cache — shared semantic cache for orchestration loops")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session context-cache [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --key TEXT            Cache key (required unless --session provided)")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Session source; implies key=session:<name> if key omitted")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --refresh             Refresh from live session semantic memory")
+	fmt.Fprintln(os.Stderr, "  --from PATH           Merge lines from JSON/text payload (file path or '-')")
+	fmt.Fprintln(os.Stderr, "  --ttl-hours N         Cache record TTL (default: 48)")
+	fmt.Fprintln(os.Stderr, "  --max-lines N         Max retained semantic lines (default: 240)")
+	fmt.Fprintln(os.Stderr, "  --list                List cache keys/records")
+	fmt.Fprintln(os.Stderr, "  --clear               Delete cache entry by --key")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
 func helpSessionAnomaly() {
 	fmt.Fprintln(os.Stderr, "lisa session anomaly — detect session behavior anomalies")
 	fmt.Fprintln(os.Stderr, "")
@@ -539,6 +594,20 @@ func helpSessionAnomaly() {
 	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --events N            Number of recent events to inspect (default: 80)")
+	fmt.Fprintln(os.Stderr, "  --auto-remediate      Include command-sequence remediation suggestions")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSessionBudgetObserve() {
+	fmt.Fprintln(os.Stderr, "lisa session budget-observe — normalize usage metrics from JSON payloads")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session budget-observe [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --from PATHS          JSON source(s), comma-separated paths or '-'")
+	fmt.Fprintln(os.Stderr, "  --tokens N            Override observed tokens")
+	fmt.Fprintln(os.Stderr, "  --seconds N           Override observed seconds")
+	fmt.Fprintln(os.Stderr, "  --steps N             Override observed steps")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -599,7 +668,7 @@ func helpSessionHandoff() {
 	fmt.Fprintln(os.Stderr, "  --delta-from N        Incremental event offset (non-negative integer)")
 	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Persist/reuse incremental event offset")
 	fmt.Fprintln(os.Stderr, "  --compress MODE       Payload compression: none|zstd (default: none)")
-	fmt.Fprintln(os.Stderr, "  --schema MODE         Handoff schema: v1|v2 (default: v1)")
+	fmt.Fprintln(os.Stderr, "  --schema MODE         Handoff schema: v1|v2|v3 (default: v1)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
@@ -640,6 +709,7 @@ func helpSessionRoute() {
 	fmt.Fprintln(os.Stderr, "  --queue               Include prioritized session dispatch queue")
 	fmt.Fprintln(os.Stderr, "  --sessions CSV        Optional explicit sessions for queue mode")
 	fmt.Fprintln(os.Stderr, "  --queue-limit N       Optional cap on returned queue items")
+	fmt.Fprintln(os.Stderr, "  --concurrency N       Dispatch concurrency cap for queue planning")
 	fmt.Fprintln(os.Stderr, "  --topology CSV        Optional topology roles: planner,workers,reviewer")
 	fmt.Fprintln(os.Stderr, "  --cost-estimate       Include token/time cost estimate payload")
 	fmt.Fprintln(os.Stderr, "  --from-state PATH     Route using handoff/status JSON (use '-' for stdin)")
@@ -735,6 +805,7 @@ func helpSessionMemory() {
 	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --refresh             Rebuild memory from current capture/output")
+	fmt.Fprintln(os.Stderr, "  --semantic-diff       Include added/removed semantic lines since baseline")
 	fmt.Fprintln(os.Stderr, "  --ttl-hours N         Memory TTL in hours (default: 24)")
 	fmt.Fprintln(os.Stderr, "  --max-lines N         Maximum semantic lines retained (default: 80)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
@@ -991,5 +1062,6 @@ func helpSkillsDoctor() {
 	fmt.Fprintln(os.Stderr, "  --explain-drift       Include remediation guidance for drift findings")
 	fmt.Fprintln(os.Stderr, "  --fix                 Auto-install repo skill to outdated/missing targets")
 	fmt.Fprintln(os.Stderr, "  --contract-check      Include command/flag contract drift checks")
+	fmt.Fprintln(os.Stderr, "  --sync-plan           Include machine-readable sync/install plan")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }

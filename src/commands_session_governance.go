@@ -23,6 +23,7 @@ func cmdSessionAnomaly(args []string) int {
 	projectRoot := getPWD()
 	projectRootExplicit := false
 	events := 80
+	autoRemediate := false
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -52,6 +53,8 @@ func cmdSessionAnomaly(args []string) int {
 			}
 			events = n
 			i++
+		case "--auto-remediate":
+			autoRemediate = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -62,7 +65,11 @@ func cmdSessionAnomaly(args []string) int {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
 
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 
@@ -83,6 +90,9 @@ func cmdSessionAnomaly(args []string) int {
 		"anomalies":    findings,
 		"ok":           len(findings) == 0,
 		"nextAction":   nextActionForState(status.SessionState),
+	}
+	if autoRemediate {
+		payload["autoRemediate"] = buildAnomalyRemediationPlan(session, projectRoot, status, findings)
 	}
 	if status.SessionState == "not_found" {
 		payload["errorCode"] = "session_not_found"
@@ -105,7 +115,158 @@ func cmdSessionAnomaly(args []string) int {
 	for _, finding := range findings {
 		fmt.Printf("%s,%s,%d,%s\n", finding.Code, finding.Severity, finding.Count, finding.Message)
 	}
+	if autoRemediate {
+		plan := buildAnomalyRemediationPlan(session, projectRoot, status, findings)
+		if steps, ok := plan["steps"].([]map[string]any); ok && len(steps) > 0 {
+			fmt.Println("auto_remediate:")
+			for _, step := range steps {
+				fmt.Printf("- %s\n", mapStringValue(step, "command"))
+			}
+		}
+	}
 	return 1
+}
+
+func buildAnomalyRemediationPlan(session, projectRoot string, status sessionStatus, findings []anomalyFinding) map[string]any {
+	steps := make([]map[string]any, 0, 4)
+	seen := map[string]struct{}{}
+	add := func(command, reason string, confidence float64) {
+		if _, ok := seen[command]; ok {
+			return
+		}
+		seen[command] = struct{}{}
+		steps = append(steps, map[string]any{
+			"command":    command,
+			"reason":     reason,
+			"confidence": confidence,
+		})
+	}
+	add("./lisa session status --session "+shellQuote(session)+" --project-root "+shellQuote(projectRoot)+" --json-min", "refresh status baseline before remediation", 0.99)
+	if status.SessionState == "not_found" {
+		add("./lisa session spawn --agent codex --mode interactive --project-root "+shellQuote(projectRoot)+" --prompt "+shellQuote("Resume orchestration from latest known state.")+" --model gpt-5.3-codex-spark --json", "session missing in tmux; spawn replacement", 0.96)
+		return map[string]any{"enabled": true, "steps": steps, "confidence": 0.96}
+	}
+	for _, finding := range findings {
+		switch finding.Code {
+		case "reason_loop", "degraded_retries", "expectation_churn":
+			add("./lisa session send --session "+shellQuote(session)+" --project-root "+shellQuote(projectRoot)+" --text "+shellQuote("Summarize current blocker and propose one concrete unblocking step.")+" --enter --json-min", "nudge agent out of repeated degraded loop", 0.84)
+			add("./lisa session monitor --session "+shellQuote(session)+" --project-root "+shellQuote(projectRoot)+" --expect any --max-polls 8 --poll-interval 2 --json-min", "observe whether loop stabilizes after guidance", 0.8)
+		case "terminal_stuck", "terminal_crashed":
+			add("./lisa session explain --session "+shellQuote(session)+" --project-root "+shellQuote(projectRoot)+" --events 40 --json-min", "inspect terminal failure reason before restart", 0.9)
+			add("./lisa session kill --session "+shellQuote(session)+" --project-root "+shellQuote(projectRoot)+" --json", "remove broken session before respawn", 0.78)
+			add("./lisa session spawn --agent codex --mode interactive --project-root "+shellQuote(projectRoot)+" --prompt "+shellQuote("Resume from failure diagnostics and continue safely.")+" --model gpt-5.3-codex-spark --json", "restart clean worker after crash/stuck", 0.74)
+		}
+	}
+	confidence := 0.0
+	for _, step := range steps {
+		switch typed := step["confidence"].(type) {
+		case float64:
+			confidence += typed
+		case float32:
+			confidence += float64(typed)
+		case int:
+			confidence += float64(typed)
+		}
+	}
+	if len(steps) > 0 {
+		confidence = confidence / float64(len(steps))
+	}
+	return map[string]any{
+		"enabled":    true,
+		"steps":      steps,
+		"confidence": confidence,
+	}
+}
+
+func cmdSessionBudgetObserve(args []string) int {
+	sources := make([]string, 0, 2)
+	obsTokens := -1
+	obsSeconds := -1
+	obsSteps := -1
+	jsonOut := hasJSONFlag(args)
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session budget-observe")
+		case "--from":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --from")
+			}
+			value := strings.TrimSpace(args[i+1])
+			for _, part := range strings.Split(value, ",") {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					sources = append(sources, part)
+				}
+			}
+			i++
+		case "--tokens":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --tokens")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--tokens")
+			if err != nil {
+				return commandError(jsonOut, "invalid_tokens", err.Error())
+			}
+			obsTokens = n
+			i++
+		case "--seconds":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --seconds")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--seconds")
+			if err != nil {
+				return commandError(jsonOut, "invalid_seconds", err.Error())
+			}
+			obsSeconds = n
+			i++
+		case "--steps":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --steps")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--steps")
+			if err != nil {
+				return commandError(jsonOut, "invalid_steps", err.Error())
+			}
+			obsSteps = n
+			i++
+		case "--json":
+			jsonOut = true
+		default:
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
+		}
+	}
+
+	observed := map[string]int{"tokens": obsTokens, "seconds": obsSeconds, "steps": obsSteps}
+	for _, source := range sources {
+		payload, err := loadAnyJSONMap(source)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_from", "failed loading --from source %q: %v", source, err)
+		}
+		extractObservedBudgets(payload, observed)
+	}
+	if observed["tokens"] < 0 {
+		observed["tokens"] = 0
+	}
+	if observed["seconds"] < 0 {
+		observed["seconds"] = 0
+	}
+	if observed["steps"] < 0 {
+		observed["steps"] = 0
+	}
+
+	payload := map[string]any{
+		"ok":       true,
+		"sources":  sources,
+		"observed": observed,
+	}
+	if jsonOut {
+		writeJSON(payload)
+		return 0
+	}
+	fmt.Printf("tokens=%d seconds=%d steps=%d\n", observed["tokens"], observed["seconds"], observed["steps"])
+	return 0
 }
 
 func detectSessionAnomalies(status sessionStatus, events []sessionEvent) []anomalyFinding {

@@ -624,7 +624,11 @@ func cmdSessionCheckpoint(args []string) int {
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required for save")
 	}
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 

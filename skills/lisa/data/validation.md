@@ -7,6 +7,8 @@ Validated: 2026-02-23
 - `session list` is source of truth for active sessions.
 - `session tree` is metadata graph; can include historical roots. Use `session tree --active-only` for active-only topology.
 - `session monitor --expect marker` requires `--until-marker`; missing marker target is usage error (exit `1`).
+- `capabilities --json-min` and `session schema --json-min` are usage errors (`unknown flag`).
+- `cleanup --project-root` is a usage error (`errorCode:"unknown_flag"`).
 - `session monitor --until-jsonpath '$.sessionState=waiting_input'` can terminate before marker/state gates and returns `exitReason:"jsonpath_matched"`.
 - `session monitor` exits `0` when `--until-state` or `--until-jsonpath` matches, even if the matched state is non-terminal.
 - `session kill --json` missing session exits `1` with JSON payload including `found:false` (no human stderr line).
@@ -19,6 +21,7 @@ Validated: 2026-02-23
 - State-gated polling path: `session monitor --until-state waiting_input|completed|crashed --json`.
 - `session monitor` final payload includes `nextOffset` when capture is available.
 - `session monitor --stream-json --emit-handoff` emits `type=handoff` packets per poll.
+- `session monitor --stream-json --emit-handoff` emits both `type:"poll"` and `type:"handoff"` lines before final payload.
 - `session monitor --handoff-cursor-file <PATH>` emits incremental handoff deltas and persists `nextDeltaOffset`.
 - `session monitor --webhook <URL>` fails hard on delivery failure (`errorCode:"webhook_emit_failed"`, exit `1`).
 - `session handoff --json-min` and `session context-pack --json-min` provide compact transfer payloads for multi-agent loops.
@@ -60,6 +63,15 @@ Validated: 2026-02-23
 - `session monitor --auto-recover --recover-max N` retries timeout/degraded loops with safe Enter nudge.
 - `session lane` stores lane defaults/contracts; `session spawn|route|autopilot --lane <name>` apply lane defaults.
 - `session diff-pack --semantic-only` diffs semantic lines using sidecar semantic cursor state.
+- `session aggregate --delta-json --cursor-file` emits added/removed/changed multi-session pack deltas.
+- `session loop` runs monitor->diff-pack->handoff->next cycles with optional hard-stop budgets.
+- `session context-cache --refresh` stores shared deduplicated semantic context blocks for reuse.
+- `session budget-observe --from` normalizes metrics from heterogeneous JSON payload shapes.
+- `session route --concurrency N` emits queue wave/slot dispatch scheduling.
+- `session handoff --schema v3` emits deterministic IDs for strict downstream parser references.
+- `session memory --semantic-diff` emits added/removed lines with confidence tags.
+- `session anomaly --auto-remediate` emits command-sequence remediation plans.
+- `skills doctor --sync-plan` emits machine-readable install/sync plan steps.
 - `session budget-plan` emits route cost simulation plus hard-stop `session budget-enforce` command contract.
 - `session guard --policy-file <json>` enforces declarative policy constraints on risky commands.
 - `session smoke --llm-profile codex|claude|mixed` applies profile presets for prompt/matrix assertions.
@@ -74,6 +86,8 @@ Validated: 2026-02-23
 
 - `session monitor --until-marker` succeeds with `exitReason:"marker_found"` and may still report state `in_progress`.
 - `session monitor --until-marker` can match marker text echoed from prompt input; keep markers unique and out of prompt text.
+- `session send --keys ... --json-min` succeeds with compact ack payload (`session`,`ok`).
+- `session diff-pack` now resolves session state under project runtime env; previous false `session_not_found` drift under mixed socket contexts is resolved.
 - `session exists` prints `false` and exits `1` when session is absent.
 - Nested wording detection is case-insensitive (`./LISA` matches `./lisa` hint).
 - `Use lisa inside of lisa inside as well.` returns `nestedDetection.reason:"no_nested_hint"` (does not trigger bypass).

@@ -39,7 +39,10 @@ func TestHelpExitZero(t *testing.T) {
 		{"session aggregate --help", []string{"session", "aggregate", "--help"}},
 		{"session prompt-lint --help", []string{"session", "prompt-lint", "--help"}},
 		{"session diff-pack --help", []string{"session", "diff-pack", "--help"}},
+		{"session loop --help", []string{"session", "loop", "--help"}},
+		{"session context-cache --help", []string{"session", "context-cache", "--help"}},
 		{"session anomaly --help", []string{"session", "anomaly", "--help"}},
+		{"session budget-observe --help", []string{"session", "budget-observe", "--help"}},
 		{"session budget-enforce --help", []string{"session", "budget-enforce", "--help"}},
 		{"session replay --help", []string{"session", "replay", "--help"}},
 		{"session route --help", []string{"session", "route", "--help"}},
@@ -111,7 +114,7 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"skills doctor",
 			[]string{"skills", "doctor", "--help"},
-			[]string{"lisa skills doctor", "--repo-root", "--fix", "--contract-check", "--json"},
+			[]string{"lisa skills doctor", "--repo-root", "--fix", "--contract-check", "--sync-plan", "--json"},
 		},
 		{
 			"skills install",
@@ -181,12 +184,12 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session aggregate",
 			[]string{"session", "aggregate", "--help"},
-			[]string{"lisa session aggregate", "--sessions", "--strategy", "--token-budget", "--dedupe", "--json"},
+			[]string{"lisa session aggregate", "--sessions", "--strategy", "--token-budget", "--dedupe", "--delta-json", "--cursor-file", "--json"},
 		},
 		{
 			"session prompt-lint",
 			[]string{"session", "prompt-lint", "--help"},
-			[]string{"lisa session prompt-lint", "--prompt", "--markers", "--budget", "--strict", "--json"},
+			[]string{"lisa session prompt-lint", "--prompt", "--markers", "--budget", "--strict", "--rewrite", "--json"},
 		},
 		{
 			"session diff-pack",
@@ -194,9 +197,24 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 			[]string{"lisa session diff-pack", "--cursor-file", "--redact", "--json"},
 		},
 		{
+			"session loop",
+			[]string{"session", "loop", "--help"},
+			[]string{"lisa session loop", "--session", "--cursor-file", "--handoff-cursor-file", "--schema", "--steps", "--json"},
+		},
+		{
+			"session context-cache",
+			[]string{"session", "context-cache", "--help"},
+			[]string{"lisa session context-cache", "--key", "--refresh", "--from", "--list", "--clear", "--json"},
+		},
+		{
 			"session anomaly",
 			[]string{"session", "anomaly", "--help"},
-			[]string{"lisa session anomaly", "--session", "--events", "--json"},
+			[]string{"lisa session anomaly", "--session", "--events", "--auto-remediate", "--json"},
+		},
+		{
+			"session budget-observe",
+			[]string{"session", "budget-observe", "--help"},
+			[]string{"lisa session budget-observe", "--from", "--tokens", "--seconds", "--steps", "--json"},
 		},
 		{
 			"session budget-enforce",
@@ -216,12 +234,12 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session handoff",
 			[]string{"session", "handoff", "--help"},
-			[]string{"lisa session handoff", "--delta-from", "--compress", "--json"},
+			[]string{"lisa session handoff", "--delta-from", "--compress", "--schema", "--json"},
 		},
 		{
 			"session route",
 			[]string{"session", "route", "--help"},
-			[]string{"lisa session route", "--profile", "--budget", "--topology", "--cost-estimate", "--emit-runbook", "--json"},
+			[]string{"lisa session route", "--profile", "--budget", "--concurrency", "--topology", "--cost-estimate", "--emit-runbook", "--json"},
 		},
 		{
 			"session guard",
@@ -247,6 +265,11 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 			"session preflight",
 			[]string{"session", "preflight", "--help"},
 			[]string{"lisa session preflight", "--project-root", "--json"},
+		},
+		{
+			"session memory",
+			[]string{"session", "memory", "--help"},
+			[]string{"lisa session memory", "--refresh", "--semantic-diff", "--json"},
 		},
 		{
 			"session list",

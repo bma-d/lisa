@@ -48,3 +48,16 @@ Additional round (2026-02-23):
 - `90/100` `session budget-plan`: pre-run budget simulation from route + topology + estimated durations, with hard-stop plan generation.
 - `89/100` `session guard --policy-file`: declarative org policy (allowed commands, shared-tmux constraints, cleanup rules) loaded from file.
 - `88/100` `session smoke --llm-profile`: profile packs for common orchestrators (Codex, Claude, mixed) with expected detection + routing assertions.
+
+Additional round (2026-02-23, implemented):
+
+- `97/100` `session loop`: single command for `monitor -> diff-pack delta -> handoff delta -> next action`, with cursor persistence and hard-stop budgets.
+- `95/100` `session context-cache`: shared deduplicated semantic cache keyed by objective/task hash/session to avoid repeated pack payloads.
+- `94/100` `session budget-observe`: normalizes observed token/time/step usage from monitor/capture/autopilot JSON into one metrics payload for budget-enforce.
+- `93/100` `session route --concurrency N`: queue planner with concurrency caps and lane-aware worker dispatch ordering (`dispatchWave`,`dispatchSlot`,`dispatchPlan`).
+- `92/100` `session handoff --schema v3`: strict typed contract + deterministic IDs for `state`, `risks`, `openQuestions`, and `nextAction`.
+- `91/100` `session prompt-lint --rewrite`: emits concrete patched prompt text optimized for nested trigger reliability.
+- `90/100` `session aggregate --delta-json --cursor-file`: incremental multi-session context deltas to avoid full re-pack on each loop.
+- `89/100` `session memory --semantic-diff`: exposes added/removed memory lines with confidence labels.
+- `88/100` `session anomaly --auto-remediate`: emits recommended command sequence with confidence scoring.
+- `86/100` `skills doctor --sync-plan`: machine-readable patch plan to reconcile repo skill/docs/contracts from `capabilities --json`.

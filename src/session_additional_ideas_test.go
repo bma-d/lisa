@@ -671,6 +671,25 @@ func TestSessionGuardEnforceBlocksMediumRisk(t *testing.T) {
 	}
 }
 
+func TestSessionGuardStrictBlocksMediumRiskWithoutEnforce(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionGuard([]string{"--shared-tmux", "--machine-policy", "strict", "--command", "./lisa cleanup", "--json"})
+		if code != 1 {
+			t.Fatalf("expected guard failure, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	payload := parseJSONMap(t, stdout)
+	if payload["commandRisk"] != "medium" {
+		t.Fatalf("expected medium command risk, got %v", payload["commandRisk"])
+	}
+	if payload["errorCode"] != "shared_tmux_risk_detected" {
+		t.Fatalf("expected shared_tmux_risk_detected, got %v", payload["errorCode"])
+	}
+}
+
 func TestSkillsDoctorExplainDriftAddsRemediation(t *testing.T) {
 	origHome := osUserHomeDirFn
 	t.Cleanup(func() { osUserHomeDirFn = origHome })

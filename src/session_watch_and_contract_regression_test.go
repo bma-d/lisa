@@ -235,3 +235,50 @@ func TestCmdSessionListActiveOnlyWithoutNextAction(t *testing.T) {
 		t.Fatalf("expected only active session, got %v", sessions)
 	}
 }
+
+func TestCmdSessionListReportsAmbiguousProjectRootWarnings(t *testing.T) {
+	origList := tmuxListSessionsFn
+	origCompute := computeSessionStatusFn
+	origMeta := loadSessionMetaByGlobFn
+	t.Cleanup(func() {
+		tmuxListSessionsFn = origList
+		computeSessionStatusFn = origCompute
+		loadSessionMetaByGlobFn = origMeta
+	})
+	tmuxListSessionsFn = func(projectOnly bool, projectRoot string) ([]string, error) {
+		return []string{"lisa-ambiguous-list"}, nil
+	}
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, poll int) (sessionStatus, error) {
+		return sessionStatus{Session: session, Status: "active", SessionState: "in_progress"}, nil
+	}
+	loadSessionMetaByGlobFn = func(session string) (sessionMeta, error) {
+		return sessionMeta{}, &sessionMetaAmbiguousError{Session: session}
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionList([]string{
+			"--project-root", t.TempDir(),
+			"--with-next-action",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	payload := parseJSONMap(t, stdout)
+	sessions := payload["sessions"].([]any)
+	if len(sessions) != 1 || sessions[0] != "lisa-ambiguous-list" {
+		t.Fatalf("expected session retained, got %v", sessions)
+	}
+	warnings, ok := payload["warnings"].([]any)
+	if !ok || len(warnings) == 0 {
+		t.Fatalf("expected warnings payload, got %v", payload["warnings"])
+	}
+	first := warnings[0].(map[string]any)
+	if mapStringValue(first, "errorCode") != "ambiguous_project_root" {
+		t.Fatalf("expected ambiguous_project_root warning, got %v", first)
+	}
+}

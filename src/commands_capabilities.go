@@ -179,19 +179,31 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session aggregate",
-		Flags: []string{"--sessions", "--project-root", "--strategy", "--events", "--lines", "--token-budget", "--dedupe", "--json", "--json-min"},
+		Flags: []string{"--sessions", "--project-root", "--strategy", "--events", "--lines", "--token-budget", "--dedupe", "--delta-json", "--cursor-file", "--json", "--json-min"},
 	},
 	{
 		Name:  "session prompt-lint",
-		Flags: []string{"--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--model", "--project-root", "--markers", "--budget", "--strict", "--json"},
+		Flags: []string{"--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--model", "--project-root", "--markers", "--budget", "--strict", "--rewrite", "--json"},
 	},
 	{
 		Name:  "session diff-pack",
 		Flags: []string{"--session", "--project-root", "--strategy", "--events", "--lines", "--token-budget", "--cursor-file", "--redact", "--semantic-only", "--json", "--json-min"},
 	},
 	{
+		Name:  "session loop",
+		Flags: []string{"--session", "--project-root", "--poll-interval", "--max-polls", "--strategy", "--events", "--lines", "--token-budget", "--cursor-file", "--handoff-cursor-file", "--schema", "--steps", "--max-tokens", "--max-seconds", "--max-steps", "--json", "--json-min"},
+	},
+	{
+		Name:  "session context-cache",
+		Flags: []string{"--key", "--session", "--project-root", "--refresh", "--from", "--ttl-hours", "--max-lines", "--list", "--clear", "--json"},
+	},
+	{
 		Name:  "session anomaly",
-		Flags: []string{"--session", "--project-root", "--events", "--json"},
+		Flags: []string{"--session", "--project-root", "--events", "--auto-remediate", "--json"},
+	},
+	{
+		Name:  "session budget-observe",
+		Flags: []string{"--from", "--tokens", "--seconds", "--steps", "--json"},
 	},
 	{
 		Name:  "session budget-enforce",
@@ -215,7 +227,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session route",
-		Flags: []string{"--goal", "--agent", "--lane", "--prompt", "--model", "--profile", "--budget", "--queue", "--sessions", "--queue-limit", "--topology", "--cost-estimate", "--from-state", "--project-root", "--emit-runbook", "--json"},
+		Flags: []string{"--goal", "--agent", "--lane", "--prompt", "--model", "--profile", "--budget", "--queue", "--sessions", "--queue-limit", "--concurrency", "--topology", "--cost-estimate", "--from-state", "--project-root", "--emit-runbook", "--json"},
 	},
 	{
 		Name:  "session autopilot",
@@ -231,7 +243,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session memory",
-		Flags: []string{"--session", "--project-root", "--refresh", "--ttl-hours", "--max-lines", "--json"},
+		Flags: []string{"--session", "--project-root", "--refresh", "--semantic-diff", "--ttl-hours", "--max-lines", "--json"},
 	},
 	{
 		Name:  "session lane",
@@ -287,7 +299,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "skills doctor",
-		Flags: []string{"--repo-root", "--deep", "--explain-drift", "--fix", "--contract-check", "--json"},
+		Flags: []string{"--repo-root", "--deep", "--explain-drift", "--fix", "--contract-check", "--sync-plan", "--json"},
 	},
 	{
 		Name:  "skills install",

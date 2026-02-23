@@ -443,6 +443,7 @@ func pruneStaleSessionEventArtifacts() error {
 		return nil
 	}
 	cutoff := nowFn().Add(-time.Duration(retentionDays) * 24 * time.Hour)
+	lockTimeout := getIntEnv("LISA_EVENT_LOCK_TIMEOUT_MS", defaultEventLockTimeoutMS)
 	paths, err := filepath.Glob("/tmp/.lisa-*-session-*-events.jsonl")
 	if err != nil {
 		return err
@@ -450,21 +451,28 @@ func pruneStaleSessionEventArtifacts() error {
 
 	var errs []string
 	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
+		lockPath := path + ".lock"
+		err := withExclusiveFileLock(lockPath, lockTimeout, func() error {
+			info, statErr := os.Stat(path)
+			if statErr != nil {
+				if errors.Is(statErr, os.ErrNotExist) {
+					return nil
+				}
+				return statErr
 			}
+			if !info.ModTime().Before(cutoff) {
+				return nil
+			}
+			for _, target := range []string{path, sessionEventCountFile(path)} {
+				if removeErr := os.Remove(target); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+					return removeErr
+				}
+			}
+			return nil
+		})
+		if err != nil {
 			errs = append(errs, err.Error())
 			continue
-		}
-		if !info.ModTime().Before(cutoff) {
-			continue
-		}
-		for _, target := range []string{path, sessionEventCountFile(path), path + ".lock"} {
-			if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
-				errs = append(errs, err.Error())
-			}
 		}
 	}
 

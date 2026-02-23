@@ -2,8 +2,10 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -268,6 +270,73 @@ func TestCmdSessionMemoryRefreshJSONIncludesDeltaMetadataAndPath(t *testing.T) {
 	}
 	if _, ok := readPayload["deltaLines"]; ok {
 		t.Fatalf("did not expect deltaLines in read payload, got %v", readPayload["deltaLines"])
+	}
+}
+
+func TestCmdSessionMemorySemanticDiffTextSummaryMatchesJSONCounts(t *testing.T) {
+	projectRoot := t.TempDir()
+	session := "lisa-memory-semantic-diff-text"
+	if err := saveSessionMemory(projectRoot, session, sessionMemoryRecord{
+		Session:   session,
+		UpdatedAt: "2026-02-20T00:00:00Z",
+		ExpiresAt: "2099-01-01T00:00:00Z",
+		MaxLines:  80,
+		Lines:     []string{"old-a", "shared-b"},
+	}); err != nil {
+		t.Fatalf("save memory: %v", err)
+	}
+	if err := os.WriteFile(sessionOutputFile(projectRoot, session), []byte("shared-b\nnew-c\n"), 0o600); err != nil {
+		t.Fatalf("write output: %v", err)
+	}
+
+	origHas := tmuxHasSessionFn
+	t.Cleanup(func() { tmuxHasSessionFn = origHas })
+	tmuxHasSessionFn = func(session string) bool { return false }
+
+	jsonOut, jsonErr := captureOutput(t, func() {
+		code := cmdSessionMemory([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--semantic-diff",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected json success, got %d", code)
+		}
+	})
+	if jsonErr != "" {
+		t.Fatalf("unexpected stderr for json run: %q", jsonErr)
+	}
+	payload := decodeJSONMap(t, jsonOut)
+	semantic, ok := payload["semanticDiff"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected semanticDiff object, got %v", payload["semanticDiff"])
+	}
+	addedRaw, ok := semantic["added"].([]any)
+	if !ok {
+		t.Fatalf("expected semanticDiff.added array, got %T (%v)", semantic["added"], semantic["added"])
+	}
+	removedRaw, ok := semantic["removed"].([]any)
+	if !ok {
+		t.Fatalf("expected semanticDiff.removed array, got %T (%v)", semantic["removed"], semantic["removed"])
+	}
+
+	textOut, textErr := captureOutput(t, func() {
+		code := cmdSessionMemory([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--semantic-diff",
+		})
+		if code != 0 {
+			t.Fatalf("expected text success, got %d", code)
+		}
+	})
+	if textErr != "" {
+		t.Fatalf("unexpected stderr for text run: %q", textErr)
+	}
+	expected := fmt.Sprintf("semantic_diff added=%d removed=%d", len(addedRaw), len(removedRaw))
+	if !strings.Contains(textOut, expected) {
+		t.Fatalf("expected text semantic diff summary %q, got %q", expected, textOut)
 	}
 }
 

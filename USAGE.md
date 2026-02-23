@@ -280,12 +280,18 @@ Flags:
 - `--repo-root`: repo root containing `skills/` (default cwd)
 - `--deep`: include recursive content-hash drift checks
 - `--explain-drift`: include remediation guidance for drift findings
+- `--fix`: auto-install repo skill to outdated/missing targets
+- `--contract-check`: include command/flag contract drift checks
+- `--sync-plan`: include machine-readable install/sync plan
 - `--json`: JSON summary output
 
 Behavior notes:
 
 - `--deep` computes recursive content hashes for repo and installed skill trees; matching versions can still report `content drift`.
 - `--explain-drift` adds per-target remediation hints (`remediation`) in JSON and text output.
+- `--fix` installs repo skill to drifted targets, then re-runs checks.
+- `--contract-check` adds command/flag surface drift checks (including session contract checks).
+- `--sync-plan` adds prioritized install/sync commands in `syncPlan`.
 
 ### `session name`
 
@@ -500,6 +506,7 @@ Flags:
 - `--project-root`
 - `--poll-interval N` seconds (default `30`)
 - `--max-polls N` (default `120`)
+- `--timeout-seconds N`: optional wall-clock timeout budget in seconds
 - `--stop-on-waiting true|false` (default `true`)
 - `--waiting-requires-turn-complete true|false` (default `false`)
 - `--until-marker TEXT`: stop successfully when raw pane output contains marker text
@@ -512,6 +519,10 @@ Flags:
 - `--emit-handoff` (line-delimited compact handoff packets per poll; requires `--stream-json`)
 - `--handoff-cursor-file PATH`: persist/reuse handoff delta offset (`--emit-handoff` only)
 - `--event-budget N`: token budget hint for streamed handoff deltas (`--emit-handoff` only)
+- `--webhook TARGET`: emit poll/final monitor events to file path or HTTPS endpoint
+- `--auto-recover`: retry once on max-polls/degraded timeout via safe Enter nudge
+- `--recover-max N`: maximum auto-recover attempts (default `1`)
+- `--recover-budget N`: optional total poll budget across recover attempts
 - `--verbose`
 
 Output note:
@@ -760,9 +771,15 @@ Flags:
 
 - `--goal`: `nested|analysis|exec` (default `analysis`)
 - `--agent`: `claude|codex` (default `codex`)
+- `--lane NAME`: optional lane defaults/contracts source
 - `--prompt`: optional override
 - `--model`: optional codex model override
+- `--profile NAME`: route profile `codex-spark|claude`
 - `--budget N`: optional token budget hint for runbook/capture
+- `--queue`: include prioritized session dispatch queue
+- `--sessions CSV`: optional explicit sessions for queue mode
+- `--queue-limit N`: optional cap on returned queue items
+- `--concurrency N`: dispatch concurrency cap for queue planning
 - `--topology CSV`: optional roles `planner,workers,reviewer`
 - `--cost-estimate`: include token/time estimate payload
 - `--from-state PATH`: route using handoff/status JSON payload (`-` for stdin)
@@ -790,6 +807,7 @@ Flags:
 
 - `--goal`: `nested|analysis|exec` (default `analysis`)
 - `--agent`: `claude|codex` (default `codex`)
+- `--lane NAME`: optional lane defaults/contracts source
 - `--mode`: optional override `interactive|exec`
 - `--nested-policy`: optional override `auto|force|off`
 - `--nesting-intent`: optional override `auto|nested|neutral`
@@ -830,6 +848,7 @@ Flags:
 - `--advice-only`: diagnostics only; always exit zero
 - `--machine-policy`: `strict|warn|off` (default `strict`) for risk exit policy
 - `--command`: optional command-risk check
+- `--policy-file PATH`: optional JSON policy contract for guard evaluation
 - `--project-root`
 - `--json`
 
@@ -947,11 +966,13 @@ Flags:
 - `--matrix-file PATH`: prompt regression matrix (`mode|prompt`, mode = `bypass|full-auto|any`)
 - `--chaos MODE`: fault mode (`none|delay|drop-marker|fail-child|mixed`, default `none`)
 - `--chaos-report`: normalize chaos outcomes against expected-failure contracts
+- `--llm-profile NAME`: profile preset (`none|codex|claude|mixed`)
 - `--model NAME`: optional Codex model pin for smoke spawn sessions
 - `--poll-interval N` (default `1`)
 - `--max-polls N` (default `180`)
 - `--keep-sessions`
 - `--report-min`: compact CI-focused JSON summary (errorCode/finalState/missing markers only)
+- `--export-artifacts PATH`: export smoke artifacts bundle to path
 - `--json`
 
 Behavior:

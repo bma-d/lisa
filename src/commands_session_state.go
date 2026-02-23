@@ -350,7 +350,11 @@ func cmdSessionStatus(args []string) int {
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	agentHint, err := parseAgentHint(agentHint)
@@ -688,7 +692,11 @@ func cmdSessionMonitor(args []string) int {
 			maxPolls = timeoutPolls
 		}
 	}
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	agentHint, err := parseAgentHint(agentHint)
@@ -1340,7 +1348,11 @@ func cmdSessionCapture(args []string) int {
 		}
 	}
 
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	transcriptProjectRoot := projectRoot

@@ -193,6 +193,74 @@ func TestCmdSessionRouteQueue(t *testing.T) {
 	}
 }
 
+func TestCmdSessionRouteQueueEnumerationProjectScoped(t *testing.T) {
+	projectRoot := t.TempDir()
+	otherRoot := t.TempDir()
+	localSession := generateSessionName(projectRoot, "codex", "interactive", "qscope")
+	foreignSession := generateSessionName(otherRoot, "codex", "interactive", "qscope")
+
+	if err := saveSessionMeta(otherRoot, foreignSession, sessionMeta{
+		Session:     foreignSession,
+		ProjectRoot: otherRoot,
+	}); err != nil {
+		t.Fatalf("save foreign meta: %v", err)
+	}
+
+	origList := tmuxListSessionsFn
+	origCompute := computeSessionStatusFn
+	t.Cleanup(func() {
+		tmuxListSessionsFn = origList
+		computeSessionStatusFn = origCompute
+	})
+
+	tmuxListSessionsFn = func(projectOnly bool, root string) ([]string, error) {
+		if !projectOnly {
+			t.Fatalf("expected project-only tmux listing for queue enumeration")
+		}
+		if canonicalProjectRoot(root) != canonicalProjectRoot(projectRoot) {
+			t.Fatalf("unexpected project root: got %q want %q", root, projectRoot)
+		}
+		return []string{localSession, foreignSession}, nil
+	}
+
+	computed := map[string]int{}
+	computeSessionStatusFn = func(sessionName, root, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		computed[sessionName]++
+		return sessionStatus{Session: sessionName, Status: "idle", SessionState: "waiting_input"}, nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionRoute([]string{
+			"--goal", "analysis",
+			"--project-root", projectRoot,
+			"--queue",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("parse payload: %v (%q)", err, stdout)
+	}
+	queue := payload["queue"].([]any)
+	if len(queue) != 1 {
+		t.Fatalf("expected only project-scoped queue item, got %d (%v)", len(queue), queue)
+	}
+	first := queue[0].(map[string]any)
+	if first["session"] != localSession {
+		t.Fatalf("expected local session in queue, got %v", first["session"])
+	}
+	if computed[foreignSession] != 0 {
+		t.Fatalf("expected foreign session to be skipped, compute calls=%d", computed[foreignSession])
+	}
+}
+
 func TestCmdSessionGuardPolicyFile(t *testing.T) {
 	policyPath := filepath.Join(t.TempDir(), "policy.json")
 	if err := os.WriteFile(policyPath, []byte(`{"machinePolicy":"strict","deniedCommands":["cleanup --include-tmux-default"]}`), 0o644); err != nil {

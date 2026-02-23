@@ -3,7 +3,7 @@ name: lisa
 description: lisa, tmux, orchestration, claude, codex, spawn, monitor, capture, nested, smoke, skills
 author: Claude Code
 version: 5.3.0
-date: 2026-02-22
+date: 2026-02-23
 tags: [lisa, tmux, orchestration, claude, codex, agents]
 ---
 
@@ -22,6 +22,7 @@ Axiom: minimum context, deterministic command contracts.
 7. For marker-gated monitor (`--until-marker`), choose a unique marker not present in prompt text.
 8. In shared tmux environments, run `session guard --shared-tmux --json` before cleanup/kill-all actions.
 9. `session guard --shared-tmux` returning `safe:false` is expected risk signaling (often exit `1`); switch to `--project-only` flows.
+10. `capabilities` and `session schema` support `--json` but not `--json-min`.
 
 ## LLM Fast Loop
 
@@ -29,7 +30,7 @@ Axiom: minimum context, deterministic command contracts.
 2. Prompt gate before spawn: `./lisa session spawn --agent codex --mode exec --project-root "$ROOT" --prompt "$P" --dry-run --detect-nested --json`.
 3. For multi-step plans, derive deterministic steps via `./lisa session route --goal analysis --project-root "$ROOT" --emit-runbook --json`.
 4. Use compact polling defaults in loops: `session monitor --json-min --stream-json --emit-handoff`.
-5. Prefer resume-safe cursors in loops: `session capture --cursor-file`, `session handoff --cursor-file`, `session packet --cursor-file`.
+5. Prefer resume-safe cursors in loops: `session capture --raw --cursor-file`, `session handoff --cursor-file`, `session packet --cursor-file`.
 
 ## Crucial Commands
 
@@ -125,6 +126,14 @@ Exit/contract quick-map:
 - `autopilot` propagates failing step exit (`monitor` often `2` for timeout/terminal mismatch)
 - `monitor --webhook` returns exit `1` (`errorCode:"webhook_emit_failed"`) if payload delivery fails.
 - `session guard --machine-policy strict` can return exit `1` (`errorCode:"shared_tmux_risk_detected"`) without `--enforce`.
+
+Validated edge contracts (2026-02-23):
+- `cleanup --project-root ...` is an unknown flag (`errorCode:"unknown_flag"`).
+- `session guard --shared-tmux --command "./lisa cleanup --include-tmux-default"` hard-fails with `machine-policy strict` (exit `1`) even without `--enforce`.
+- `session monitor --stream-json --emit-handoff` emits both `type:"poll"` and `type:"handoff"` lines before final payload.
+- `session monitor --webhook <unreachable>` exits `1` with `errorCode:"webhook_emit_failed"`.
+- `skills doctor --contract-check` can exit `1` for install drift even when contract checks are all `ok:true`.
+- `session diff-pack` now resolves state under per-project runtime env; false `session_not_found` under mixed socket contexts is fixed.
 
 ## Router (JIT)
 

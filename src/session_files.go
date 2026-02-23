@@ -19,6 +19,19 @@ type cleanupOptions struct {
 	KeepEvents bool
 }
 
+type sessionMetaAmbiguousError struct {
+	Session string
+}
+
+func (e *sessionMetaAmbiguousError) Error() string {
+	return fmt.Sprintf("multiple metadata files found for session %q across projects; provide --project-root", e.Session)
+}
+
+func isSessionMetaAmbiguousError(err error) bool {
+	var target *sessionMetaAmbiguousError
+	return errors.As(err, &target)
+}
+
 func generateSessionName(projectRoot, agent, mode, tag string) string {
 	now := time.Now()
 	stamp := fmt.Sprintf("%s-%09d", now.Format("060102-150405"), now.Nanosecond())
@@ -257,7 +270,7 @@ func loadSessionMetaByGlob(session string) (sessionMeta, error) {
 		return sessionMeta{}, fmt.Errorf("no readable metadata file found for session %q", session)
 	}
 	if len(roots) > 1 {
-		return sessionMeta{}, fmt.Errorf("multiple metadata files found for session %q across projects; provide --project-root", session)
+		return sessionMeta{}, &sessionMetaAmbiguousError{Session: session}
 	}
 	best := candidates[0]
 	for _, c := range candidates[1:] {

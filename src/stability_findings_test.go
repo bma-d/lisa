@@ -421,6 +421,56 @@ func TestReadSessionEventTailRespectsWriterLockTimeout(t *testing.T) {
 	}
 }
 
+func TestReadSessionHandoffDeltaRespectsWriterLockTimeout(t *testing.T) {
+	projectRoot := t.TempDir()
+	session := "lisa-handoff-delta-lock-timeout"
+	path := sessionEventsFile(projectRoot, session)
+	event := sessionEvent{
+		At:      "2026-02-23T00:00:00Z",
+		Type:    "snapshot",
+		Session: session,
+		State:   "in_progress",
+		Status:  "active",
+		Reason:  "ok",
+		Poll:    1,
+		Signals: statusSignals{},
+	}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("failed to marshal event: %v", err)
+	}
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatalf("failed writing event file: %v", err)
+	}
+
+	lockPath := path + ".lock"
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("failed opening lock file: %v", err)
+	}
+	defer lockFile.Close()
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("failed acquiring lock: %v", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) //nolint:errcheck
+
+	origTimeout := os.Getenv("LISA_EVENT_LOCK_TIMEOUT_MS")
+	t.Cleanup(func() {
+		_ = os.Setenv("LISA_EVENT_LOCK_TIMEOUT_MS", origTimeout)
+	})
+	if err := os.Setenv("LISA_EVENT_LOCK_TIMEOUT_MS", "50"); err != nil {
+		t.Fatalf("failed setting lock timeout env: %v", err)
+	}
+
+	_, _, _, err = readSessionHandoffDelta(projectRoot, session, 0, 5)
+	if err == nil {
+		t.Fatalf("expected handoff delta timeout while writer lock is held")
+	}
+	if !strings.Contains(err.Error(), "event read lock timeout") {
+		t.Fatalf("unexpected lock timeout error: %v", err)
+	}
+}
+
 func TestReadSessionEventTailHandlesVeryLargeLine(t *testing.T) {
 	projectRoot := t.TempDir()
 	session := "lisa-large-tail-line"
@@ -496,10 +546,72 @@ func TestPruneStaleSessionEventArtifactsRemovesOldLogs(t *testing.T) {
 		t.Fatalf("unexpected prune error: %v", err)
 	}
 
-	if fileExists(oldPath) || fileExists(sessionEventCountFile(oldPath)) || fileExists(oldPath+".lock") {
-		t.Fatalf("expected stale event artifacts to be removed")
+	if fileExists(oldPath) || fileExists(sessionEventCountFile(oldPath)) {
+		t.Fatalf("expected stale event + count artifacts to be removed")
 	}
 	if !fileExists(newPath) || !fileExists(sessionEventCountFile(newPath)) || !fileExists(newPath+".lock") {
 		t.Fatalf("expected fresh event artifacts to remain")
+	}
+	if !fileExists(oldPath + ".lock") {
+		t.Fatalf("expected prune to retain stale lock file to avoid lock inode races")
+	}
+}
+
+func TestPruneStaleSessionEventArtifactsRespectsEventLock(t *testing.T) {
+	origRetention := os.Getenv("LISA_EVENT_RETENTION_DAYS")
+	hadRetention := origRetention != ""
+	origLockTimeout := os.Getenv("LISA_EVENT_LOCK_TIMEOUT_MS")
+	hadLockTimeout := origLockTimeout != ""
+	t.Cleanup(func() {
+		if hadRetention {
+			_ = os.Setenv("LISA_EVENT_RETENTION_DAYS", origRetention)
+		} else {
+			_ = os.Unsetenv("LISA_EVENT_RETENTION_DAYS")
+		}
+		if hadLockTimeout {
+			_ = os.Setenv("LISA_EVENT_LOCK_TIMEOUT_MS", origLockTimeout)
+		} else {
+			_ = os.Unsetenv("LISA_EVENT_LOCK_TIMEOUT_MS")
+		}
+	})
+	_ = os.Setenv("LISA_EVENT_RETENTION_DAYS", "1")
+	_ = os.Setenv("LISA_EVENT_LOCK_TIMEOUT_MS", "25")
+
+	projectRoot := t.TempDir()
+	session := "lisa-prune-lock-timeout"
+	eventsPath := sessionEventsFile(projectRoot, session)
+	countPath := sessionEventCountFile(eventsPath)
+	lockPath := eventsPath + ".lock"
+	for _, path := range []string{eventsPath, countPath, lockPath} {
+		if err := os.WriteFile(path, []byte("seed\n"), 0o600); err != nil {
+			t.Fatalf("seed %s: %v", path, err)
+		}
+	}
+	oldTime := time.Now().Add(-72 * time.Hour)
+	for _, path := range []string{eventsPath, countPath, lockPath} {
+		if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+			t.Fatalf("chtimes %s: %v", path, err)
+		}
+	}
+
+	lockFile, err := os.OpenFile(lockPath, os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open lock: %v", err)
+	}
+	defer lockFile.Close()
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) //nolint:errcheck
+
+	err = pruneStaleSessionEventArtifacts()
+	if err == nil {
+		t.Fatalf("expected prune to fail while lock is held")
+	}
+	if !strings.Contains(err.Error(), "event lock timeout") {
+		t.Fatalf("expected event lock timeout error, got %v", err)
+	}
+	if !fileExists(eventsPath) {
+		t.Fatalf("expected events file retained when prune cannot acquire lock")
 	}
 }

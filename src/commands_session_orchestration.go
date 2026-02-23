@@ -3,7 +3,9 @@ package app
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -189,8 +191,10 @@ func cmdSessionHandoff(args []string) int {
 		schemaVersion = "v1"
 	case "2", "v2":
 		schemaVersion = "v2"
+	case "3", "v3":
+		schemaVersion = "v3"
 	default:
-		return commandErrorf(jsonOut, "invalid_schema", "invalid --schema: %s (expected v1|v2)", schemaVersion)
+		return commandErrorf(jsonOut, "invalid_schema", "invalid --schema: %s (expected v1|v2|v3)", schemaVersion)
 	}
 	var err error
 	compressMode, err = parseHandoffCompressMode(compressMode)
@@ -212,7 +216,11 @@ func cmdSessionHandoff(args []string) int {
 		}
 	}
 
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 
@@ -336,7 +344,7 @@ func cmdSessionHandoff(args []string) int {
 		if status.SessionState == "not_found" {
 			payload["errorCode"] = "session_not_found"
 		}
-		if schemaVersion == "v2" {
+		if schemaVersion == "v2" || schemaVersion == "v3" {
 			payload["state"] = map[string]any{
 				"status":       status.Status,
 				"sessionState": status.SessionState,
@@ -349,6 +357,22 @@ func cmdSessionHandoff(args []string) int {
 			}
 			payload["risks"] = risks
 			payload["openQuestions"] = openQuestions
+			if schemaVersion == "v3" {
+				payload["state"] = map[string]any{
+					"id":           deterministicHandoffID(session, status.SessionState, "state", 0),
+					"status":       status.Status,
+					"sessionState": status.SessionState,
+					"reason":       status.ClassificationReason,
+					"summary":      summary,
+				}
+				payload["nextAction"] = map[string]any{
+					"id":      deterministicHandoffID(session, status.SessionState, "nextAction:"+nextAction, nextOffset),
+					"name":    nextAction,
+					"command": recommendedCommandForAction(nextAction, session, projectRoot),
+				}
+				payload["risks"] = handoffRisksV3(session, status.SessionState, risks)
+				payload["openQuestions"] = handoffQuestionsV3(session, status.SessionState, openQuestions)
+			}
 		}
 		if compressMode != "none" {
 			compressInput := map[string]any{
@@ -584,7 +608,11 @@ func cmdSessionContextPack(args []string) int {
 		return commandError(jsonOut, "invalid_redact_rules", err.Error())
 	}
 
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 
@@ -730,6 +758,7 @@ func cmdSessionRoute(args []string) int {
 	queue := false
 	queueSessionsRaw := ""
 	queueLimit := 0
+	concurrency := 1
 	topologyRaw := ""
 	laneModeOverride := ""
 	laneNestedPolicyOverride := ""
@@ -813,6 +842,16 @@ func cmdSessionRoute(args []string) int {
 				return commandError(jsonOut, "invalid_queue_limit", parseErr.Error())
 			}
 			queueLimit = n
+			i++
+		case "--concurrency":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --concurrency")
+			}
+			n, parseErr := parsePositiveIntFlag(args[i+1], "--concurrency")
+			if parseErr != nil {
+				return commandError(jsonOut, "invalid_concurrency", parseErr.Error())
+			}
+			concurrency = n
 			i++
 		case "--topology":
 			if i+1 >= len(args) {
@@ -1005,19 +1044,23 @@ func cmdSessionRoute(args []string) int {
 	if budget > 0 {
 		payload["budget"] = budget
 	}
+	payload["concurrency"] = concurrency
 	if parsedFromState != nil {
 		payload["fromState"] = parsedFromState
 	}
 	if emitRunbook {
 		payload["runbook"] = buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model, budget)
 	}
+	routeQueue := make([]map[string]any, 0)
 	if queue {
-		queueItems, queueErr := buildRouteQueue(projectRoot, queueSessionsRaw, queueLimit, budget)
+		queueItems, queueErr := buildRouteQueue(projectRoot, queueSessionsRaw, queueLimit, budget, concurrency)
 		if queueErr != nil {
 			return commandErrorf(jsonOut, "queue_build_failed", "failed to build queue: %v", queueErr)
 		}
+		routeQueue = queueItems
 		payload["queue"] = queueItems
 		payload["queueCount"] = len(queueItems)
+		payload["dispatchPlan"] = buildRouteDispatchPlan(queueItems, concurrency)
 	}
 	if len(topologyRoles) > 0 {
 		payload["topology"] = buildTopologyGraph(topologyRoles)
@@ -1028,6 +1071,12 @@ func cmdSessionRoute(args []string) int {
 	if jsonOut {
 		writeJSON(payload)
 		return 0
+	}
+	for _, item := range routeQueue {
+		if mapStringValue(item, "sessionState") != "ambiguous_project_root" {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "warning: session=%s %s\n", mapStringValue(item, "session"), mapStringValue(item, "reason"))
 	}
 	fmt.Printf("%s\n%s\n", command, strings.Join(rationale, " | "))
 	return 0
@@ -1184,10 +1233,8 @@ func cmdSessionGuard(args []string) int {
 	}
 
 	safe := len(defaultSessions) == 0 && commandRisk != "high"
-	if enforce {
-		if len(defaultSessions) > 0 || commandRisk != "low" {
-			safe = false
-		}
+	if machinePolicy == "strict" || enforce {
+		safe = len(defaultSessions) == 0 && commandRisk == "low"
 	}
 	remediation := []string{}
 	if !safe {
@@ -1984,31 +2031,41 @@ func buildContextPackRaw(strategy, session string, status sessionStatus, recent 
 
 func readSessionHandoffDelta(projectRoot, session string, offset, limit int) ([]sessionHandoffItem, int, int, error) {
 	eventsPath := sessionEventsFile(projectRoot, session)
-	raw, err := os.ReadFile(eventsPath)
+	lockTimeout := getIntEnv("LISA_EVENT_LOCK_TIMEOUT_MS", defaultEventLockTimeoutMS)
+	lockPath := eventsPath + ".lock"
+
+	all := make([]sessionHandoffItem, 0)
+	err := withSharedFileLock(lockPath, lockTimeout, func() error {
+		raw, readErr := os.ReadFile(eventsPath)
+		if readErr != nil {
+			if os.IsNotExist(readErr) {
+				return nil
+			}
+			return readErr
+		}
+		lines := trimLines(string(raw))
+		all = make([]sessionHandoffItem, 0, len(lines))
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var event sessionEvent
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				continue
+			}
+			all = append(all, sessionHandoffItem{
+				At:     event.At,
+				Type:   event.Type,
+				State:  event.State,
+				Status: event.Status,
+				Reason: event.Reason,
+			})
+		}
+		return nil
+	})
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []sessionHandoffItem{}, 0, 0, nil
-		}
 		return nil, 0, 0, err
-	}
-	lines := trimLines(string(raw))
-	all := make([]sessionHandoffItem, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var event sessionEvent
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue
-		}
-		all = append(all, sessionHandoffItem{
-			At:     event.At,
-			Type:   event.Type,
-			State:  event.State,
-			Status: event.Status,
-			Reason: event.Reason,
-		})
 	}
 	total := len(all)
 	if offset < 0 {
@@ -2430,16 +2487,62 @@ func deriveHandoffQuestions(status sessionStatus, items []sessionHandoffItem) []
 	return questions
 }
 
-func buildRouteQueue(projectRoot, sessionsRaw string, limit int, budget int) ([]map[string]any, error) {
+func deterministicHandoffID(session, state, kind string, ordinal int) string {
+	base := strings.TrimSpace(session) + "|" + strings.TrimSpace(state) + "|" + strings.TrimSpace(kind) + "|" + strconv.Itoa(ordinal)
+	sum := sha1Hex(base)
+	return "hid-" + sum[:12]
+}
+
+func handoffRisksV3(session, state string, risks []sessionHandoffRisk) []map[string]any {
+	out := make([]map[string]any, 0, len(risks))
+	for idx, risk := range risks {
+		level := strings.TrimSpace(risk.Level)
+		if level == "" {
+			level = "low"
+		}
+		code := strings.TrimSpace(risk.Code)
+		if code == "" {
+			code = "unknown_risk"
+		}
+		out = append(out, map[string]any{
+			"id":      deterministicHandoffID(session, state, "risk:"+code, idx),
+			"level":   level,
+			"code":    code,
+			"message": strings.TrimSpace(risk.Message),
+		})
+	}
+	return out
+}
+
+func handoffQuestionsV3(session, state string, questions []sessionHandoffQuestion) []map[string]any {
+	out := make([]map[string]any, 0, len(questions))
+	for idx, question := range questions {
+		code := strings.TrimSpace(question.Code)
+		if code == "" {
+			code = "unknown_question"
+		}
+		out = append(out, map[string]any{
+			"id":       deterministicHandoffID(session, state, "question:"+code, idx),
+			"code":     code,
+			"question": strings.TrimSpace(question.Question),
+		})
+	}
+	return out
+}
+
+func buildRouteQueue(projectRoot, sessionsRaw string, limit int, budget int, concurrency int) ([]map[string]any, error) {
 	sessions := parseCommaValues(sessionsRaw)
+	projectRoot = canonicalProjectRoot(projectRoot)
+	enumeratedSessions := false
 	if len(sessions) == 0 {
 		restore := withProjectRuntimeEnv(projectRoot)
-		list, err := tmuxListSessionsFn(false, projectRoot)
+		list, err := tmuxListSessionsFn(true, projectRoot)
 		restore()
 		if err != nil {
 			return nil, err
 		}
 		sessions = list
+		enumeratedSessions = true
 	}
 	if len(sessions) == 0 {
 		return []map[string]any{}, nil
@@ -2455,7 +2558,30 @@ func buildRouteQueue(projectRoot, sessionsRaw string, limit int, budget int) ([]
 	}
 	items := make([]queueItem, 0, len(sessions))
 	for _, session := range sessions {
-		resolvedRoot := resolveSessionProjectRoot(session, projectRoot, false)
+		resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, false)
+		if resolveErr != nil {
+			if isSessionMetaAmbiguousError(resolveErr) {
+				items = append(items, queueItem{
+					Session: session,
+					Status: sessionStatus{
+						Session:              session,
+						Status:               "unknown",
+						SessionState:         "ambiguous_project_root",
+						ClassificationReason: "metadata_ambiguous",
+					},
+					NextAction:   "provide_project_root",
+					Command:      "./lisa session status --session " + shellQuote(session) + " --project-root " + shellQuote(projectRoot) + " --json",
+					Reason:       resolveErr.Error(),
+					Priority:     98,
+					PriorityType: "high",
+				})
+				continue
+			}
+			resolvedRoot = projectRoot
+		}
+		if enumeratedSessions && canonicalProjectRoot(resolvedRoot) != projectRoot {
+			continue
+		}
 		restore := withProjectRuntimeEnv(resolvedRoot)
 		status, err := computeSessionStatusFn(session, resolvedRoot, "auto", "auto", false, 0)
 		restore()
@@ -2486,8 +2612,16 @@ func buildRouteQueue(projectRoot, sessionsRaw string, limit int, budget int) ([]
 	}
 	out := make([]map[string]any, 0, len(items))
 	for idx, item := range items {
+		dispatchWave := 1
+		dispatchSlot := 1
+		if concurrency > 0 {
+			dispatchWave = (idx / concurrency) + 1
+			dispatchSlot = (idx % concurrency) + 1
+		}
 		out = append(out, map[string]any{
 			"position":      idx + 1,
+			"dispatchWave":  dispatchWave,
+			"dispatchSlot":  dispatchSlot,
 			"session":       item.Session,
 			"status":        item.Status.Status,
 			"sessionState":  item.Status.SessionState,
@@ -2499,4 +2633,40 @@ func buildRouteQueue(projectRoot, sessionsRaw string, limit int, budget int) ([]
 		})
 	}
 	return out, nil
+}
+
+func buildRouteDispatchPlan(queueItems []map[string]any, concurrency int) []map[string]any {
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	waves := map[int][]string{}
+	maxWave := 0
+	for _, item := range queueItems {
+		wave := 1
+		if parsed, ok := numberFromAny(item["dispatchWave"]); ok && parsed > 0 {
+			wave = parsed
+		}
+		if wave > maxWave {
+			maxWave = wave
+		}
+		waves[wave] = append(waves[wave], mapStringValue(item, "session"))
+	}
+	out := make([]map[string]any, 0, maxWave)
+	for wave := 1; wave <= maxWave; wave++ {
+		sessions := waves[wave]
+		if len(sessions) == 0 {
+			continue
+		}
+		out = append(out, map[string]any{
+			"wave":        wave,
+			"concurrency": concurrency,
+			"sessions":    sessions,
+		})
+	}
+	return out
+}
+
+func sha1Hex(input string) string {
+	sum := sha1.Sum([]byte(input))
+	return hex.EncodeToString(sum[:])
 }

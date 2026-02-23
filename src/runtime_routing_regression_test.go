@@ -73,6 +73,25 @@ func TestResolveSessionProjectRootFallbackOnLookupFailure(t *testing.T) {
 	}
 }
 
+func TestResolveSessionProjectRootCheckedErrorsOnAmbiguousMetadata(t *testing.T) {
+	origMetaGlob := loadSessionMetaByGlobFn
+	t.Cleanup(func() {
+		loadSessionMetaByGlobFn = origMetaGlob
+	})
+
+	loadSessionMetaByGlobFn = func(session string) (sessionMeta, error) {
+		return sessionMeta{}, &sessionMetaAmbiguousError{Session: session}
+	}
+
+	_, err := resolveSessionProjectRootChecked("lisa-ambiguous", t.TempDir(), false)
+	if err == nil {
+		t.Fatalf("expected ambiguous metadata error")
+	}
+	if !isSessionMetaAmbiguousError(err) {
+		t.Fatalf("expected sessionMetaAmbiguousError, got %T (%v)", err, err)
+	}
+}
+
 func TestResolveSessionProjectRootFallbackOnBlankMetadataRoot(t *testing.T) {
 	origMetaGlob := loadSessionMetaByGlobFn
 	t.Cleanup(func() {
@@ -87,6 +106,58 @@ func TestResolveSessionProjectRootFallbackOnBlankMetadataRoot(t *testing.T) {
 	got := resolveSessionProjectRoot("lisa-blank-meta", fallbackRoot, false)
 	if got != canonicalProjectRoot(fallbackRoot) {
 		t.Fatalf("expected fallback root %q, got %q", canonicalProjectRoot(fallbackRoot), got)
+	}
+}
+
+func TestCmdSessionHandoffFailsOnAmbiguousProjectRoot(t *testing.T) {
+	origMetaGlob := loadSessionMetaByGlobFn
+	t.Cleanup(func() {
+		loadSessionMetaByGlobFn = origMetaGlob
+	})
+	loadSessionMetaByGlobFn = func(session string) (sessionMeta, error) {
+		return sessionMeta{}, &sessionMetaAmbiguousError{Session: session}
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionHandoff([]string{
+			"--session", "lisa-ambiguous",
+			"--json",
+		})
+		if code == 0 {
+			t.Fatalf("expected handoff failure on ambiguous metadata")
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"errorCode":"ambiguous_project_root"`) {
+		t.Fatalf("expected ambiguous_project_root error code, got %q", stdout)
+	}
+}
+
+func TestCmdSessionStatusFailsOnAmbiguousProjectRoot(t *testing.T) {
+	origMetaGlob := loadSessionMetaByGlobFn
+	t.Cleanup(func() {
+		loadSessionMetaByGlobFn = origMetaGlob
+	})
+	loadSessionMetaByGlobFn = func(session string) (sessionMeta, error) {
+		return sessionMeta{}, &sessionMetaAmbiguousError{Session: session}
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionStatus([]string{
+			"--session", "lisa-ambiguous-status",
+			"--json",
+		})
+		if code == 0 {
+			t.Fatalf("expected status failure on ambiguous metadata")
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, `"errorCode":"ambiguous_project_root"`) {
+		t.Fatalf("expected ambiguous_project_root error code, got %q", stdout)
 	}
 }
 

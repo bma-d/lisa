@@ -127,7 +127,11 @@ func cmdSessionPacket(args []string) int {
 	if err != nil {
 		return commandError(jsonOut, "invalid_summary_style", err.Error())
 	}
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	agentHint, err = parseAgentHint(agentHint)

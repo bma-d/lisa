@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -55,6 +56,7 @@ type skillsDoctorSummary struct {
 	OK             bool                         `json:"ok"`
 	Deep           bool                         `json:"deep,omitempty"`
 	Fix            bool                         `json:"fix,omitempty"`
+	SyncPlan       []map[string]any             `json:"syncPlan,omitempty"`
 	RepoRoot       string                       `json:"repoRoot"`
 	RepoSkillPath  string                       `json:"repoSkillPath"`
 	RepoVersion    string                       `json:"repoVersion,omitempty"`
@@ -233,6 +235,7 @@ func cmdSkillsDoctor(args []string) int {
 	explainDrift := false
 	fix := false
 	contractCheck := false
+	syncPlan := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -252,6 +255,8 @@ func cmdSkillsDoctor(args []string) int {
 			fix = true
 		case "--contract-check":
 			contractCheck = true
+		case "--sync-plan":
+			syncPlan = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -373,6 +378,9 @@ func cmdSkillsDoctor(args []string) int {
 	if !ok {
 		summary.ErrorCode = "skills_doctor_drift_detected"
 	}
+	if syncPlan {
+		summary.SyncPlan = buildSkillsDoctorSyncPlan(targets, repoRootCanonical)
+	}
 
 	if jsonOut {
 		writeJSON(summary)
@@ -402,7 +410,54 @@ func cmdSkillsDoctor(args []string) int {
 			}
 		}
 	}
+	if syncPlan && len(summary.SyncPlan) > 0 {
+		fmt.Println("sync_plan:")
+		for _, step := range summary.SyncPlan {
+			fmt.Printf("- %s\n", mapStringValue(step, "command"))
+		}
+	}
 	return boolExit(ok)
+}
+
+func buildSkillsDoctorSyncPlan(targets []skillsDoctorTarget, repoRoot string) []map[string]any {
+	plan := make([]map[string]any, 0, len(targets))
+	for _, target := range targets {
+		if target.Status == "up_to_date" {
+			continue
+		}
+		command := "./lisa skills install --to " + target.Target + " --repo-root " + shellQuote(repoRoot) + " --json"
+		if target.Status == "missing" {
+			command = "./lisa skills install --to " + target.Target + " --repo-root " + shellQuote(repoRoot) + " --json"
+		}
+		plan = append(plan, map[string]any{
+			"target":   target.Target,
+			"status":   target.Status,
+			"path":     target.Path,
+			"command":  command,
+			"reason":   strings.TrimSpace(target.Detail),
+			"priority": skillsDoctorSyncPlanPriority(target.Status),
+		})
+	}
+	sort.SliceStable(plan, func(i, j int) bool {
+		pi, _ := numberFromAny(plan[i]["priority"])
+		pj, _ := numberFromAny(plan[j]["priority"])
+		if pi == pj {
+			return mapStringValue(plan[i], "target") < mapStringValue(plan[j], "target")
+		}
+		return pi > pj
+	})
+	return plan
+}
+
+func skillsDoctorSyncPlanPriority(status string) int {
+	switch status {
+	case "missing":
+		return 3
+	case "outdated":
+		return 2
+	default:
+		return 1
+	}
 }
 
 func inspectSkillsDoctorTarget(path, target, repoVersion, repoContentHash string, deep bool, requiredCommands []string, contractCheck bool) skillsDoctorTarget {

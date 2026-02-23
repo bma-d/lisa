@@ -229,6 +229,7 @@ func cmdSessionMemory(args []string) int {
 	projectRoot := getPWD()
 	projectRootExplicit := false
 	refresh := false
+	semanticDiff := false
 	ttlHours := 24
 	maxLines := 80
 	jsonOut := hasJSONFlag(args)
@@ -252,6 +253,8 @@ func cmdSessionMemory(args []string) int {
 			i++
 		case "--refresh":
 			refresh = true
+		case "--semantic-diff":
+			semanticDiff = true
 		case "--ttl-hours":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --ttl-hours")
@@ -281,13 +284,18 @@ func cmdSessionMemory(args []string) int {
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 
 	var (
 		record sessionMemoryRecord
 		delta  []string
+		before []string
 		err    error
 		ok     bool
 	)
@@ -299,6 +307,7 @@ func cmdSessionMemory(args []string) int {
 		}
 		if previousOK {
 			baselineLineCount = len(previous.Lines)
+			before = append(before, previous.Lines...)
 		}
 		record, delta, err = buildSessionMemory(projectRoot, session, maxLines, ttlHours)
 		if err != nil {
@@ -313,6 +322,7 @@ func cmdSessionMemory(args []string) int {
 		if !ok {
 			return commandError(jsonOut, "memory_not_found", "no session memory found (run --refresh first)")
 		}
+		before = append(before, record.Lines...)
 	}
 
 	payload := map[string]any{
@@ -337,6 +347,26 @@ func cmdSessionMemory(args []string) int {
 			"maxLines":          record.MaxLines,
 		}
 	}
+	semanticAdded := []map[string]any{}
+	semanticRemoved := []map[string]any{}
+	semanticUnchanged := 0
+	if semanticDiff {
+		current := record.Lines
+		if !refresh {
+			current = captureSessionSemanticLines(projectRoot, session, 320)
+		}
+		semanticAdded, semanticRemoved, semanticUnchanged = semanticDiffWithConfidence(current, before)
+		payload["semanticDiff"] = map[string]any{
+			"added":     semanticAdded,
+			"removed":   semanticRemoved,
+			"unchanged": semanticUnchanged,
+		}
+		if !refresh {
+			payload["semanticDiffSource"] = "live_vs_cached"
+		} else {
+			payload["semanticDiffSource"] = "refresh_vs_previous"
+		}
+	}
 	if jsonOut {
 		writeJSON(payload)
 		return 0
@@ -345,7 +375,52 @@ func cmdSessionMemory(args []string) int {
 	for _, line := range record.Lines {
 		fmt.Println(line)
 	}
+	if semanticDiff {
+		fmt.Printf("semantic_diff added=%d removed=%d\n", len(semanticAdded), len(semanticRemoved))
+	}
 	return 0
+}
+
+func semanticDiffWithConfidence(current, baseline []string) ([]map[string]any, []map[string]any, int) {
+	currentSet := map[string]struct{}{}
+	for _, line := range dedupeNonEmpty(current) {
+		currentSet[line] = struct{}{}
+	}
+	baselineSet := map[string]struct{}{}
+	for _, line := range dedupeNonEmpty(baseline) {
+		baselineSet[line] = struct{}{}
+	}
+	added := make([]map[string]any, 0)
+	for line := range currentSet {
+		if _, ok := baselineSet[line]; ok {
+			continue
+		}
+		confidence := "medium"
+		if len(line) >= 24 {
+			confidence = "high"
+		}
+		added = append(added, map[string]any{"line": line, "confidence": confidence})
+	}
+	removed := make([]map[string]any, 0)
+	for line := range baselineSet {
+		if _, ok := currentSet[line]; ok {
+			continue
+		}
+		confidence := "medium"
+		if len(line) >= 24 {
+			confidence = "high"
+		}
+		removed = append(removed, map[string]any{"line": line, "confidence": confidence})
+	}
+	sort.Slice(added, func(i, j int) bool { return mapStringValue(added[i], "line") < mapStringValue(added[j], "line") })
+	sort.Slice(removed, func(i, j int) bool { return mapStringValue(removed[i], "line") < mapStringValue(removed[j], "line") })
+	unchanged := 0
+	for line := range currentSet {
+		if _, ok := baselineSet[line]; ok {
+			unchanged++
+		}
+	}
+	return added, removed, unchanged
 }
 
 func cmdSessionLane(args []string) int {

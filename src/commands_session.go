@@ -61,8 +61,14 @@ func cmdSession(args []string) int {
 		return cmdSessionPromptLint(args[1:])
 	case "diff-pack":
 		return cmdSessionDiffPack(args[1:])
+	case "loop":
+		return cmdSessionLoop(args[1:])
+	case "context-cache":
+		return cmdSessionContextCache(args[1:])
 	case "anomaly":
 		return cmdSessionAnomaly(args[1:])
+	case "budget-observe":
+		return cmdSessionBudgetObserve(args[1:])
 	case "budget-enforce":
 		return cmdSessionBudgetEnforce(args[1:])
 	case "replay":
@@ -1016,7 +1022,11 @@ func cmdSessionSend(args []string) int {
 		}
 	}
 
-	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
+	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
+	if resolveErr != nil {
+		return commandErrorf(jsonOut, "ambiguous_project_root", "%v", resolveErr)
+	}
+	projectRoot = resolvedRoot
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 
