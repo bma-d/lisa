@@ -72,6 +72,18 @@ $LISA_BIN session autopilot --goal analysis --agent codex --project-root "$ROOT"
   --summary --summary-style ops --token-budget 320 --kill-after true --json
 $LISA_BIN session autopilot --resume-from /tmp/lisa.autopilot.json --project-root "$ROOT" --json
 cat /tmp/lisa.autopilot.json | $LISA_BIN session autopilot --resume-from - --project-root "$ROOT" --json
+
+# context-optimized orchestration loop
+$LISA_BIN session objective --project-root "$ROOT" --id sprint --goal "Ship nested orchestration updates" --acceptance "contract matrix passes" --budget 480 --activate --json
+$LISA_BIN session lane --project-root "$ROOT" --name planner --goal analysis --agent codex --mode interactive --contract "handoff_v2_required" --json
+$LISA_BIN session spawn --project-root "$ROOT" --lane planner --agent codex --mode interactive --prompt "Continue from current objective." --json
+$LISA_BIN session memory --session "$SESSION" --project-root "$ROOT" --refresh --max-lines 80 --ttl-hours 24 --json
+$LISA_BIN session handoff --session "$SESSION" --project-root "$ROOT" --schema v2 --json
+$LISA_BIN session route --project-root "$ROOT" --queue --json
+$LISA_BIN session budget-plan --project-root "$ROOT" --goal analysis --budget 480 --topology planner,workers --json
+$LISA_BIN session guard --shared-tmux --policy-file ./guard-policy.json --command "./lisa cleanup --include-tmux-default" --json
+$LISA_BIN session smoke --project-root "$ROOT" --levels 1 --llm-profile mixed --report-min --json
+$ROOT/scripts/lisa-contract-matrix.sh "$ROOT"
 ```
 
 ## Nested Diagnostics

@@ -11,7 +11,7 @@ Contract coverage list (must stay aligned with `lisa capabilities`):
 `capabilities`, `doctor`, `cleanup`, `version`,
 `session name`, `session spawn`, `session detect-nested`, `session send`, `session snapshot`, `session status`, `session explain`,
 `session monitor`, `session capture`, `session packet`, `session contract-check`, `session schema`, `session checkpoint`, `session dedupe`,
-`session next`, `session aggregate`, `session prompt-lint`, `session diff-pack`, `session anomaly`, `session budget-enforce`, `session replay`,
+`session next`, `session aggregate`, `session prompt-lint`, `session diff-pack`, `session anomaly`, `session budget-enforce`, `session budget-plan`, `session objective`, `session memory`, `session lane`, `session replay`,
 `session handoff`, `session context-pack`, `session route`, `session autopilot`, `session guard`, `session tree`, `session smoke`,
 `session preflight`, `session list`, `session exists`, `session kill`, `session kill-all`,
 `agent build-cmd`,
@@ -504,7 +504,7 @@ Aliases `execution` and `non-interactive` map to `exec`.
 
 ## JSON Surface
 
-`--json` exists on: `doctor`, `capabilities`, `cleanup`, `agent build-cmd`, `skills sync|doctor|install`, `session name|spawn|detect-nested|send|snapshot|status|explain|monitor|capture|packet|handoff|context-pack|route|guard|tree|smoke|preflight|list|exists|kill|kill-all`.
+`--json` exists on: `doctor`, `capabilities`, `cleanup`, `agent build-cmd`, `skills sync|doctor|install`, `session name|spawn|detect-nested|send|snapshot|status|explain|monitor|capture|packet|budget-plan|objective|memory|lane|handoff|context-pack|route|guard|tree|smoke|preflight|list|exists|kill|kill-all`.
 
 JSON error contract:
 - command/runtime failures emit `{"ok":false,"errorCode":"...","error":"..."}` when `--json` is enabled.
@@ -512,3 +512,27 @@ JSON error contract:
 - JSON payloads include `stderrPolicy` so callers can treat stderr as diagnostics channel.
 
 `agent build-cmd --json` also returns `nestedDetection` for Codex nesting diagnostics.
+
+## 2026-02-23 Contract Additions
+
+Command names:
+- session budget-plan
+- session objective
+- session memory
+- session lane
+
+Flag additions:
+- session spawn: --lane
+- session monitor: --auto-recover --recover-max --recover-budget
+- session diff-pack: --semantic-only
+- session handoff: --schema
+- session route: --lane --queue --sessions --queue-limit
+- session autopilot: --lane
+- session guard: --policy-file
+- session smoke: --llm-profile
+
+New command flag contracts:
+- session budget-plan: --goal --agent --profile --budget --topology --from-state --project-root --json
+- session objective: --project-root --id --goal --acceptance --budget --status --ttl-hours --activate --clear --list --json
+- session memory: --session --project-root --refresh --ttl-hours --max-lines --json
+- session lane: --project-root --name --goal --agent --mode --nested-policy --nesting-intent --prompt --model --budget --topology --contract --clear --list --json

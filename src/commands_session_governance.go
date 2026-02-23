@@ -441,6 +441,159 @@ func numberFromAny(raw any) (int, bool) {
 	}
 }
 
+func cmdSessionBudgetPlan(args []string) int {
+	goal := "analysis"
+	agent := "codex"
+	profile := ""
+	budget := 0
+	topologyRaw := ""
+	fromState := ""
+	projectRoot := getPWD()
+	jsonOut := hasJSONFlag(args)
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--help", "-h":
+			return showHelp("session budget-plan")
+		case "--goal":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --goal")
+			}
+			goal = strings.TrimSpace(args[i+1])
+			i++
+		case "--agent":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
+			}
+			agent = strings.TrimSpace(args[i+1])
+			i++
+		case "--profile":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --profile")
+			}
+			profile = strings.TrimSpace(args[i+1])
+			i++
+		case "--budget":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --budget")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--budget")
+			if err != nil {
+				return commandError(jsonOut, "invalid_budget", err.Error())
+			}
+			budget = n
+			i++
+		case "--topology":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --topology")
+			}
+			topologyRaw = strings.TrimSpace(args[i+1])
+			i++
+		case "--from-state":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --from-state")
+			}
+			fromState = strings.TrimSpace(args[i+1])
+			i++
+		case "--project-root":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
+			}
+			projectRoot = strings.TrimSpace(args[i+1])
+			i++
+		case "--json":
+			jsonOut = true
+		default:
+			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
+		}
+	}
+
+	var err error
+	goal, err = parseSessionRouteGoal(goal)
+	if err != nil {
+		return commandError(jsonOut, "invalid_goal", err.Error())
+	}
+	agent, err = parseAgent(agent)
+	if err != nil {
+		return commandError(jsonOut, "invalid_agent", err.Error())
+	}
+	if profile != "" {
+		presetAgent, _, profileErr := parseRouteProfile(profile)
+		if profileErr != nil {
+			return commandError(jsonOut, "invalid_profile", profileErr.Error())
+		}
+		agent = presetAgent
+	}
+	topologyRoles, err := parseTopologyRoles(topologyRaw)
+	if err != nil {
+		return commandError(jsonOut, "invalid_topology", err.Error())
+	}
+	projectRoot = canonicalProjectRoot(projectRoot)
+
+	mode, nestedPolicy, nestingIntent, prompt, model := sessionRouteDefaults(goal)
+	var parsedFromState *routeStateInput
+	if fromState != "" {
+		parsedFromState, err = loadRouteStateInput(fromState)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_from_state", "failed to load --from-state: %v", err)
+		}
+		prompt = routePromptFromState(*parsedFromState, prompt)
+	}
+	if budget <= 0 {
+		if objective, ok := getCurrentObjective(projectRoot); ok && objective.Budget > 0 {
+			budget = objective.Budget
+		}
+	}
+	cost := estimateRouteCost(goal, mode, budget, topologyRoles)
+	totalTokens, _ := numberFromAny(cost["totalTokens"])
+	totalSeconds, _ := numberFromAny(cost["totalSeconds"])
+	stepCount := 0
+	if stepsRaw, ok := cost["steps"].([]map[string]any); ok {
+		stepCount = len(stepsRaw)
+	} else if stepsAny, ok := cost["steps"].([]any); ok {
+		stepCount = len(stepsAny)
+	}
+	maxTokens := int(float64(maxInt(1, totalTokens)) * 1.15)
+	if budget > 0 {
+		maxTokens = minInt(maxTokens, budget)
+	}
+	maxSeconds := int(float64(maxInt(1, totalSeconds)) * 1.35)
+	maxSteps := stepCount + 2
+	enforceCommand := "./lisa session budget-enforce --max-tokens " + strconv.Itoa(maxTokens) +
+		" --max-seconds " + strconv.Itoa(maxSeconds) +
+		" --max-steps " + strconv.Itoa(maxSteps) +
+		" --from \"$RUNTIME_METRICS_JSON\" --json"
+
+	payload := map[string]any{
+		"goal":          goal,
+		"agent":         agent,
+		"mode":          mode,
+		"projectRoot":   projectRoot,
+		"profile":       profile,
+		"budget":        budget,
+		"topologyRoles": topologyRoles,
+		"costEstimate":  cost,
+		"hardStop": map[string]any{
+			"maxTokens":      maxTokens,
+			"maxSeconds":     maxSeconds,
+			"maxSteps":       maxSteps,
+			"enforceCommand": enforceCommand,
+		},
+		"runbook": buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model, budget),
+	}
+	if parsedFromState != nil {
+		payload["fromState"] = parsedFromState
+	}
+
+	if jsonOut {
+		writeJSON(payload)
+		return 0
+	}
+	fmt.Printf("budget_plan goal=%s mode=%s max_tokens=%d max_seconds=%d max_steps=%d\n", goal, mode, maxTokens, maxSeconds, maxSteps)
+	fmt.Println(enforceCommand)
+	return 0
+}
+
 func cmdSessionReplay(args []string) int {
 	fromCheckpoint := ""
 	projectRoot := ""

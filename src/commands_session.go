@@ -67,16 +67,26 @@ func cmdSession(args []string) int {
 		return cmdSessionBudgetEnforce(args[1:])
 	case "replay":
 		return cmdSessionReplay(args[1:])
+	case "budget-plan":
+		return cmdSessionBudgetPlan(args[1:])
 	case "handoff":
 		return cmdSessionHandoff(args[1:])
 	case "context-pack":
 		return cmdSessionContextPack(args[1:])
 	case "route":
 		return cmdSessionRoute(args[1:])
+	case "router":
+		return cmdSessionRoute(args[1:])
 	case "autopilot":
 		return cmdSessionAutopilot(args[1:])
 	case "guard":
 		return cmdSessionGuard(args[1:])
+	case "objective":
+		return cmdSessionObjective(args[1:])
+	case "memory":
+		return cmdSessionMemory(args[1:])
+	case "lane":
+		return cmdSessionLane(args[1:])
 	case "tree":
 		return cmdSessionTree(args[1:])
 	case "smoke":
@@ -167,6 +177,7 @@ func cmdSessionName(args []string) int {
 func cmdSessionSpawn(args []string) int {
 	agent := "claude"
 	mode := "interactive"
+	lane := ""
 	nestedPolicy := "auto"
 	nestingIntent := "auto"
 	projectRoot := getPWD()
@@ -182,6 +193,12 @@ func cmdSessionSpawn(args []string) int {
 	dryRun := false
 	detectNested := false
 	jsonOut := hasJSONFlag(args)
+	agentSet := false
+	modeSet := false
+	promptSet := false
+	modelSet := false
+	nestedPolicySet := false
+	nestingIntentSet := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -192,24 +209,34 @@ func cmdSessionSpawn(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
 			}
 			agent = args[i+1]
+			agentSet = true
 			i++
 		case "--mode":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --mode")
 			}
 			mode = args[i+1]
+			modeSet = true
+			i++
+		case "--lane":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --lane")
+			}
+			lane = strings.ToLower(strings.TrimSpace(args[i+1]))
 			i++
 		case "--nested-policy":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --nested-policy")
 			}
 			nestedPolicy = args[i+1]
+			nestedPolicySet = true
 			i++
 		case "--nesting-intent":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --nesting-intent")
 			}
 			nestingIntent = args[i+1]
+			nestingIntentSet = true
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
@@ -228,6 +255,7 @@ func cmdSessionSpawn(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --prompt")
 			}
 			prompt = args[i+1]
+			promptSet = true
 			i++
 		case "--command":
 			if i+1 >= len(args) {
@@ -246,6 +274,7 @@ func cmdSessionSpawn(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --model")
 			}
 			model = args[i+1]
+			modelSet = true
 			i++
 		case "--width":
 			if i+1 >= len(args) {
@@ -282,6 +311,39 @@ func cmdSessionSpawn(args []string) int {
 		}
 	}
 
+	projectRoot = canonicalProjectRoot(projectRoot)
+	if lane != "" {
+		laneRecord, found, laneErr := loadLaneRecord(projectRoot, lane)
+		if laneErr != nil {
+			return commandErrorf(jsonOut, "lane_load_failed", "failed loading lane %q: %v", lane, laneErr)
+		}
+		if !found {
+			return commandErrorf(jsonOut, "lane_not_found", "lane not found: %s", lane)
+		}
+		if !agentSet && strings.TrimSpace(laneRecord.Agent) != "" {
+			agent = laneRecord.Agent
+		}
+		if !modeSet && strings.TrimSpace(laneRecord.Mode) != "" {
+			mode = laneRecord.Mode
+		}
+		if !nestedPolicySet && strings.TrimSpace(laneRecord.NestedPolicy) != "" {
+			nestedPolicy = laneRecord.NestedPolicy
+		}
+		if !nestingIntentSet && strings.TrimSpace(laneRecord.NestingIntent) != "" {
+			nestingIntent = laneRecord.NestingIntent
+		}
+		if !promptSet && strings.TrimSpace(laneRecord.Prompt) != "" {
+			prompt = laneRecord.Prompt
+		}
+		if !modelSet && strings.TrimSpace(laneRecord.Model) != "" {
+			model = laneRecord.Model
+		}
+	}
+	objective, hasObjective := getCurrentObjective(projectRoot)
+	if hasObjective {
+		prompt = injectObjectiveIntoPrompt(prompt, objective, lane)
+	}
+
 	var err error
 	agent, err = parseAgent(agent)
 	if err != nil {
@@ -307,7 +369,6 @@ func cmdSessionSpawn(args []string) int {
 	if err != nil {
 		return commandError(jsonOut, "invalid_nesting_intent", err.Error())
 	}
-	projectRoot = canonicalProjectRoot(projectRoot)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
 	session = strings.TrimSpace(session)
@@ -415,6 +476,7 @@ func cmdSessionSpawn(args []string) int {
 			"session":        session,
 			"agent":          agent,
 			"mode":           mode,
+			"lane":           lane,
 			"model":          model,
 			"nestedPolicy":   nestedPolicy,
 			"nestingIntent":  nestingIntent,
@@ -429,6 +491,14 @@ func cmdSessionSpawn(args []string) int {
 		}
 		if oauthTokenPreviewID != "" {
 			payload["oauthTokenId"] = oauthTokenPreviewID
+		}
+		if hasObjective {
+			payload["objective"] = map[string]any{
+				"id":         objective.ID,
+				"goal":       objective.Goal,
+				"acceptance": objective.Acceptance,
+				"budget":     objective.Budget,
+			}
 		}
 		if detectNested {
 			payload["nestedDetection"] = nestedDetection
@@ -473,6 +543,7 @@ func cmdSessionSpawn(args []string) int {
 		ParentSession: parentSessionFromEnv(session),
 		Agent:         agent,
 		Mode:          mode,
+		Lane:          lane,
 		OAuthTokenID:  oauthTokenPreviewID,
 		RunID:         runID,
 		ProjectRoot:   projectRoot,
@@ -480,6 +551,12 @@ func cmdSessionSpawn(args []string) int {
 		StartCmd:      command,
 		Prompt:        prompt,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
+	}
+	if hasObjective {
+		meta.ObjectiveID = objective.ID
+		meta.ObjectiveGoal = objective.Goal
+		meta.ObjectiveAcceptance = objective.Acceptance
+		meta.ObjectiveBudget = objective.Budget
 	}
 	if err := saveSessionMetaFn(projectRoot, session, meta); err != nil {
 		killErr := tmuxKillSessionFn(session)
@@ -527,6 +604,7 @@ func cmdSessionSpawn(args []string) int {
 			"session":       session,
 			"agent":         agent,
 			"mode":          mode,
+			"lane":          lane,
 			"nestedPolicy":  nestedPolicy,
 			"nestingIntent": nestingIntent,
 			"runId":         runID,
@@ -536,6 +614,14 @@ func cmdSessionSpawn(args []string) int {
 		}
 		if oauthTokenID != "" {
 			payload["oauthTokenId"] = oauthTokenID
+		}
+		if hasObjective {
+			payload["objective"] = map[string]any{
+				"id":         objective.ID,
+				"goal":       objective.Goal,
+				"acceptance": objective.Acceptance,
+				"budget":     objective.Budget,
+			}
 		}
 		if detectNested {
 			payload["nestedDetection"] = nestedDetection
@@ -792,6 +878,62 @@ func recordSessionInputTimestamp(projectRoot, session string, at time.Time) erro
 	return err
 }
 
+func objectiveReminderPartsFromMeta(meta sessionMeta) []string {
+	parts := []string{}
+	hasObjectiveContext := false
+	if v := strings.TrimSpace(meta.ObjectiveID); v != "" {
+		parts = append(parts, "id="+v)
+		hasObjectiveContext = true
+	}
+	if v := strings.TrimSpace(meta.ObjectiveGoal); v != "" {
+		parts = append(parts, "goal="+v)
+		hasObjectiveContext = true
+	}
+	if v := strings.TrimSpace(meta.ObjectiveAcceptance); v != "" {
+		parts = append(parts, "acceptance="+v)
+		hasObjectiveContext = true
+	}
+	if meta.ObjectiveBudget > 0 {
+		parts = append(parts, fmt.Sprintf("budget=%d", meta.ObjectiveBudget))
+		hasObjectiveContext = true
+	}
+	if !hasObjectiveContext {
+		return nil
+	}
+	if v := strings.TrimSpace(meta.Lane); v != "" {
+		parts = append(parts, "lane="+v)
+	}
+	return parts
+}
+
+func buildObjectiveReminderPrefixFromMeta(meta sessionMeta) string {
+	parts := objectiveReminderPartsFromMeta(meta)
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Objective reminder: " + strings.Join(parts, " | ")
+}
+
+func objectiveReminderAlreadyPresent(text, prefix string, meta sessionMeta) bool {
+	lowerText := strings.ToLower(strings.TrimSpace(text))
+	if lowerText == "" {
+		return false
+	}
+	lowerPrefix := strings.ToLower(strings.TrimSpace(prefix))
+	if lowerPrefix != "" && strings.Contains(lowerText, lowerPrefix) {
+		return true
+	}
+	if !strings.Contains(lowerText, "objective reminder:") {
+		return false
+	}
+	for _, part := range objectiveReminderPartsFromMeta(meta) {
+		if !strings.Contains(lowerText, strings.ToLower(part)) {
+			return false
+		}
+	}
+	return true
+}
+
 func cmdSessionSend(args []string) int {
 	session := ""
 	projectRoot := getPWD()
@@ -863,6 +1005,20 @@ func cmdSessionSend(args []string) int {
 	projectRoot = resolveSessionProjectRoot(session, projectRoot, projectRootExplicit)
 	restoreRuntime := withProjectRuntimeEnv(projectRoot)
 	defer restoreRuntime()
+
+	meta, metaErr := loadSessionMeta(projectRoot, session)
+	if metaErr != nil {
+		meta = sessionMeta{Session: session, ProjectRoot: projectRoot}
+	}
+	if text != "" {
+		prefix := buildObjectiveSendPrefix(meta)
+		if prefix == "" {
+			prefix = buildObjectiveReminderPrefixFromMeta(meta)
+		}
+		if prefix != "" && !objectiveReminderAlreadyPresent(text, prefix, meta) {
+			text = prefix + "\n" + text
+		}
+	}
 	if !tmuxHasSessionFn(session) {
 		if jsonOut {
 			writeJSONError("session_not_found", "session not found", map[string]any{
@@ -899,18 +1055,30 @@ func cmdSessionSend(args []string) int {
 	}
 
 	if jsonOut {
+		objective := objectivePayloadFromMeta(meta)
 		if jsonMin {
-			writeJSON(map[string]any{
+			payload := map[string]any{
 				"session": session,
 				"ok":      true,
-			})
+			}
+			if objective != nil {
+				payload["objective"] = objective
+			}
+			writeJSON(payload)
 			return 0
 		}
-		writeJSON(map[string]any{
+		payload := map[string]any{
 			"session": session,
 			"ok":      true,
 			"enter":   enter,
-		})
+		}
+		if strings.TrimSpace(meta.Lane) != "" {
+			payload["lane"] = meta.Lane
+		}
+		if objective != nil {
+			payload["objective"] = objective
+		}
+		writeJSON(payload)
 		return 0
 	}
 	fmt.Println("ok")

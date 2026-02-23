@@ -43,6 +43,7 @@ var commandCapabilities = []commandCapability{
 		Flags: []string{
 			"--agent",
 			"--mode",
+			"--lane",
 			"--nested-policy",
 			"--nesting-intent",
 			"--session",
@@ -126,6 +127,9 @@ var commandCapabilities = []commandCapability{
 			"--event-budget",
 			"--webhook",
 			"--verbose",
+			"--auto-recover",
+			"--recover-max",
+			"--recover-budget",
 		},
 	},
 	{
@@ -183,7 +187,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session diff-pack",
-		Flags: []string{"--session", "--project-root", "--strategy", "--events", "--lines", "--token-budget", "--cursor-file", "--redact", "--json", "--json-min"},
+		Flags: []string{"--session", "--project-root", "--strategy", "--events", "--lines", "--token-budget", "--cursor-file", "--redact", "--semantic-only", "--json", "--json-min"},
 	},
 	{
 		Name:  "session anomaly",
@@ -194,12 +198,16 @@ var commandCapabilities = []commandCapability{
 		Flags: []string{"--from", "--max-tokens", "--max-seconds", "--max-steps", "--tokens", "--seconds", "--steps", "--json"},
 	},
 	{
+		Name:  "session budget-plan",
+		Flags: []string{"--goal", "--agent", "--profile", "--budget", "--topology", "--from-state", "--project-root", "--json"},
+	},
+	{
 		Name:  "session replay",
 		Flags: []string{"--from-checkpoint", "--project-root", "--json"},
 	},
 	{
 		Name:  "session handoff",
-		Flags: []string{"--session", "--project-root", "--agent", "--mode", "--events", "--delta-from", "--cursor-file", "--compress", "--json", "--json-min"},
+		Flags: []string{"--session", "--project-root", "--agent", "--mode", "--events", "--delta-from", "--cursor-file", "--compress", "--schema", "--json", "--json-min"},
 	},
 	{
 		Name:  "session context-pack",
@@ -207,15 +215,27 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session route",
-		Flags: []string{"--goal", "--agent", "--prompt", "--model", "--profile", "--budget", "--topology", "--cost-estimate", "--from-state", "--project-root", "--emit-runbook", "--json"},
+		Flags: []string{"--goal", "--agent", "--lane", "--prompt", "--model", "--profile", "--budget", "--queue", "--sessions", "--queue-limit", "--topology", "--cost-estimate", "--from-state", "--project-root", "--emit-runbook", "--json"},
 	},
 	{
 		Name:  "session autopilot",
-		Flags: []string{"--goal", "--agent", "--mode", "--nested-policy", "--nesting-intent", "--session", "--prompt", "--model", "--project-root", "--poll-interval", "--max-polls", "--capture-lines", "--summary", "--summary-style", "--token-budget", "--kill-after", "--resume-from", "--json"},
+		Flags: []string{"--goal", "--agent", "--lane", "--mode", "--nested-policy", "--nesting-intent", "--session", "--prompt", "--model", "--project-root", "--poll-interval", "--max-polls", "--capture-lines", "--summary", "--summary-style", "--token-budget", "--kill-after", "--resume-from", "--json"},
 	},
 	{
 		Name:  "session guard",
-		Flags: []string{"--shared-tmux", "--enforce", "--advice-only", "--machine-policy", "--command", "--project-root", "--json"},
+		Flags: []string{"--shared-tmux", "--enforce", "--advice-only", "--machine-policy", "--command", "--policy-file", "--project-root", "--json"},
+	},
+	{
+		Name:  "session objective",
+		Flags: []string{"--project-root", "--id", "--goal", "--acceptance", "--budget", "--status", "--ttl-hours", "--activate", "--clear", "--list", "--json"},
+	},
+	{
+		Name:  "session memory",
+		Flags: []string{"--session", "--project-root", "--refresh", "--ttl-hours", "--max-lines", "--json"},
+	},
+	{
+		Name:  "session lane",
+		Flags: []string{"--project-root", "--name", "--goal", "--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--model", "--budget", "--topology", "--contract", "--clear", "--list", "--json"},
 	},
 	{
 		Name:  "session tree",
@@ -223,7 +243,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session smoke",
-		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--chaos", "--chaos-report", "--model", "--poll-interval", "--max-polls", "--keep-sessions", "--report-min", "--export-artifacts", "--json"},
+		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--chaos", "--chaos-report", "--llm-profile", "--model", "--poll-interval", "--max-polls", "--keep-sessions", "--report-min", "--export-artifacts", "--json"},
 	},
 	{
 		Name:  "session preflight",

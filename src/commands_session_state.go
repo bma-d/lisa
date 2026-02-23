@@ -457,6 +457,9 @@ func cmdSessionMonitor(args []string) int {
 	eventBudget := 0
 	webhook := ""
 	verbose := false
+	autoRecover := false
+	recoverMax := 1
+	recoverBudget := 0
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -606,6 +609,28 @@ func cmdSessionMonitor(args []string) int {
 			i++
 		case "--verbose":
 			verbose = true
+		case "--auto-recover":
+			autoRecover = true
+		case "--recover-max":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --recover-max")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--recover-max")
+			if err != nil {
+				return commandError(jsonOut, "invalid_recover_max", err.Error())
+			}
+			recoverMax = n
+			i++
+		case "--recover-budget":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --recover-budget")
+			}
+			n, err := parsePositiveIntFlag(args[i+1], "--recover-budget")
+			if err != nil {
+				return commandError(jsonOut, "invalid_recover_budget", err.Error())
+			}
+			recoverBudget = n
+			i++
 		default:
 			return commandErrorf(jsonOut, "unknown_flag", "unknown flag: %s", args[i])
 		}
@@ -684,242 +709,270 @@ func cmdSessionMonitor(args []string) int {
 	}
 	handoffEventLimit := monitorEventLimitFromBudget(eventBudget)
 
-	last := sessionStatus{}
-	degradedPolls := 0
-	for poll := 1; poll <= maxPolls; poll++ {
-		status, err := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, true, poll)
-		if err != nil {
-			return commandError(jsonOut, "status_compute_failed", err.Error())
-		}
-		last = status
-		if status.SessionState == "degraded" {
-			degradedPolls++
-		}
+	recoveries := 0
+	remainingRecoverBudget := recoverBudget
+	for {
+		last := sessionStatus{}
+		degradedPolls := 0
+		for poll := 1; poll <= maxPolls; poll++ {
+			status, err := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, true, poll)
+			if err != nil {
+				return commandError(jsonOut, "status_compute_failed", err.Error())
+			}
+			last = status
+			if status.SessionState == "degraded" {
+				degradedPolls++
+			}
 
-		if verbose {
-			displayStatus := normalizeMonitorFinalStatus(status.SessionState, status.Status)
-			fmt.Fprintf(os.Stderr, "[%s] poll=%d state=%s status=%s active=%q wait=%ds\n",
-				time.Now().Format("15:04:05"), poll, status.SessionState, displayStatus, status.ActiveTask, status.WaitEstimate)
-		}
-		if streamJSON {
-			writeMonitorStreamPoll(status, poll, jsonMin)
-			if emitHandoff {
-				if handoffCursorFile != "" || eventBudget > 0 {
-					nextOffset, streamErr := writeMonitorStreamHandoffDelta(status, poll, jsonMin, projectRoot, handoffDeltaOffset, handoffEventLimit)
-					if streamErr != nil {
-						return commandErrorf(jsonOut, "handoff_stream_failed", "failed emitting handoff delta: %v", streamErr)
-					}
-					handoffDeltaOffset = nextOffset
-					if handoffCursorFile != "" {
-						if writeErr := writeCursorOffset(handoffCursorFile, handoffDeltaOffset); writeErr != nil {
-							return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --handoff-cursor-file: %v", writeErr)
+			if verbose {
+				displayStatus := normalizeMonitorFinalStatus(status.SessionState, status.Status)
+				fmt.Fprintf(os.Stderr, "[%s] poll=%d state=%s status=%s active=%q wait=%ds\n",
+					time.Now().Format("15:04:05"), poll, status.SessionState, displayStatus, status.ActiveTask, status.WaitEstimate)
+			}
+			if streamJSON {
+				writeMonitorStreamPoll(status, poll, jsonMin)
+				if emitHandoff {
+					if handoffCursorFile != "" || eventBudget > 0 {
+						nextOffset, streamErr := writeMonitorStreamHandoffDelta(status, poll, jsonMin, projectRoot, handoffDeltaOffset, handoffEventLimit)
+						if streamErr != nil {
+							return commandErrorf(jsonOut, "handoff_stream_failed", "failed emitting handoff delta: %v", streamErr)
 						}
-					}
-				} else {
-					writeMonitorStreamHandoff(status, poll, jsonMin)
-				}
-			}
-		}
-		if webhook != "" {
-			pollPayload := map[string]any{
-				"event":        "poll",
-				"poll":         poll,
-				"session":      status.Session,
-				"status":       normalizeMonitorFinalStatus(status.SessionState, status.Status),
-				"sessionState": status.SessionState,
-				"todosDone":    status.TodosDone,
-				"todosTotal":   status.TodosTotal,
-				"waitEstimate": status.WaitEstimate,
-			}
-			if err := emitMonitorWebhook(webhook, pollPayload); err != nil {
-				return commandErrorf(jsonOut, "webhook_emit_failed", "failed delivering --webhook poll payload: %v", err)
-			}
-		}
-
-		reason := ""
-		untilStateMatched := untilState != "" && status.SessionState == untilState
-		if untilStateMatched {
-			reason = status.SessionState
-		}
-		untilJSONPathMatched := false
-		if reason == "" && untilJSONPath.Expr != "" {
-			matched, _, evalErr := evaluateMonitorJSONPathExpr(status, untilJSONPath)
-			if evalErr != nil {
-				return commandErrorf(jsonOut, "invalid_until_jsonpath", "invalid --until-jsonpath: %v", evalErr)
-			}
-			if matched {
-				reason = "jsonpath_matched"
-				untilJSONPathMatched = true
-			}
-		}
-		if reason == "" && untilMarker != "" {
-			capture, captureErr := tmuxCapturePaneFn(session, 320)
-			if captureErr == nil && strings.Contains(capture, untilMarker) {
-				reason = "marker_found"
-			}
-		}
-		switch status.SessionState {
-		case "completed":
-			if reason == "" {
-				reason = "completed"
-			}
-		case "crashed":
-			if reason == "" {
-				reason = "crashed"
-			}
-		case "not_found":
-			if reason == "" {
-				reason = "not_found"
-			}
-		case "stuck":
-			if reason == "" {
-				reason = "stuck"
-			}
-		case "waiting_input":
-			if reason == "" && stopOnWaiting {
-				if waitingRequiresTurnComplete {
-					waitingTurn := monitorWaitingTurnCompleteFn(session, projectRoot, status)
-					if waitingTurn.Ready {
-						status.Signals.TranscriptTurnComplete = true
-						status.Signals.TranscriptFileAge = waitingTurn.FileAge
-						if err := recordSessionTurnComplete(projectRoot, session, waitingTurn.InputAtNanos, waitingTurn.FileAge); err != nil {
-							fmt.Fprintf(os.Stderr, "observability warning: failed to persist turn-complete marker: %v\n", err)
+						handoffDeltaOffset = nextOffset
+						if handoffCursorFile != "" {
+							if writeErr := writeCursorOffset(handoffCursorFile, handoffDeltaOffset); writeErr != nil {
+								return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --handoff-cursor-file: %v", writeErr)
+							}
 						}
-						reason = "waiting_input_turn_complete"
+					} else {
+						writeMonitorStreamHandoff(status, poll, jsonMin)
 					}
-				} else {
-					reason = "waiting_input"
-				}
-			}
-		}
-		if reason != "" {
-			expectationMet := monitorExpectationSatisfied(expect, reason)
-			finalReason := reason
-			if !expectationMet {
-				finalReason = monitorExpectationMismatchReason(expect, reason)
-			}
-			result := monitorResult{
-				FinalState:  status.SessionState,
-				Session:     status.Session,
-				TodosDone:   status.TodosDone,
-				TodosTotal:  status.TodosTotal,
-				OutputFile:  status.OutputFile,
-				NextOffset:  computeSessionCaptureNextOffset(session),
-				ExitReason:  finalReason,
-				Polls:       poll,
-				FinalStatus: normalizeMonitorFinalStatus(status.SessionState, status.Status),
-			}
-			if jsonOut {
-				errorCode := ""
-				if !expectationMet {
-					errorCode = "monitor_expectation_mismatch"
-				} else if !untilStateMatched && !untilJSONPathMatched && !(reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input")) {
-					errorCode = "monitor_" + reason
-				}
-				writeMonitorJSON(result, jsonMin, errorCode)
-			} else {
-				if err := writeCSVRecord(
-					result.FinalState,
-					strconv.Itoa(result.TodosDone),
-					strconv.Itoa(result.TodosTotal),
-					result.OutputFile,
-					result.ExitReason,
-					strconv.Itoa(result.Polls),
-					result.FinalStatus,
-				); err != nil {
-					fmt.Fprintf(os.Stderr, "failed to write monitor output: %v\n", err)
-					return 1
 				}
 			}
 			if webhook != "" {
-				errorCode := ""
+				pollPayload := map[string]any{
+					"event":        "poll",
+					"poll":         poll,
+					"session":      status.Session,
+					"status":       normalizeMonitorFinalStatus(status.SessionState, status.Status),
+					"sessionState": status.SessionState,
+					"todosDone":    status.TodosDone,
+					"todosTotal":   status.TodosTotal,
+					"waitEstimate": status.WaitEstimate,
+				}
+				if err := emitMonitorWebhook(webhook, pollPayload); err != nil {
+					return commandErrorf(jsonOut, "webhook_emit_failed", "failed delivering --webhook poll payload: %v", err)
+				}
+			}
+
+			reason := ""
+			untilStateMatched := untilState != "" && status.SessionState == untilState
+			if untilStateMatched {
+				reason = status.SessionState
+			}
+			untilJSONPathMatched := false
+			if reason == "" && untilJSONPath.Expr != "" {
+				matched, _, evalErr := evaluateMonitorJSONPathExpr(status, untilJSONPath)
+				if evalErr != nil {
+					return commandErrorf(jsonOut, "invalid_until_jsonpath", "invalid --until-jsonpath: %v", evalErr)
+				}
+				if matched {
+					reason = "jsonpath_matched"
+					untilJSONPathMatched = true
+				}
+			}
+			if reason == "" && untilMarker != "" {
+				capture, captureErr := tmuxCapturePaneFn(session, 320)
+				if captureErr == nil && strings.Contains(capture, untilMarker) {
+					reason = "marker_found"
+				}
+			}
+			switch status.SessionState {
+			case "completed":
+				if reason == "" {
+					reason = "completed"
+				}
+			case "crashed":
+				if reason == "" {
+					reason = "crashed"
+				}
+			case "not_found":
+				if reason == "" {
+					reason = "not_found"
+				}
+			case "stuck":
+				if reason == "" {
+					reason = "stuck"
+				}
+			case "waiting_input":
+				if reason == "" && stopOnWaiting {
+					if waitingRequiresTurnComplete {
+						waitingTurn := monitorWaitingTurnCompleteFn(session, projectRoot, status)
+						if waitingTurn.Ready {
+							status.Signals.TranscriptTurnComplete = true
+							status.Signals.TranscriptFileAge = waitingTurn.FileAge
+							if err := recordSessionTurnComplete(projectRoot, session, waitingTurn.InputAtNanos, waitingTurn.FileAge); err != nil {
+								fmt.Fprintf(os.Stderr, "observability warning: failed to persist turn-complete marker: %v\n", err)
+							}
+							reason = "waiting_input_turn_complete"
+						}
+					} else {
+						reason = "waiting_input"
+					}
+				}
+			}
+			if reason != "" {
+				expectationMet := monitorExpectationSatisfied(expect, reason)
+				finalReason := reason
 				if !expectationMet {
-					errorCode = "monitor_expectation_mismatch"
-				} else if !untilStateMatched && !untilJSONPathMatched && !(reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input")) {
-					errorCode = "monitor_" + reason
+					finalReason = monitorExpectationMismatchReason(expect, reason)
 				}
-				finalPayload := map[string]any{
-					"event":       "final",
-					"session":     result.Session,
-					"finalState":  result.FinalState,
-					"finalStatus": result.FinalStatus,
-					"exitReason":  result.ExitReason,
-					"polls":       result.Polls,
-					"nextOffset":  result.NextOffset,
+				result := monitorResult{
+					FinalState:  status.SessionState,
+					Session:     status.Session,
+					TodosDone:   status.TodosDone,
+					TodosTotal:  status.TodosTotal,
+					OutputFile:  status.OutputFile,
+					NextOffset:  computeSessionCaptureNextOffset(session),
+					ExitReason:  finalReason,
+					Polls:       poll,
+					FinalStatus: normalizeMonitorFinalStatus(status.SessionState, status.Status),
 				}
-				if errorCode != "" {
-					finalPayload["errorCode"] = errorCode
+				if jsonOut {
+					errorCode := ""
+					if !expectationMet {
+						errorCode = "monitor_expectation_mismatch"
+					} else if !untilStateMatched && !untilJSONPathMatched && !(reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input")) {
+						errorCode = "monitor_" + reason
+					}
+					writeMonitorJSON(result, jsonMin, errorCode)
+				} else {
+					if err := writeCSVRecord(
+						result.FinalState,
+						strconv.Itoa(result.TodosDone),
+						strconv.Itoa(result.TodosTotal),
+						result.OutputFile,
+						result.ExitReason,
+						strconv.Itoa(result.Polls),
+						result.FinalStatus,
+					); err != nil {
+						fmt.Fprintf(os.Stderr, "failed to write monitor output: %v\n", err)
+						return 1
+					}
 				}
-				if err := emitMonitorWebhook(webhook, finalPayload); err != nil {
-					return commandErrorf(jsonOut, "webhook_emit_failed", "failed delivering --webhook final payload: %v", err)
+				if webhook != "" {
+					errorCode := ""
+					if !expectationMet {
+						errorCode = "monitor_expectation_mismatch"
+					} else if !untilStateMatched && !untilJSONPathMatched && !(reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input")) {
+						errorCode = "monitor_" + reason
+					}
+					finalPayload := map[string]any{
+						"event":       "final",
+						"session":     result.Session,
+						"finalState":  result.FinalState,
+						"finalStatus": result.FinalStatus,
+						"exitReason":  result.ExitReason,
+						"polls":       result.Polls,
+						"nextOffset":  result.NextOffset,
+					}
+					if errorCode != "" {
+						finalPayload["errorCode"] = errorCode
+					}
+					if err := emitMonitorWebhook(webhook, finalPayload); err != nil {
+						return commandErrorf(jsonOut, "webhook_emit_failed", "failed delivering --webhook final payload: %v", err)
+					}
 				}
-			}
-			if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+finalReason); err != nil {
-				fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
-			}
-			if !expectationMet {
+				if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+finalReason); err != nil {
+					fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+				}
+				if !expectationMet {
+					return 2
+				}
+				if reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input") || untilStateMatched || untilJSONPathMatched {
+					return 0
+				}
 				return 2
 			}
-			if reason == "completed" || reason == "marker_found" || strings.HasPrefix(reason, "waiting_input") || untilStateMatched || untilJSONPathMatched {
-				return 0
+
+			if poll < maxPolls {
+				time.Sleep(time.Duration(pollInterval) * time.Second)
 			}
-			return 2
 		}
 
-		if poll < maxPolls {
-			time.Sleep(time.Duration(pollInterval) * time.Second)
+		result := monitorResult{
+			FinalState:  "timeout",
+			Session:     session,
+			TodosDone:   last.TodosDone,
+			TodosTotal:  last.TodosTotal,
+			OutputFile:  last.OutputFile,
+			NextOffset:  computeSessionCaptureNextOffset(session),
+			ExitReason:  "max_polls_exceeded",
+			Polls:       maxPolls,
+			FinalStatus: "timeout",
 		}
-	}
+		if degradedPolls == maxPolls && maxPolls > 0 {
+			result.ExitReason = "degraded_max_polls_exceeded"
+		}
 
-	result := monitorResult{
-		FinalState:  "timeout",
-		Session:     session,
-		TodosDone:   last.TodosDone,
-		TodosTotal:  last.TodosTotal,
-		OutputFile:  last.OutputFile,
-		NextOffset:  computeSessionCaptureNextOffset(session),
-		ExitReason:  "max_polls_exceeded",
-		Polls:       maxPolls,
-		FinalStatus: "timeout",
-	}
-	if degradedPolls == maxPolls && maxPolls > 0 {
-		result.ExitReason = "degraded_max_polls_exceeded"
-	}
-	if jsonOut {
-		writeMonitorJSON(result, jsonMin, "monitor_timeout")
-	} else {
-		if err := writeCSVRecord(
-			result.FinalState,
-			strconv.Itoa(result.TodosDone),
-			strconv.Itoa(result.TodosTotal),
-			result.OutputFile,
-			result.ExitReason,
-			strconv.Itoa(result.Polls),
-			result.FinalStatus,
-		); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to write monitor output: %v\n", err)
-			return 1
+		if autoRecover && recoveries < recoverMax && (result.ExitReason == "max_polls_exceeded" || result.ExitReason == "degraded_max_polls_exceeded") {
+			if recoverBudget <= 0 || remainingRecoverBudget > 0 {
+				if !tmuxHasSessionFn(session) {
+					// fallthrough to timeout emit
+				} else {
+					recoveries++
+					if recoverBudget > 0 {
+						remainingRecoverBudget = maxInt(0, remainingRecoverBudget-maxPolls)
+					}
+					if verbose {
+						fmt.Fprintf(os.Stderr, "auto-recover attempt=%d/%d session=%s reason=%s\n", recoveries, recoverMax, session, result.ExitReason)
+					}
+					if err := tmuxSendKeysFn(session, []string{"Enter"}, false); err != nil {
+						return commandErrorf(jsonOut, "auto_recover_send_failed", "failed auto-recover send: %v", err)
+					}
+					if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "in_progress", "active", "monitor_auto_recover"); err != nil {
+						fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+					}
+					continue
+				}
+			}
 		}
-	}
-	if webhook != "" {
-		finalPayload := map[string]any{
-			"event":       "final",
-			"session":     result.Session,
-			"finalState":  result.FinalState,
-			"finalStatus": result.FinalStatus,
-			"exitReason":  result.ExitReason,
-			"polls":       result.Polls,
-			"nextOffset":  result.NextOffset,
-			"errorCode":   "monitor_timeout",
+
+		if jsonOut {
+			writeMonitorJSON(result, jsonMin, "monitor_timeout")
+		} else {
+			if err := writeCSVRecord(
+				result.FinalState,
+				strconv.Itoa(result.TodosDone),
+				strconv.Itoa(result.TodosTotal),
+				result.OutputFile,
+				result.ExitReason,
+				strconv.Itoa(result.Polls),
+				result.FinalStatus,
+			); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to write monitor output: %v\n", err)
+				return 1
+			}
 		}
-		if err := emitMonitorWebhook(webhook, finalPayload); err != nil {
-			return commandErrorf(jsonOut, "webhook_emit_failed", "failed delivering --webhook final payload: %v", err)
+		if webhook != "" {
+			finalPayload := map[string]any{
+				"event":       "final",
+				"session":     result.Session,
+				"finalState":  result.FinalState,
+				"finalStatus": result.FinalStatus,
+				"exitReason":  result.ExitReason,
+				"polls":       result.Polls,
+				"nextOffset":  result.NextOffset,
+				"errorCode":   "monitor_timeout",
+			}
+			if err := emitMonitorWebhook(webhook, finalPayload); err != nil {
+				return commandErrorf(jsonOut, "webhook_emit_failed", "failed delivering --webhook final payload: %v", err)
+			}
 		}
+		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+result.ExitReason); err != nil {
+			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+		}
+		return 2
 	}
-	if err := appendLifecycleEvent(projectRoot, session, "lifecycle", result.FinalState, result.FinalStatus, "monitor_"+result.ExitReason); err != nil {
-		fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
-	}
-	return 2
 }
 
 func monitorEventLimitFromBudget(eventBudget int) int {

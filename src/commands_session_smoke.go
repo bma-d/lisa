@@ -28,6 +28,7 @@ type sessionSmokeSummary struct {
 	ProjectRoot     string             `json:"projectRoot"`
 	Levels          int                `json:"levels"`
 	Model           string             `json:"model,omitempty"`
+	LLMProfile      string             `json:"llmProfile,omitempty"`
 	PromptStyle     string             `json:"promptStyle,omitempty"`
 	PromptProbe     *smokePromptProbe  `json:"promptProbe,omitempty"`
 	PromptMatrix    []smokeMatrixProbe `json:"promptMatrix,omitempty"`
@@ -72,6 +73,7 @@ func cmdSessionSmoke(args []string) int {
 	reportMin := false
 	chaosReport := false
 	exportArtifacts := ""
+	llmProfile := ""
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -150,6 +152,12 @@ func cmdSessionSmoke(args []string) int {
 			}
 			exportArtifacts = args[i+1]
 			i++
+		case "--llm-profile":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --llm-profile")
+			}
+			llmProfile = strings.ToLower(strings.TrimSpace(args[i+1]))
+			i++
 		case "--json":
 			jsonOut = true
 		default:
@@ -168,6 +176,22 @@ func cmdSessionSmoke(args []string) int {
 	chaos, err = parseSmokeChaosMode(chaos)
 	if err != nil {
 		return commandError(jsonOut, "invalid_chaos_mode", err.Error())
+	}
+	llmProfile, err = parseSmokeLLMProfile(llmProfile)
+	if err != nil {
+		return commandError(jsonOut, "invalid_llm_profile", err.Error())
+	}
+	if llmProfile != "none" {
+		preset := smokeProfilePreset(llmProfile)
+		if promptStyle == "none" && preset.PromptStyle != "" {
+			promptStyle = preset.PromptStyle
+		}
+		if strings.TrimSpace(model) == "" && strings.TrimSpace(preset.Model) != "" {
+			model = preset.Model
+		}
+		if strings.TrimSpace(matrixFile) == "" {
+			matrixFile = "auto"
+		}
 	}
 	model, err = parseModel(model)
 	if err != nil {
@@ -219,6 +243,7 @@ func cmdSessionSmoke(args []string) int {
 		ProjectRoot:     projectRoot,
 		Levels:          levels,
 		Model:           model,
+		LLMProfile:      llmProfile,
 		PromptStyle:     promptStyle,
 		Chaos:           chaos,
 		WorkDir:         workDir,
@@ -242,6 +267,18 @@ func cmdSessionSmoke(args []string) int {
 			return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_prompt_style_probe_failed", probeErr.Error())
 		}
 		summary.PromptProbe = probe
+	}
+	if matrixFile == "auto" {
+		preset := smokeProfilePreset(llmProfile)
+		if len(preset.MatrixRows) > 0 {
+			autoMatrixPath := filepath.Join(workDir, "llm-profile-matrix.txt")
+			if err := os.WriteFile(autoMatrixPath, []byte(strings.Join(preset.MatrixRows, "\n")+"\n"), 0o644); err != nil {
+				return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_matrix_write_failed", fmt.Sprintf("failed writing profile matrix: %v", err))
+			}
+			matrixFile = autoMatrixPath
+		} else {
+			matrixFile = ""
+		}
 	}
 	if strings.TrimSpace(matrixFile) != "" {
 		matrixProbes, matrixErr := runSmokePromptMatrixProbe(binPath, projectRoot, matrixFile, model)
@@ -481,6 +518,7 @@ func writeSmokeSummaryJSON(summary sessionSmokeSummary, reportMin bool) {
 		"error":       summary.Error,
 		"levels":      summary.Levels,
 		"model":       summary.Model,
+		"llmProfile":  summary.LLMProfile,
 		"chaos":       summary.Chaos,
 		"projectRoot": summary.ProjectRoot,
 	}
@@ -611,6 +649,61 @@ func parseSmokeChaosMode(raw string) (string, error) {
 		return "mixed", nil
 	default:
 		return "", fmt.Errorf("invalid --chaos: %s (expected none|delay|drop-marker|fail-child|mixed)", raw)
+	}
+}
+
+type smokeLLMProfilePreset struct {
+	Model       string
+	PromptStyle string
+	MatrixRows  []string
+}
+
+func parseSmokeLLMProfile(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "none":
+		return "none", nil
+	case "codex":
+		return "codex", nil
+	case "claude":
+		return "claude", nil
+	case "mixed":
+		return "mixed", nil
+	default:
+		return "", fmt.Errorf("invalid --llm-profile: %s (expected none|codex|claude|mixed)", raw)
+	}
+}
+
+func smokeProfilePreset(profile string) smokeLLMProfilePreset {
+	switch profile {
+	case "codex":
+		return smokeLLMProfilePreset{
+			Model:       "gpt-5.3-codex-spark",
+			PromptStyle: "nested",
+			MatrixRows: []string{
+				"bypass|Use ./lisa for child orchestration.",
+				"bypass|Run lisa session spawn for child workers.",
+				"full-auto|No nesting requested here.",
+			},
+		}
+	case "claude":
+		return smokeLLMProfilePreset{
+			PromptStyle: "neutral",
+			MatrixRows: []string{
+				"full-auto|No nesting requested here.",
+			},
+		}
+	case "mixed":
+		return smokeLLMProfilePreset{
+			Model:       "gpt-5.3-codex-spark",
+			PromptStyle: "nested",
+			MatrixRows: []string{
+				"bypass|Use ./lisa for child orchestration.",
+				"full-auto|No nesting requested here.",
+				"any|Use lisa inside of lisa inside as well.",
+			},
+		}
+	default:
+		return smokeLLMProfilePreset{}
 	}
 }
 

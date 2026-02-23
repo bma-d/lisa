@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -70,6 +71,17 @@ type handoffInputPayload struct {
 	CaptureTail  string               `json:"captureTail"`
 }
 
+type sessionHandoffRisk struct {
+	Level   string `json:"level"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type sessionHandoffQuestion struct {
+	Code     string `json:"code"`
+	Question string `json:"question"`
+}
+
 type routeStateInput struct {
 	Session      string `json:"session"`
 	Status       string `json:"status"`
@@ -88,6 +100,7 @@ func cmdSessionHandoff(args []string) int {
 	deltaFrom := -1
 	cursorFile := ""
 	compressMode := "none"
+	schemaVersion := "v1"
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 
@@ -152,6 +165,12 @@ func cmdSessionHandoff(args []string) int {
 			}
 			compressMode = strings.TrimSpace(args[i+1])
 			i++
+		case "--schema":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --schema")
+			}
+			schemaVersion = strings.ToLower(strings.TrimSpace(args[i+1]))
+			i++
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -164,6 +183,14 @@ func cmdSessionHandoff(args []string) int {
 
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
+	}
+	switch schemaVersion {
+	case "", "1", "v1":
+		schemaVersion = "v1"
+	case "2", "v2":
+		schemaVersion = "v2"
+	default:
+		return commandErrorf(jsonOut, "invalid_schema", "invalid --schema: %s (expected v1|v2)", schemaVersion)
 	}
 	var err error
 	compressMode, err = parseHandoffCompressMode(compressMode)
@@ -196,6 +223,20 @@ func cmdSessionHandoff(args []string) int {
 	modeHint, err = parseModeHint(modeHint)
 	if err != nil {
 		return commandError(jsonOut, "invalid_mode_hint", err.Error())
+	}
+	meta, _ := loadSessionMeta(projectRoot, session)
+	laneName := strings.TrimSpace(meta.Lane)
+	laneRecord := sessionLaneRecord{}
+	laneFound := false
+	if laneName != "" {
+		if resolved, found, laneErr := loadLaneRecord(projectRoot, laneName); laneErr == nil && found {
+			laneRecord = resolved
+			laneFound = true
+			if schemaVersion == "v1" && laneContractRequiresHandoffSchemaV2(laneRecord.Contract) {
+				message := fmt.Sprintf("handoff_schema_v2_required: lane %q contract %q requires --schema v2", laneName, strings.TrimSpace(laneRecord.Contract))
+				return commandError(jsonOut, "handoff_schema_v2_required", message)
+			}
+		}
 	}
 
 	status, err := computeSessionStatusFn(session, projectRoot, agentHint, modeHint, false, 0)
@@ -231,6 +272,25 @@ func cmdSessionHandoff(args []string) int {
 	nextOffset := computeSessionCaptureNextOffset(session)
 	nextAction := nextActionForState(status.SessionState)
 	summary := fmt.Sprintf("state=%s reason=%s next=%s", status.SessionState, status.ClassificationReason, nextAction)
+	objective := objectivePayloadFromMeta(meta)
+	memoryPayload, hasMemory := loadSessionMemoryCompact(projectRoot, session, 8)
+	risks := deriveHandoffRisks(status, items)
+	openQuestions := deriveHandoffQuestions(status, items)
+	lanePayload := map[string]any(nil)
+	if laneName != "" {
+		lanePayload = map[string]any{"name": laneName}
+		if laneFound {
+			if strings.TrimSpace(laneRecord.Contract) != "" {
+				lanePayload["contract"] = laneRecord.Contract
+			}
+			if laneRecord.Budget > 0 {
+				lanePayload["budget"] = laneRecord.Budget
+			}
+			if strings.TrimSpace(laneRecord.Goal) != "" {
+				lanePayload["goal"] = laneRecord.Goal
+			}
+		}
+	}
 	if cursorFile != "" && nextDeltaOffset >= 0 {
 		if writeErr := writeCursorOffset(cursorFile, nextDeltaOffset); writeErr != nil {
 			return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --cursor-file: %v", writeErr)
@@ -242,10 +302,20 @@ func cmdSessionHandoff(args []string) int {
 			"session":      session,
 			"status":       status.Status,
 			"sessionState": status.SessionState,
+			"schema":       schemaVersion,
 			"reason":       status.ClassificationReason,
 			"nextAction":   nextAction,
 			"nextOffset":   nextOffset,
 			"summary":      summary,
+		}
+		if objective != nil {
+			payload["objective"] = objective
+		}
+		if lanePayload != nil {
+			payload["lane"] = lanePayload
+		}
+		if hasMemory {
+			payload["memory"] = memoryPayload
 		}
 		if !jsonMin {
 			payload["projectRoot"] = projectRoot
@@ -266,13 +336,27 @@ func cmdSessionHandoff(args []string) int {
 		if status.SessionState == "not_found" {
 			payload["errorCode"] = "session_not_found"
 		}
+		if schemaVersion == "v2" {
+			payload["state"] = map[string]any{
+				"status":       status.Status,
+				"sessionState": status.SessionState,
+				"reason":       status.ClassificationReason,
+				"summary":      summary,
+			}
+			payload["nextAction"] = map[string]any{
+				"name":    nextAction,
+				"command": recommendedCommandForAction(nextAction, session, projectRoot),
+			}
+			payload["risks"] = risks
+			payload["openQuestions"] = openQuestions
+		}
 		if compressMode != "none" {
 			compressInput := map[string]any{
 				"session":      payload["session"],
 				"status":       payload["status"],
 				"sessionState": payload["sessionState"],
 				"reason":       payload["reason"],
-				"nextAction":   payload["nextAction"],
+				"nextAction":   nextAction,
 				"nextOffset":   payload["nextOffset"],
 				"summary":      payload["summary"],
 			}
@@ -329,6 +413,15 @@ func parseHandoffCompressMode(raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid --compress: %s (expected none|zstd)", raw)
 	}
+}
+
+func laneContractRequiresHandoffSchemaV2(contract string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(contract))
+	if normalized == "" {
+		return false
+	}
+	return strings.Contains(normalized, "handoff_v2_required") ||
+		strings.Contains(normalized, "handoff_schema_v2_required")
 }
 
 func compressJSONPayloadStdlib(payload map[string]any) (string, int, int, error) {
@@ -557,7 +650,18 @@ func cmdSessionContextPack(args []string) int {
 		nextOffset = computeSessionCaptureNextOffset(session)
 	}
 
+	meta, _ := loadSessionMeta(projectRoot, session)
+	objective := objectivePayloadFromMeta(meta)
+	memoryPayload, hasMemory := loadSessionMemoryCompact(projectRoot, session, 8)
 	packRaw := buildContextPackRaw(strategyConfig.Name, session, status, recent, captureTail)
+	if objective != nil {
+		packRaw = strings.TrimSpace(packRaw) + "\nobjective:\n" + objectiveSummaryLine(objective)
+	}
+	if hasMemory {
+		if lines, ok := memoryPayload["lines"].([]string); ok && len(lines) > 0 {
+			packRaw = strings.TrimSpace(packRaw) + "\nmemory:\n" + strings.Join(lines, "\n")
+		}
+	}
 	pack, truncated := truncateToTokenBudget(packRaw, tokenBudget)
 	pack = applyRedactionRules(pack, redactRules)
 
@@ -573,6 +677,15 @@ func cmdSessionContextPack(args []string) int {
 			"tokenBudget":  tokenBudget,
 			"truncated":    truncated,
 			"pack":         pack,
+		}
+		if objective != nil {
+			payload["objective"] = objective
+		}
+		if strings.TrimSpace(meta.Lane) != "" {
+			payload["lane"] = meta.Lane
+		}
+		if hasMemory {
+			payload["memory"] = memoryPayload
 		}
 		if !jsonMin {
 			payload["projectRoot"] = projectRoot
@@ -607,13 +720,20 @@ func cmdSessionContextPack(args []string) int {
 func cmdSessionRoute(args []string) int {
 	goal := "analysis"
 	agent := "codex"
+	lane := ""
 	projectRoot := getPWD()
 	prompt := ""
 	model := ""
 	profile := ""
 	budget := 0
 	emitRunbook := false
+	queue := false
+	queueSessionsRaw := ""
+	queueLimit := 0
 	topologyRaw := ""
+	laneModeOverride := ""
+	laneNestedPolicyOverride := ""
+	laneNestingIntentOverride := ""
 	costEstimate := false
 	fromState := ""
 	jsonOut := hasJSONFlag(args)
@@ -633,6 +753,12 @@ func cmdSessionRoute(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
 			}
 			agent = args[i+1]
+			i++
+		case "--lane":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --lane")
+			}
+			lane = strings.ToLower(strings.TrimSpace(args[i+1]))
 			i++
 		case "--project-root":
 			if i+1 >= len(args) {
@@ -670,6 +796,24 @@ func cmdSessionRoute(args []string) int {
 			i++
 		case "--emit-runbook":
 			emitRunbook = true
+		case "--queue":
+			queue = true
+		case "--sessions":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --sessions")
+			}
+			queueSessionsRaw = strings.TrimSpace(args[i+1])
+			i++
+		case "--queue-limit":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --queue-limit")
+			}
+			n, parseErr := parsePositiveIntFlag(args[i+1], "--queue-limit")
+			if parseErr != nil {
+				return commandError(jsonOut, "invalid_queue_limit", parseErr.Error())
+			}
+			queueLimit = n
+			i++
 		case "--topology":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --topology")
@@ -701,6 +845,42 @@ func cmdSessionRoute(args []string) int {
 		return commandError(jsonOut, "invalid_agent", err.Error())
 	}
 	projectRoot = canonicalProjectRoot(projectRoot)
+	if lane != "" {
+		laneRecord, found, laneErr := loadLaneRecord(projectRoot, lane)
+		if laneErr != nil {
+			return commandErrorf(jsonOut, "lane_load_failed", "failed loading lane %q: %v", lane, laneErr)
+		}
+		if !found {
+			return commandErrorf(jsonOut, "lane_not_found", "lane not found: %s", lane)
+		}
+		if strings.TrimSpace(laneRecord.Goal) != "" {
+			goal = laneRecord.Goal
+		}
+		if strings.TrimSpace(laneRecord.Agent) != "" {
+			agent = laneRecord.Agent
+		}
+		if strings.TrimSpace(laneRecord.Prompt) != "" && strings.TrimSpace(prompt) == "" {
+			prompt = laneRecord.Prompt
+		}
+		if strings.TrimSpace(laneRecord.Model) != "" && strings.TrimSpace(model) == "" {
+			model = laneRecord.Model
+		}
+		if laneRecord.Budget > 0 && budget <= 0 {
+			budget = laneRecord.Budget
+		}
+		if strings.TrimSpace(laneRecord.Topology) != "" && strings.TrimSpace(topologyRaw) == "" {
+			topologyRaw = laneRecord.Topology
+		}
+		if strings.TrimSpace(laneRecord.Mode) != "" {
+			laneModeOverride = laneRecord.Mode
+		}
+		if strings.TrimSpace(laneRecord.NestedPolicy) != "" {
+			laneNestedPolicyOverride = laneRecord.NestedPolicy
+		}
+		if strings.TrimSpace(laneRecord.NestingIntent) != "" {
+			laneNestingIntentOverride = laneRecord.NestingIntent
+		}
+	}
 	if strings.TrimSpace(profile) != "" {
 		presetAgent, presetModel, presetErr := parseRouteProfile(profile)
 		if presetErr != nil {
@@ -711,8 +891,37 @@ func cmdSessionRoute(args []string) int {
 			model = presetModel
 		}
 	}
+	goal, err = parseSessionRouteGoal(goal)
+	if err != nil {
+		return commandError(jsonOut, "invalid_goal", err.Error())
+	}
+	agent, err = parseAgent(agent)
+	if err != nil {
+		return commandError(jsonOut, "invalid_agent", err.Error())
+	}
 
 	mode, nestedPolicy, nestingIntent, defaultPrompt, defaultModel := sessionRouteDefaults(goal)
+	if laneModeOverride != "" {
+		parsedMode, modeErr := parseMode(laneModeOverride)
+		if modeErr != nil {
+			return commandErrorf(jsonOut, "invalid_lane_mode", "invalid lane mode: %v", modeErr)
+		}
+		mode = parsedMode
+	}
+	if laneNestedPolicyOverride != "" {
+		parsedNestedPolicy, nestedErr := parseNestedPolicy(laneNestedPolicyOverride)
+		if nestedErr != nil {
+			return commandErrorf(jsonOut, "invalid_lane_nested_policy", "invalid lane nested policy: %v", nestedErr)
+		}
+		nestedPolicy = parsedNestedPolicy
+	}
+	if laneNestingIntentOverride != "" {
+		parsedNestingIntent, nestingErr := parseNestingIntent(laneNestingIntentOverride)
+		if nestingErr != nil {
+			return commandErrorf(jsonOut, "invalid_lane_nesting_intent", "invalid lane nesting intent: %v", nestingErr)
+		}
+		nestingIntent = parsedNestingIntent
+	}
 	topologyRoles, err := parseTopologyRoles(topologyRaw)
 	if err != nil {
 		return commandError(jsonOut, "invalid_topology", err.Error())
@@ -790,6 +999,9 @@ func cmdSessionRoute(args []string) int {
 		"nestedDetection": detection,
 		"rationale":       rationale,
 	}
+	if lane != "" {
+		payload["lane"] = lane
+	}
 	if budget > 0 {
 		payload["budget"] = budget
 	}
@@ -798,6 +1010,14 @@ func cmdSessionRoute(args []string) int {
 	}
 	if emitRunbook {
 		payload["runbook"] = buildRouteRunbook(projectRoot, agent, mode, nestedPolicy, nestingIntent, prompt, model, budget)
+	}
+	if queue {
+		queueItems, queueErr := buildRouteQueue(projectRoot, queueSessionsRaw, queueLimit, budget)
+		if queueErr != nil {
+			return commandErrorf(jsonOut, "queue_build_failed", "failed to build queue: %v", queueErr)
+		}
+		payload["queue"] = queueItems
+		payload["queueCount"] = len(queueItems)
 	}
 	if len(topologyRoles) > 0 {
 		payload["topology"] = buildTopologyGraph(topologyRoles)
@@ -830,6 +1050,7 @@ func cmdSessionGuard(args []string) int {
 	adviceOnly := false
 	machinePolicy := "strict"
 	commandText := ""
+	policyFile := ""
 	projectRoot := canonicalProjectRoot(getPWD())
 	jsonOut := hasJSONFlag(args)
 
@@ -855,6 +1076,12 @@ func cmdSessionGuard(args []string) int {
 			}
 			commandText = args[i+1]
 			i++
+		case "--policy-file":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --policy-file")
+			}
+			policyFile = strings.TrimSpace(args[i+1])
+			i++
 		case "--project-root":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
@@ -875,6 +1102,27 @@ func cmdSessionGuard(args []string) int {
 	case "strict", "warn", "off":
 	default:
 		return commandErrorf(jsonOut, "invalid_machine_policy", "invalid --machine-policy: %s (expected strict|warn|off)", machinePolicy)
+	}
+	var policy *sessionGuardPolicy
+	if policyFile != "" {
+		resolvedPolicy, resolveErr := expandAndCleanPath(policyFile)
+		if resolveErr != nil {
+			return commandErrorf(jsonOut, "invalid_policy_file", "invalid --policy-file: %v", resolveErr)
+		}
+		policyFile = resolvedPolicy
+		loaded, loadErr := loadSessionGuardPolicy(policyFile)
+		if loadErr != nil {
+			return commandErrorf(jsonOut, "policy_file_read_failed", "failed reading --policy-file: %v", loadErr)
+		}
+		policy = loaded
+		if strings.TrimSpace(policy.MachinePolicy) != "" {
+			machinePolicy = strings.ToLower(strings.TrimSpace(policy.MachinePolicy))
+			switch machinePolicy {
+			case "strict", "warn", "off":
+			default:
+				return commandErrorf(jsonOut, "invalid_policy_machine_policy", "invalid policy machinePolicy: %s (expected strict|warn|off)", policy.MachinePolicy)
+			}
+		}
 	}
 
 	defaultSessions := []string{}
@@ -923,6 +1171,16 @@ func cmdSessionGuard(args []string) int {
 			warnings = append(warnings, "session kill without --project-root may target wrong project hash")
 			riskReasons = append(riskReasons, "kill_without_project_root")
 		}
+		if policy != nil {
+			policyWarnings, policyReasons, policyRisk := evaluateGuardPolicy(*policy, lowerCommand)
+			if len(policyWarnings) > 0 {
+				warnings = append(warnings, policyWarnings...)
+			}
+			if len(policyReasons) > 0 {
+				riskReasons = append(riskReasons, policyReasons...)
+			}
+			commandRisk = mergeGuardRisk(commandRisk, policyRisk)
+		}
 	}
 
 	safe := len(defaultSessions) == 0 && commandRisk != "high"
@@ -954,6 +1212,9 @@ func cmdSessionGuard(args []string) int {
 			"machinePolicy":       machinePolicy,
 			"safe":                safe,
 			"warnings":            warnings,
+		}
+		if policyFile != "" {
+			payload["policyFile"] = policyFile
 		}
 		if len(riskReasons) > 0 {
 			payload["riskReasons"] = riskReasons
@@ -994,9 +1255,105 @@ func cmdSessionGuard(args []string) int {
 	return boolExit(safe)
 }
 
+type sessionGuardPolicy struct {
+	MachinePolicy                  string   `json:"machinePolicy"`
+	AllowedCommands                []string `json:"allowedCommands"`
+	DeniedCommands                 []string `json:"deniedCommands"`
+	RequireProjectRoot             bool     `json:"requireProjectRoot"`
+	RequireProjectOnlyForKillAll   bool     `json:"requireProjectOnlyForKillAll"`
+	AllowCleanupIncludeTmuxDefault bool     `json:"allowCleanupIncludeTmuxDefault"`
+}
+
+func loadSessionGuardPolicy(path string) (*sessionGuardPolicy, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	policy := sessionGuardPolicy{}
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+func evaluateGuardPolicy(policy sessionGuardPolicy, commandText string) (warnings []string, reasons []string, risk string) {
+	risk = "low"
+	command := strings.ToLower(strings.TrimSpace(commandText))
+	if command == "" {
+		return warnings, reasons, risk
+	}
+
+	if len(policy.AllowedCommands) > 0 {
+		matched := false
+		for _, entry := range policy.AllowedCommands {
+			entry = strings.ToLower(strings.TrimSpace(entry))
+			if entry == "" {
+				continue
+			}
+			if strings.Contains(command, entry) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			warnings = append(warnings, "policy denies command outside allowedCommands")
+			reasons = append(reasons, "policy_not_allowed")
+			risk = "high"
+		}
+	}
+
+	for _, denied := range policy.DeniedCommands {
+		denied = strings.ToLower(strings.TrimSpace(denied))
+		if denied == "" {
+			continue
+		}
+		if strings.Contains(command, denied) {
+			warnings = append(warnings, "policy denies command token: "+denied)
+			reasons = append(reasons, "policy_denied_command")
+			risk = "high"
+			break
+		}
+	}
+
+	if policy.RequireProjectRoot && strings.Contains(command, "session ") && !strings.Contains(command, "--project-root") {
+		warnings = append(warnings, "policy requires --project-root on session commands")
+		reasons = append(reasons, "policy_requires_project_root")
+		risk = mergeGuardRisk(risk, "medium")
+	}
+	if policy.RequireProjectOnlyForKillAll && strings.Contains(command, "session kill-all") && !strings.Contains(command, "--project-only") {
+		warnings = append(warnings, "policy requires --project-only for kill-all")
+		reasons = append(reasons, "policy_requires_project_only_for_kill_all")
+		risk = mergeGuardRisk(risk, "high")
+	}
+	if !policy.AllowCleanupIncludeTmuxDefault && strings.Contains(command, "cleanup") && strings.Contains(command, "--include-tmux-default") {
+		warnings = append(warnings, "policy disallows cleanup --include-tmux-default")
+		reasons = append(reasons, "policy_disallow_cleanup_include_tmux_default")
+		risk = mergeGuardRisk(risk, "high")
+	}
+	return warnings, reasons, risk
+}
+
+func mergeGuardRisk(base, candidate string) string {
+	rank := func(value string) int {
+		switch value {
+		case "high":
+			return 3
+		case "medium":
+			return 2
+		default:
+			return 1
+		}
+	}
+	if rank(candidate) > rank(base) {
+		return candidate
+	}
+	return base
+}
+
 func cmdSessionAutopilot(args []string) int {
 	goal := "analysis"
 	agent := "codex"
+	lane := ""
 	modeOverride := ""
 	nestedPolicyOverride := ""
 	nestingIntentOverride := ""
@@ -1030,6 +1387,12 @@ func cmdSessionAutopilot(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --agent")
 			}
 			agent = args[i+1]
+			i++
+		case "--lane":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --lane")
+			}
+			lane = strings.ToLower(strings.TrimSpace(args[i+1]))
 			i++
 		case "--mode":
 			if i+1 >= len(args) {
@@ -1155,6 +1518,47 @@ func cmdSessionAutopilot(args []string) int {
 		return commandError(jsonOut, "invalid_agent", err.Error())
 	}
 	projectRoot = canonicalProjectRoot(projectRoot)
+	if lane != "" {
+		laneRecord, found, laneErr := loadLaneRecord(projectRoot, lane)
+		if laneErr != nil {
+			return commandErrorf(jsonOut, "lane_load_failed", "failed loading lane %q: %v", lane, laneErr)
+		}
+		if !found {
+			return commandErrorf(jsonOut, "lane_not_found", "lane not found: %s", lane)
+		}
+		if strings.TrimSpace(laneRecord.Goal) != "" {
+			goal = laneRecord.Goal
+		}
+		if strings.TrimSpace(laneRecord.Agent) != "" {
+			agent = laneRecord.Agent
+		}
+		if modeOverride == "" && strings.TrimSpace(laneRecord.Mode) != "" {
+			modeOverride = laneRecord.Mode
+		}
+		if nestedPolicyOverride == "" && strings.TrimSpace(laneRecord.NestedPolicy) != "" {
+			nestedPolicyOverride = laneRecord.NestedPolicy
+		}
+		if nestingIntentOverride == "" && strings.TrimSpace(laneRecord.NestingIntent) != "" {
+			nestingIntentOverride = laneRecord.NestingIntent
+		}
+		if strings.TrimSpace(prompt) == "" && strings.TrimSpace(laneRecord.Prompt) != "" {
+			prompt = laneRecord.Prompt
+		}
+		if strings.TrimSpace(model) == "" && strings.TrimSpace(laneRecord.Model) != "" {
+			model = laneRecord.Model
+		}
+		if tokenBudget == 320 && laneRecord.Budget > 0 {
+			tokenBudget = laneRecord.Budget
+		}
+	}
+	goal, err = parseSessionRouteGoal(goal)
+	if err != nil {
+		return commandError(jsonOut, "invalid_goal", err.Error())
+	}
+	agent, err = parseAgent(agent)
+	if err != nil {
+		return commandError(jsonOut, "invalid_agent", err.Error())
+	}
 	if session != "" && !strings.HasPrefix(session, "lisa-") {
 		return commandError(jsonOut, "invalid_session_name", `invalid --session: must start with "lisa-"`)
 	}
@@ -1944,4 +2348,155 @@ func mapStringValue(m map[string]any, key string) string {
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%v", typed))
 	}
+}
+
+func objectiveSummaryLine(objective map[string]any) string {
+	if objective == nil {
+		return ""
+	}
+	parts := []string{}
+	if id := strings.TrimSpace(mapStringValue(objective, "id")); id != "" {
+		parts = append(parts, "id="+id)
+	}
+	if goal := strings.TrimSpace(mapStringValue(objective, "goal")); goal != "" {
+		parts = append(parts, "goal="+goal)
+	}
+	if acceptance := strings.TrimSpace(mapStringValue(objective, "acceptance")); acceptance != "" {
+		parts = append(parts, "acceptance="+acceptance)
+	}
+	if budget := strings.TrimSpace(mapStringValue(objective, "budget")); budget != "" && budget != "0" {
+		parts = append(parts, "budget="+budget)
+	}
+	return strings.Join(parts, " | ")
+}
+
+func recommendedCommandForAction(action, session, projectRoot string) string {
+	switch action {
+	case "session send":
+		return "./lisa session send --session " + shellQuote(session) + " --project-root " + shellQuote(projectRoot) + " --text " + shellQuote("Continue from objective and latest state.") + " --enter --json-min"
+	case "session monitor":
+		return "./lisa session monitor --session " + shellQuote(session) + " --project-root " + shellQuote(projectRoot) + " --json-min"
+	case "session capture":
+		return "./lisa session capture --session " + shellQuote(session) + " --project-root " + shellQuote(projectRoot) + " --raw --summary --summary-style ops --json"
+	case "session explain":
+		return "./lisa session explain --session " + shellQuote(session) + " --project-root " + shellQuote(projectRoot) + " --events 40 --json-min"
+	case "session spawn":
+		return "./lisa session spawn --agent codex --mode interactive --project-root " + shellQuote(projectRoot) + " --json"
+	default:
+		return "./lisa session status --session " + shellQuote(session) + " --project-root " + shellQuote(projectRoot) + " --json-min"
+	}
+}
+
+func deriveHandoffRisks(status sessionStatus, items []sessionHandoffItem) []sessionHandoffRisk {
+	risks := []sessionHandoffRisk{}
+	switch status.SessionState {
+	case "crashed", "stuck":
+		risks = append(risks, sessionHandoffRisk{
+			Level:   "high",
+			Code:    "terminal_failure",
+			Message: "session reached terminal failure state",
+		})
+	case "degraded":
+		risks = append(risks, sessionHandoffRisk{
+			Level:   "medium",
+			Code:    "degraded_loop",
+			Message: "session is degraded; monitor and recovery may be required",
+		})
+	}
+	if len(items) == 0 {
+		risks = append(risks, sessionHandoffRisk{
+			Level:   "low",
+			Code:    "no_recent_events",
+			Message: "handoff has no recent event history",
+		})
+	}
+	return risks
+}
+
+func deriveHandoffQuestions(status sessionStatus, items []sessionHandoffItem) []sessionHandoffQuestion {
+	questions := []sessionHandoffQuestion{}
+	if status.SessionState == "waiting_input" {
+		questions = append(questions, sessionHandoffQuestion{
+			Code:     "next_instruction",
+			Question: "What exact instruction should be sent next?",
+		})
+	}
+	if len(items) == 0 {
+		questions = append(questions, sessionHandoffQuestion{
+			Code:     "context_gap",
+			Question: "Should events be increased to include more execution history?",
+		})
+	}
+	return questions
+}
+
+func buildRouteQueue(projectRoot, sessionsRaw string, limit int, budget int) ([]map[string]any, error) {
+	sessions := parseCommaValues(sessionsRaw)
+	if len(sessions) == 0 {
+		restore := withProjectRuntimeEnv(projectRoot)
+		list, err := tmuxListSessionsFn(false, projectRoot)
+		restore()
+		if err != nil {
+			return nil, err
+		}
+		sessions = list
+	}
+	if len(sessions) == 0 {
+		return []map[string]any{}, nil
+	}
+	type queueItem struct {
+		Session      string
+		Status       sessionStatus
+		NextAction   string
+		Command      string
+		Reason       string
+		Priority     int
+		PriorityType string
+	}
+	items := make([]queueItem, 0, len(sessions))
+	for _, session := range sessions {
+		resolvedRoot := resolveSessionProjectRoot(session, projectRoot, false)
+		restore := withProjectRuntimeEnv(resolvedRoot)
+		status, err := computeSessionStatusFn(session, resolvedRoot, "auto", "auto", false, 0)
+		restore()
+		if err != nil {
+			continue
+		}
+		status = normalizeStatusForSessionStatusOutput(status)
+		nextAction, command, reason := recommendedSessionNext(status, session, resolvedRoot, budget)
+		priority, priorityType := computeSessionPriority(status)
+		items = append(items, queueItem{
+			Session:      session,
+			Status:       status,
+			NextAction:   nextAction,
+			Command:      command,
+			Reason:       reason,
+			Priority:     priority,
+			PriorityType: priorityType,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Priority == items[j].Priority {
+			return items[i].Session < items[j].Session
+		}
+		return items[i].Priority > items[j].Priority
+	})
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	out := make([]map[string]any, 0, len(items))
+	for idx, item := range items {
+		out = append(out, map[string]any{
+			"position":      idx + 1,
+			"session":       item.Session,
+			"status":        item.Status.Status,
+			"sessionState":  item.Status.SessionState,
+			"nextAction":    item.NextAction,
+			"command":       item.Command,
+			"reason":        item.Reason,
+			"priorityScore": item.Priority,
+			"priorityLabel": item.PriorityType,
+		})
+	}
+	return out, nil
 }

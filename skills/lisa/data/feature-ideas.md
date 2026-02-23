@@ -36,17 +36,15 @@ Additional round (2026-02-22):
 - `85/100` `session preflight --fast`: reduced high-risk contract checks for tight startup budgets.
 - `83/100` `session tree --json-min` total/filtered counts: explicit topology cardinality for cheap health probes.
 
-## Proposed Additions (Not Implemented)
-
-Scoring: projected LLM-context impact out of 100.
+Additional round (2026-02-23):
 
 - `98/100` `session objective`: first-class objective register (`id`, `goal`, `acceptance`, `budget`) with automatic propagation into `spawn/send/handoff/context-pack`.
 - `96/100` `session memory`: rolling per-session semantic memory with TTL + size caps; emits compact “what changed since last loop” blocks.
 - `95/100` `session handoff --schema v2`: strict typed payloads (`state`, `nextAction`, `risks`, `openQuestions`) for parser-safe multi-agent routers.
-- `94/100` `session router --queue`: queue-aware routing that reads `session list --with-next-action` + budgets and proposes prioritized dispatch order.
+- `94/100` `session route --queue`: queue-aware routing that reads live sessions + budgets and proposes prioritized dispatch order.
 - `93/100` `session monitor --auto-recover`: policy-based retries on transient `degraded|max_polls_exceeded` with bounded recovery budget.
 - `92/100` `session lane`: named orchestration lanes (planner|worker|reviewer) with lane-local defaults and handoff contracts.
-- `91/100` `session diff-pack --semantic-only`: AST/symbol-level delta summaries to suppress unchanged boilerplate in loops.
-- `90/100` `session budget-plan`: pre-run budget simulation from route + topology + historical durations, with hard-stop plan generation.
+- `91/100` `session diff-pack --semantic-only`: semantic-only delta summaries to suppress unchanged boilerplate in loops.
+- `90/100` `session budget-plan`: pre-run budget simulation from route + topology + estimated durations, with hard-stop plan generation.
 - `89/100` `session guard --policy-file`: declarative org policy (allowed commands, shared-tmux constraints, cleanup rules) loaded from file.
 - `88/100` `session smoke --llm-profile`: profile packs for common orchestrators (Codex, Claude, mixed) with expected detection + routing assertions.

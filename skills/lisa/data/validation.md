@@ -53,6 +53,16 @@ Validated: 2026-02-23
 - `session guard --shared-tmux --enforce --command ...` returns `errorCode:"shared_tmux_guard_enforced"` on medium/high risk.
 - `session guard --shared-tmux --advice-only --command ...` preserves diagnostics while always exiting `0`.
 - `session guard --machine-policy strict` can hard-fail (`errorCode:"shared_tmux_risk_detected"`) without `--enforce`.
+- `session objective` maintains a project-scoped objective register and auto-propagates current objective into `spawn/send/handoff/context-pack` payloads.
+- `session memory --refresh` stores bounded semantic memory snapshots; handoff/context-pack include compact memory blocks when present.
+- `session handoff --schema v2` emits typed `state`, `nextAction`, `risks`, and `openQuestions` fields for parser-safe routers.
+- `session route --queue` emits prioritized dispatch queue entries with recommended commands.
+- `session monitor --auto-recover --recover-max N` retries timeout/degraded loops with safe Enter nudge.
+- `session lane` stores lane defaults/contracts; `session spawn|route|autopilot --lane <name>` apply lane defaults.
+- `session diff-pack --semantic-only` diffs semantic lines using sidecar semantic cursor state.
+- `session budget-plan` emits route cost simulation plus hard-stop `session budget-enforce` command contract.
+- `session guard --policy-file <json>` enforces declarative policy constraints on risky commands.
+- `session smoke --llm-profile codex|claude|mixed` applies profile presets for prompt/matrix assertions.
 - `session smoke --chaos delay|drop-marker|fail-child|mixed --json` emits deterministic chaos metadata/results.
 - `session smoke --chaos-report` is boolean-only (passing a value is a flag parse error).
 - `session autopilot --json` emits step-by-step orchestration payload with per-step exit statuses.

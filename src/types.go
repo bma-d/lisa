@@ -22,17 +22,22 @@ const (
 )
 
 type sessionMeta struct {
-	Session       string `json:"session"`
-	ParentSession string `json:"parentSession,omitempty"`
-	Agent         string `json:"agent"`
-	Mode          string `json:"mode"`
-	OAuthTokenID  string `json:"oauthTokenId,omitempty"`
-	RunID         string `json:"runId,omitempty"`
-	ProjectRoot   string `json:"projectRoot"`
-	SocketPath    string `json:"socketPath,omitempty"`
-	StartCmd      string `json:"startCommand"`
-	Prompt        string `json:"prompt,omitempty"`
-	CreatedAt     string `json:"createdAt"`
+	Session             string `json:"session"`
+	ParentSession       string `json:"parentSession,omitempty"`
+	Agent               string `json:"agent"`
+	Mode                string `json:"mode"`
+	Lane                string `json:"lane,omitempty"`
+	OAuthTokenID        string `json:"oauthTokenId,omitempty"`
+	RunID               string `json:"runId,omitempty"`
+	ProjectRoot         string `json:"projectRoot"`
+	SocketPath          string `json:"socketPath,omitempty"`
+	StartCmd            string `json:"startCommand"`
+	Prompt              string `json:"prompt,omitempty"`
+	ObjectiveID         string `json:"objectiveId,omitempty"`
+	ObjectiveGoal       string `json:"objectiveGoal,omitempty"`
+	ObjectiveAcceptance string `json:"objectiveAcceptance,omitempty"`
+	ObjectiveBudget     int    `json:"objectiveBudget,omitempty"`
+	CreatedAt           string `json:"createdAt"`
 }
 
 type sessionState struct {

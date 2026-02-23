@@ -604,6 +604,7 @@ func cmdSessionDiffPack(args []string) int {
 	tokenBudget := 700
 	cursorFile := ""
 	redactRaw := ""
+	semanticOnly := false
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 
@@ -672,6 +673,8 @@ func cmdSessionDiffPack(args []string) int {
 			}
 			redactRaw = strings.TrimSpace(args[i+1])
 			i++
+		case "--semantic-only":
+			semanticOnly = true
 		case "--json":
 			jsonOut = true
 		case "--json-min":
@@ -714,12 +717,29 @@ func cmdSessionDiffPack(args []string) int {
 	}
 	added, removed := diffPackLines(previous, snapshot.Pack)
 	changed := strings.TrimSpace(previous) != strings.TrimSpace(snapshot.Pack)
+	semanticCursorFile := semanticCursorPath(cursorFile)
+	semanticLines := []string{}
+	if semanticOnly {
+		currentSemantic := extractSemanticLines(snapshot.Pack)
+		baselineSemantic, loadErr := loadSemanticCursor(semanticCursorFile)
+		if loadErr != nil {
+			return commandErrorf(jsonOut, "semantic_cursor_read_failed", "failed reading semantic cursor: %v", loadErr)
+		}
+		added, removed = diffPackLines(strings.Join(baselineSemantic, "\n"), strings.Join(currentSemantic, "\n"))
+		changed = strings.Join(baselineSemantic, "\n") != strings.Join(currentSemantic, "\n")
+		semanticLines = currentSemantic
+	}
 
 	if err := os.MkdirAll(filepath.Dir(cursorFile), 0o700); err != nil {
 		return commandErrorf(jsonOut, "cursor_file_write_failed", "failed creating cursor dir: %v", err)
 	}
 	if err := writeFileAtomic(cursorFile, []byte(snapshot.Pack)); err != nil {
 		return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --cursor-file: %v", err)
+	}
+	if semanticOnly {
+		if err := saveSemanticCursor(semanticCursorFile, semanticLines); err != nil {
+			return commandErrorf(jsonOut, "semantic_cursor_write_failed", "failed writing semantic cursor: %v", err)
+		}
 	}
 
 	payload := map[string]any{
@@ -732,9 +752,14 @@ func cmdSessionDiffPack(args []string) int {
 		"addedLines":   added,
 		"removedLines": removed,
 		"cursorFile":   cursorFile,
+		"semanticOnly": semanticOnly,
 		"strategy":     strategyConfig.Name,
 		"tokenBudget":  tokenBudget,
 		"truncated":    snapshot.Truncated,
+	}
+	if semanticOnly {
+		payload["semanticCursorFile"] = semanticCursorFile
+		payload["semanticLineCount"] = len(semanticLines)
 	}
 	if !jsonMin {
 		payload["pack"] = snapshot.Pack
@@ -742,6 +767,9 @@ func cmdSessionDiffPack(args []string) int {
 		payload["events"] = snapshot.Events
 		payload["droppedRecent"] = snapshot.Dropped
 		payload["projectRoot"] = projectRoot
+		if semanticOnly {
+			payload["semanticLines"] = semanticLines
+		}
 	}
 	if snapshot.SessionState == "not_found" {
 		payload["errorCode"] = "session_not_found"

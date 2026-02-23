@@ -35,12 +35,16 @@ var helpFuncs = map[string]func(){
 	"session diff-pack":      helpSessionDiffPack,
 	"session anomaly":        helpSessionAnomaly,
 	"session budget-enforce": helpSessionBudgetEnforce,
+	"session budget-plan":    helpSessionBudgetPlan,
 	"session replay":         helpSessionReplay,
 	"session handoff":        helpSessionHandoff,
 	"session context-pack":   helpSessionContextPack,
 	"session route":          helpSessionRoute,
 	"session autopilot":      helpSessionAutopilot,
 	"session guard":          helpSessionGuard,
+	"session objective":      helpSessionObjective,
+	"session memory":         helpSessionMemory,
+	"session lane":           helpSessionLane,
 	"session tree":           helpSessionTree,
 	"session smoke":          helpSessionSmoke,
 	"session preflight":      helpSessionPreflight,
@@ -98,12 +102,16 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session diff-pack     Emit cursor-based context-pack deltas")
 	fmt.Fprintln(os.Stderr, "  session anomaly       Detect session behavior anomalies")
 	fmt.Fprintln(os.Stderr, "  session budget-enforce Validate observed usage against hard limits")
+	fmt.Fprintln(os.Stderr, "  session budget-plan   Simulate route/topology budget plan + hard stops")
 	fmt.Fprintln(os.Stderr, "  session replay        Generate deterministic replay steps from checkpoint")
 	fmt.Fprintln(os.Stderr, "  session handoff       Build compact handoff payload for another agent")
 	fmt.Fprintln(os.Stderr, "  session context-pack  Build token-budgeted context packet")
 	fmt.Fprintln(os.Stderr, "  session route         Recommend mode/policy/model for orchestration goal")
 	fmt.Fprintln(os.Stderr, "  session autopilot     Run spawn->monitor->capture->handoff orchestration")
 	fmt.Fprintln(os.Stderr, "  session guard         Shared-tmux safety guardrails")
+	fmt.Fprintln(os.Stderr, "  session objective     Manage shared orchestration objective register")
+	fmt.Fprintln(os.Stderr, "  session memory        Build/read rolling semantic session memory")
+	fmt.Fprintln(os.Stderr, "  session lane          Manage orchestration lane defaults/contracts")
 	fmt.Fprintln(os.Stderr, "  session tree          Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  session smoke         Run deterministic nested smoke test")
 	fmt.Fprintln(os.Stderr, "  session preflight     Validate env + contract assumptions")
@@ -180,12 +188,16 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  diff-pack  Emit cursor-based context-pack deltas")
 	fmt.Fprintln(os.Stderr, "  anomaly    Detect session behavior anomalies")
 	fmt.Fprintln(os.Stderr, "  budget-enforce Validate observed usage against hard limits")
+	fmt.Fprintln(os.Stderr, "  budget-plan Simulate route/topology budgets and hard-stop contract")
 	fmt.Fprintln(os.Stderr, "  replay     Generate deterministic replay steps from checkpoint")
 	fmt.Fprintln(os.Stderr, "  handoff    Build compact handoff payload for another agent")
 	fmt.Fprintln(os.Stderr, "  context-pack Build token-budgeted context packet")
 	fmt.Fprintln(os.Stderr, "  route      Recommend mode/policy/model for orchestration goal")
 	fmt.Fprintln(os.Stderr, "  autopilot  Run spawn->monitor->capture->handoff orchestration")
 	fmt.Fprintln(os.Stderr, "  guard      Shared-tmux safety guardrails")
+	fmt.Fprintln(os.Stderr, "  objective  Manage objective register for orchestration loops")
+	fmt.Fprintln(os.Stderr, "  memory     Build/read rolling semantic memory")
+	fmt.Fprintln(os.Stderr, "  lane       Manage lane defaults/contracts")
 	fmt.Fprintln(os.Stderr, "  tree       Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  smoke      Run deterministic nested smoke test")
 	fmt.Fprintln(os.Stderr, "  preflight  Validate env + contract assumptions")
@@ -216,6 +228,7 @@ func helpSessionSpawn() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: claude)")
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Session mode: interactive|exec (default: interactive)")
+	fmt.Fprintln(os.Stderr, "  --lane NAME           Apply lane defaults/contracts before spawn")
 	fmt.Fprintln(os.Stderr, "  --nested-policy MODE  Nested codex bypass policy: auto|force|off (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --nesting-intent MODE Nested intent override: auto|nested|neutral (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --session NAME        Override session name (must start with \"lisa-\")")
@@ -350,6 +363,9 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --handoff-cursor-file PATH  Persist/reuse handoff delta offset in stream mode")
 	fmt.Fprintln(os.Stderr, "  --event-budget N      Token budget hint for compact handoff stream deltas")
 	fmt.Fprintln(os.Stderr, "  --webhook TARGET      Emit poll/final monitor events to file path or HTTPS endpoint")
+	fmt.Fprintln(os.Stderr, "  --auto-recover        Retry once on max-polls/degraded timeout via safe Enter nudge")
+	fmt.Fprintln(os.Stderr, "  --recover-max N       Maximum auto-recover attempts (default: 1)")
+	fmt.Fprintln(os.Stderr, "  --recover-budget N    Optional total poll budget across recover attempts")
 	fmt.Fprintln(os.Stderr, "  --verbose             Print poll details to stderr")
 }
 
@@ -509,6 +525,7 @@ func helpSessionDiffPack() {
 	fmt.Fprintln(os.Stderr, "  --token-budget N      Pack token budget (default: 700)")
 	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Cursor file to diff previous/next packs")
 	fmt.Fprintln(os.Stderr, "  --redact CSV          Redaction rules: none|all|paths|emails|secrets|numbers|tokens")
+	fmt.Fprintln(os.Stderr, "  --semantic-only       Diff semantic lines only (suppresses boilerplate churn)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
@@ -541,6 +558,22 @@ func helpSessionBudgetEnforce() {
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
+func helpSessionBudgetPlan() {
+	fmt.Fprintln(os.Stderr, "lisa session budget-plan — simulate route/topology budget plan")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session budget-plan [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --goal MODE           Route goal: nested|analysis|exec (default: analysis)")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: codex)")
+	fmt.Fprintln(os.Stderr, "  --profile NAME        Route preset profile: codex-spark|claude")
+	fmt.Fprintln(os.Stderr, "  --budget N            Optional token budget cap")
+	fmt.Fprintln(os.Stderr, "  --topology CSV        Optional topology roles: planner,workers,reviewer")
+	fmt.Fprintln(os.Stderr, "  --from-state PATH     Optional handoff/status payload source")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
 func helpSessionReplay() {
 	fmt.Fprintln(os.Stderr, "lisa session replay — generate deterministic replay steps from checkpoint")
 	fmt.Fprintln(os.Stderr, "")
@@ -566,6 +599,7 @@ func helpSessionHandoff() {
 	fmt.Fprintln(os.Stderr, "  --delta-from N        Incremental event offset (non-negative integer)")
 	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Persist/reuse incremental event offset")
 	fmt.Fprintln(os.Stderr, "  --compress MODE       Payload compression: none|zstd (default: none)")
+	fmt.Fprintln(os.Stderr, "  --schema MODE         Handoff schema: v1|v2 (default: v1)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
@@ -598,10 +632,14 @@ func helpSessionRoute() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --goal GOAL           Orchestration goal: nested|analysis|exec (default: analysis)")
 	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: codex)")
+	fmt.Fprintln(os.Stderr, "  --lane NAME           Optional lane defaults/contracts source")
 	fmt.Fprintln(os.Stderr, "  --prompt TEXT         Optional prompt override")
 	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model override")
 	fmt.Fprintln(os.Stderr, "  --profile NAME        Route profile: codex-spark|claude")
 	fmt.Fprintln(os.Stderr, "  --budget N            Optional token budget hint for runbook/capture")
+	fmt.Fprintln(os.Stderr, "  --queue               Include prioritized session dispatch queue")
+	fmt.Fprintln(os.Stderr, "  --sessions CSV        Optional explicit sessions for queue mode")
+	fmt.Fprintln(os.Stderr, "  --queue-limit N       Optional cap on returned queue items")
 	fmt.Fprintln(os.Stderr, "  --topology CSV        Optional topology roles: planner,workers,reviewer")
 	fmt.Fprintln(os.Stderr, "  --cost-estimate       Include token/time cost estimate payload")
 	fmt.Fprintln(os.Stderr, "  --from-state PATH     Route using handoff/status JSON (use '-' for stdin)")
@@ -618,6 +656,7 @@ func helpSessionAutopilot() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --goal GOAL           Orchestration goal: nested|analysis|exec (default: analysis)")
 	fmt.Fprintln(os.Stderr, "  --agent NAME          AI agent: claude|codex (default: codex)")
+	fmt.Fprintln(os.Stderr, "  --lane NAME           Optional lane defaults/contracts source")
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Optional mode override: interactive|exec")
 	fmt.Fprintln(os.Stderr, "  --nested-policy MODE  Optional nested policy override: auto|force|off")
 	fmt.Fprintln(os.Stderr, "  --nesting-intent MODE Optional nesting intent override: auto|nested|neutral")
@@ -647,6 +686,7 @@ func helpSessionGuard() {
 	fmt.Fprintln(os.Stderr, "  --advice-only         Never exit non-zero; diagnostics only")
 	fmt.Fprintln(os.Stderr, "  --machine-policy MODE strict|warn|off exit policy (default: strict)")
 	fmt.Fprintln(os.Stderr, "  --command TEXT        Optional command string to risk-check")
+	fmt.Fprintln(os.Stderr, "  --policy-file PATH    Optional JSON policy contract for guard evaluation")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
@@ -664,6 +704,62 @@ func helpSessionPreflight() {
 	fmt.Fprintln(os.Stderr, "  --auto-model-candidates CSV")
 	fmt.Fprintln(os.Stderr, "                        Candidate model list (default: gpt-5.3-codex,gpt-5-codex)")
 	fmt.Fprintln(os.Stderr, "  --fast                Run reduced high-risk contract checks only")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSessionObjective() {
+	fmt.Fprintln(os.Stderr, "lisa session objective — manage objective register")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session objective [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --id NAME             Objective id key")
+	fmt.Fprintln(os.Stderr, "  --goal TEXT           Objective goal")
+	fmt.Fprintln(os.Stderr, "  --acceptance TEXT     Acceptance criteria")
+	fmt.Fprintln(os.Stderr, "  --budget N            Token budget hint")
+	fmt.Fprintln(os.Stderr, "  --status MODE         Objective status: open|done|paused")
+	fmt.Fprintln(os.Stderr, "  --ttl-hours N         Optional objective expiry window")
+	fmt.Fprintln(os.Stderr, "  --activate            Set objective id as current objective")
+	fmt.Fprintln(os.Stderr, "  --clear               Delete objective id")
+	fmt.Fprintln(os.Stderr, "  --list                List objectives")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSessionMemory() {
+	fmt.Fprintln(os.Stderr, "lisa session memory — rolling semantic memory for session")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session memory [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --refresh             Rebuild memory from current capture/output")
+	fmt.Fprintln(os.Stderr, "  --ttl-hours N         Memory TTL in hours (default: 24)")
+	fmt.Fprintln(os.Stderr, "  --max-lines N         Maximum semantic lines retained (default: 80)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+}
+
+func helpSessionLane() {
+	fmt.Fprintln(os.Stderr, "lisa session lane — manage lane defaults/contracts")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session lane [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --name NAME           Lane name key")
+	fmt.Fprintln(os.Stderr, "  --goal MODE           Default goal override")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          Default agent override")
+	fmt.Fprintln(os.Stderr, "  --mode MODE           Default mode override")
+	fmt.Fprintln(os.Stderr, "  --nested-policy MODE  Default nested policy override")
+	fmt.Fprintln(os.Stderr, "  --nesting-intent MODE Default nesting intent override")
+	fmt.Fprintln(os.Stderr, "  --prompt TEXT         Default prompt override")
+	fmt.Fprintln(os.Stderr, "  --model NAME          Default model override")
+	fmt.Fprintln(os.Stderr, "  --budget N            Default budget hint")
+	fmt.Fprintln(os.Stderr, "  --topology CSV        Default topology roles")
+	fmt.Fprintln(os.Stderr, "  --contract TEXT       Lane-specific handoff contract note")
+	fmt.Fprintln(os.Stderr, "  --clear               Delete lane by name")
+	fmt.Fprintln(os.Stderr, "  --list                List lanes")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 }
 
@@ -721,6 +817,7 @@ func helpSessionSmoke() {
 	fmt.Fprintln(os.Stderr, "  --matrix-file PATH    Prompt matrix file: mode|prompt (mode=bypass|full-auto|any)")
 	fmt.Fprintln(os.Stderr, "  --chaos MODE          Fault mode: none|delay|drop-marker|fail-child|mixed")
 	fmt.Fprintln(os.Stderr, "  --chaos-report        Normalize chaos outcomes against expected-failure contracts")
+	fmt.Fprintln(os.Stderr, "  --llm-profile NAME    Profile preset: none|codex|claude|mixed")
 	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model pin for smoke spawn sessions")
 	fmt.Fprintln(os.Stderr, "  --poll-interval N     Seconds between monitor polls (default: 1)")
 	fmt.Fprintln(os.Stderr, "  --max-polls N         Maximum polls per nested monitor (default: 180)")
