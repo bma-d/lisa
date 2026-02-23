@@ -140,15 +140,14 @@ func tmuxSendText(session, text string, enter bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to load tmux buffer: %v (%s)", err, strings.TrimSpace(out))
 	}
-
-	defer func() {
-		_, _ = runTmuxCmd("delete-buffer", "-b", bufName)
-	}()
-
 	if _, err := runTmuxCmd("paste-buffer", "-b", bufName, "-t", session); err != nil {
+		_, _ = runTmuxCmd("delete-buffer", "-b", bufName)
 		return fmt.Errorf("failed to paste tmux buffer: %w", err)
 	}
+	_, _ = runTmuxCmd("delete-buffer", "-b", bufName)
 	if enter {
+		// Give interactive TUIs a beat to process the pasted payload before submit.
+		time.Sleep(120 * time.Millisecond)
 		if _, err := runTmuxCmd("send-keys", "-t", session, "Enter"); err != nil {
 			return fmt.Errorf("failed to send enter: %w", err)
 		}

@@ -934,6 +934,20 @@ func objectiveReminderAlreadyPresent(text, prefix string, meta sessionMeta) bool
 	return true
 }
 
+func joinObjectiveSendText(meta sessionMeta, prefix, text string) string {
+	if strings.EqualFold(strings.TrimSpace(meta.Agent), "codex") && strings.EqualFold(strings.TrimSpace(meta.Mode), "interactive") {
+		return prefix + " | " + text
+	}
+	return prefix + "\n" + text
+}
+
+func shouldSplitCodexInteractiveSubmit(meta sessionMeta, text string, enter bool) bool {
+	if !enter || strings.TrimSpace(text) == "" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(meta.Agent), "codex") && strings.EqualFold(strings.TrimSpace(meta.Mode), "interactive")
+}
+
 func cmdSessionSend(args []string) int {
 	session := ""
 	projectRoot := getPWD()
@@ -1016,7 +1030,7 @@ func cmdSessionSend(args []string) int {
 			prefix = buildObjectiveReminderPrefixFromMeta(meta)
 		}
 		if prefix != "" && !objectiveReminderAlreadyPresent(text, prefix, meta) {
-			text = prefix + "\n" + text
+			text = joinObjectiveSendText(meta, prefix, text)
 		}
 	}
 	if !tmuxHasSessionFn(session) {
@@ -1034,11 +1048,29 @@ func cmdSessionSend(args []string) int {
 	sendAt := time.Now()
 
 	if text != "" {
-		if err := tmuxSendTextFn(session, text, enter); err != nil {
-			return commandErrorf(jsonOut, "send_text_failed", "failed sending text: %v", err)
-		}
-		if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "in_progress", "active", "send_text"); err != nil {
-			fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+		if shouldSplitCodexInteractiveSubmit(meta, text, enter) {
+			if err := tmuxSendTextFn(session, text, false); err != nil {
+				return commandErrorf(jsonOut, "send_text_failed", "failed sending text: %v", err)
+			}
+			if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "in_progress", "active", "send_text"); err != nil {
+				fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+			}
+			// Mirror the known-good two-command path:
+			// `session send --text ...` then `session send --keys Enter`.
+			time.Sleep(2 * time.Second)
+			if err := tmuxSendKeysFn(session, []string{"Enter"}, false); err != nil {
+				return commandErrorf(jsonOut, "send_keys_failed", "failed sending keys: %v", err)
+			}
+			if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "in_progress", "active", "send_keys"); err != nil {
+				fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+			}
+		} else {
+			if err := tmuxSendTextFn(session, text, enter); err != nil {
+				return commandErrorf(jsonOut, "send_text_failed", "failed sending text: %v", err)
+			}
+			if err := appendLifecycleEvent(projectRoot, session, "lifecycle", "in_progress", "active", "send_text"); err != nil {
+				fmt.Fprintf(os.Stderr, "observability warning: %v\n", err)
+			}
 		}
 	} else {
 		if err := tmuxSendKeysFn(session, keyList, enter); err != nil {

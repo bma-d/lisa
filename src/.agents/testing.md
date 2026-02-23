@@ -1,7 +1,7 @@
 # Testing
 
-Last Updated: 2026-02-21
-Related Files: `src/regressions_test.go`, `src/command_coverage_test.go`, `src/monitor_waiting_turn_complete_test.go`, `src/session_monitor_expect_test.go`, `src/session_manage_json_test.go`, `src/session_tree_flat_test.go`, `src/claude_capture_fallback_test.go`, `src/session_wrapper_test.go`, `src/e2e_claude_test.go`, `src/e2e_codex_test.go`, `src/e2e_exec_fake_test.go`, `src/e2e_nested_interactive_fake_test.go`, `src/e2e_smoke_fake_test.go`, `scripts/smoke-nested-3level.sh`, `smoke-nested`
+Last Updated: 2026-02-23
+Related Files: `src/regressions_test.go`, `src/command_coverage_test.go`, `src/monitor_waiting_turn_complete_test.go`, `src/session_monitor_expect_test.go`, `src/session_manage_json_test.go`, `src/session_tree_flat_test.go`, `src/claude_capture_fallback_test.go`, `src/session_wrapper_test.go`, `src/e2e_claude_test.go`, `src/e2e_codex_test.go`, `src/e2e_exec_fake_test.go`, `src/e2e_interactive_followup_fake_test.go`, `src/e2e_nested_interactive_fake_test.go`, `src/e2e_smoke_fake_test.go`, `scripts/smoke-nested-3level.sh`, `smoke-nested`
 
 ## Overview
 
@@ -40,6 +40,7 @@ Requires real tmux server + matching agent on PATH. Spawns actual sessions, moni
 
 Additional hermetic integration:
 - `e2e_interactive_fake_test.go` runs by default when tmux is available and exercises interactive spawn/send/monitor/capture lifecycle using a local one-line shell script (no external agent dependency).
+- `e2e_interactive_followup_fake_test.go` runs by default when tmux is available and verifies multi-turn interactive follow-up (`send` -> marker -> `send` -> marker) in the same tmux session.
 - `e2e_exec_fake_test.go` runs by default when tmux is available and exercises exec-mode spawn/monitor/capture lifecycle using a local command (no external agent dependency).
 - `e2e_nested_interactive_fake_test.go` runs by default when tmux is available and exercises 3-level nested Lisa orchestration (L1->L2->L3) in interactive mode via nested spawn/monitor/capture flows.
 - `e2e_smoke_fake_test.go` runs by default when tmux is available and validates `session smoke --levels 4 --json` end-to-end marker assertions.

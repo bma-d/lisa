@@ -1,6 +1,6 @@
 # SDK Usage Guide
 
-Last Updated: 2026-02-22
+Last Updated: 2026-02-23
 Related Files: `USAGE.md`, `agent.md`, `src/commands_session.go`, `src/commands_agent.go`
 
 ## Overview
@@ -15,11 +15,14 @@ How to use Lisa as infrastructure from an LLM orchestrator or script.
    - In `session monitor` output, `finalState` is stop-state truth; `finalStatus` is normalized for terminal states (`completed`, `crashed`, `stuck`, `not_found`) and uses `timeout` for timeout exits.
    - For stricter interactive stop semantics, use `session monitor --stop-on-waiting true --waiting-requires-turn-complete true` to stop only after transcript turn completion is detected
    - For deterministic completion gates, use `session monitor --until-marker "<TOKEN>"` and stop on `exitReason=marker_found` (exit `0`)
+   - In interactive multi-turn flows, combine marker gating with `--stop-on-waiting false` (or `--waiting-requires-turn-complete true` when transcript metadata is available) so monitor does not exit early on `waiting_input`
    - To avoid ambiguous success semantics, add `session monitor --expect terminal` (or `--expect marker`) so monitor fails fast when a different success condition is hit first
    - For low-token one-shot snapshots, use `session status --json-min`
    - For low-token continuous polling, use `session monitor --json-min --stream-json` (line-delimited poll updates + final result)
    - For periodic compact relay packets during polling, add `session monitor --stream-json --emit-handoff --json-min`
 3. If state is `stuck`, send next instruction with `session send --text "..." --enter`; if state is `degraded`, retry polling and inspect `signals.*Error`
+   - `session send --text` may prepend an `Objective reminder: ...` block when session objective metadata is active
+   - Codex interactive `session send --text ... --enter` uses a staged submit internally (text send + follow-up Enter) to reduce stuck follow-up turns
 4. Fetch artifacts with `session capture --lines N`
    - Raw capture now suppresses known Codex/MCP startup noise by default (including MCP OAuth refresh/auth-failure startup noise); use `session capture --raw --keep-noise` to keep full raw output
    - For incremental polling, use `session capture --raw --delta-from <offset|@unix|rfc3339> --json` and reuse returned `nextOffset`

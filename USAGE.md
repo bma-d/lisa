@@ -405,6 +405,11 @@ Flags:
 - `--json`
 - `--json-min`: minimal JSON ack (`session`, `ok`)
 
+Behavior notes:
+
+- When objective metadata is active for a session, Lisa prepends an `Objective reminder: ...` block to `--text` payloads before sending input.
+- For Codex interactive sessions, `--text ... --enter` uses a staged submit path (paste, short settle, then Enter) to improve multi-turn follow-up reliability.
+
 ### `session snapshot`
 
 One-shot poll helper: status + raw capture + `nextOffset` in one call.
@@ -526,6 +531,7 @@ When `--waiting-requires-turn-complete true` is set, `monitor` only stops on
 complete (Claude/Codex interactive sessions with prompt metadata).
 When this path is taken, `exitReason=waiting_input_turn_complete` (exit `0`) and lifecycle reason is `monitor_waiting_input_turn_complete`.
 When `--until-marker` is set and marker text appears in pane output, monitor exits `0` with `exitReason=marker_found`, often while `finalState=in_progress`.
+In interactive multi-turn flows, default `--stop-on-waiting true` can exit early with `waiting_input` before a later marker appears; for deterministic follow-up marker gating, use `--stop-on-waiting false` (or `--waiting-requires-turn-complete true` when transcript metadata is available).
 `--expect terminal` fails fast on `marker_found`/`waiting_input` success cases (`exitReason=expected_terminal_got_*`, exit `2`).
 `--expect marker` fails fast if a terminal/waiting reason occurs before marker match (`exitReason=expected_marker_got_*`, exit `2`).
 

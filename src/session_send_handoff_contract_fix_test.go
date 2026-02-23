@@ -111,6 +111,60 @@ func TestCmdSessionSendSkipsDuplicateObjectiveReminderWhenGoalEmpty(t *testing.T
 	}
 }
 
+func TestCmdSessionSendUsesSingleLineObjectivePrefixForCodexInteractive(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origSendText := tmuxSendTextFn
+	origAppend := appendSessionEventFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxSendTextFn = origSendText
+		appendSessionEventFn = origAppend
+	})
+
+	projectRoot := t.TempDir()
+	session := "lisa-send-objective-prefix-codex-interactive"
+	meta := sessionMeta{
+		Session:             session,
+		ProjectRoot:         projectRoot,
+		Agent:               "codex",
+		Mode:                "interactive",
+		ObjectiveID:         "obj-99",
+		ObjectiveAcceptance: "ship",
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("save meta: %v", err)
+	}
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	sentText := ""
+	tmuxSendTextFn = func(session, text string, enter bool) error {
+		sentText = text
+		return nil
+	}
+	appendSessionEventFn = func(projectRoot, session string, event sessionEvent) error { return nil }
+
+	_, stderr := captureOutput(t, func() {
+		code := cmdSessionSend([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--text", "Continue",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if strings.Contains(sentText, "\nContinue") {
+		t.Fatalf("expected codex interactive send prefix to stay single-line, got %q", sentText)
+	}
+	if !strings.Contains(sentText, "Objective reminder: id=obj-99 | acceptance=ship | Continue") {
+		t.Fatalf("expected single-line objective prefix join, got %q", sentText)
+	}
+}
+
 func TestCmdSessionHandoffRejectsSchemaV1WhenLaneRequiresV2(t *testing.T) {
 	projectRoot := t.TempDir()
 	session := "lisa-handoff-contract-v2"
