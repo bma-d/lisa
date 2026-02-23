@@ -167,6 +167,9 @@ Block until success/terminal condition per flags.
 | `--until-state` | `""` | Stop when session reaches a target state |
 | `--until-jsonpath` | `""` | Stop when status JSON path is truthy or matches (`$.path=value`) |
 | `--expect` | `any` | `any`, `terminal`, `marker` (`marker` requires `--until-marker`) |
+| `--timeout-seconds` | `0` | Optional hard timeout; converted to bounded poll window |
+| `--event-budget` | `0` | Handoff stream budget hint (requires `--emit-handoff`) |
+| `--webhook` | `""` | POST poll/final monitor payloads to webhook endpoint |
 | `--json-min` | false | Minimal JSON output (`session`,`finalState`,`exitReason`,`polls`,`nextOffset?`) |
 | `--stream-json` | false | Emit line-delimited JSON poll events before final payload |
 | `--emit-handoff` | false | Emit compact handoff packets per poll (`--stream-json` required) |
@@ -216,6 +219,7 @@ Capture transcript (default for Claude) or raw pane output.
 | `--summary` | false | Return bounded summary instead of full capture |
 | `--summary-style` | `terse` | Summary style: `terse`, `ops`, `debug` (requires `--summary` when non-default) |
 | `--token-budget` | `320` | Summary token budget |
+| `--semantic-delta` | false | Emit semantic line-level deltas (JSON only) |
 | `--keep-noise` | false | Keep Codex/MCP startup noise |
 | `--strip-noise` | n/a | Compatibility alias for default filtering |
 | `--project-root` | cwd | Project directory |
@@ -319,7 +323,7 @@ Route shape note:
 
 Shared tmux safety guard.
 
-Flags: `--shared-tmux` (required), `--enforce`, `--advice-only`, `--command`, `--project-root`, `--json`.
+Flags: `--shared-tmux` (required), `--enforce`, `--advice-only`, `--machine-policy`, `--command`, `--project-root`, `--json`.
 
 JSON: `{"sharedTmux","enforce","adviceOnly","defaultSessionCount","defaultSessions","commandRisk","safe","warnings","remediation?","riskReasons?"}`.
 
@@ -398,11 +402,11 @@ Tree semantics:
 | `session checkpoint` | `save|resume`, `--session`, `--file`, `--strategy`, `--token-budget`, `--json` | Save/resume orchestration state bundles |
 | `session dedupe` | `--task-hash`, `--session`, `--release`, `--project-root`, `--json` | Claim/release task ownership across agents |
 | `session next` | `--session`, `--budget`, `--project-root`, `--json` | Recommend deterministic next executable command |
-| `session aggregate` | `--sessions`, `--strategy`, `--events`, `--lines`, `--token-budget`, `--json` | Build multi-session consolidated context pack |
-| `session prompt-lint` | `--prompt`, `--markers`, `--budget`, `--nested-policy`, `--json` | Score prompt risks (budget, markers, nested bypass) |
-| `session diff-pack` | `--session`, `--cursor-file`, `--redact`, `--token-budget`, `--json` | Incremental context-pack diff for low-noise loops |
+| `session aggregate` | `--sessions`, `--strategy`, `--events`, `--lines`, `--token-budget`, `--dedupe`, `--json`, `--json-min` | Build multi-session consolidated context pack |
+| `session prompt-lint` | `--agent`, `--mode`, `--nested-policy`, `--nesting-intent`, `--prompt`, `--model`, `--project-root`, `--markers`, `--budget`, `--strict`, `--json` | Score prompt risks (budget, markers, nested bypass) |
+| `session diff-pack` | `--session`, `--project-root`, `--strategy`, `--events`, `--lines`, `--token-budget`, `--cursor-file`, `--redact`, `--json`, `--json-min` | Incremental context-pack diff for low-noise loops |
 | `session anomaly` | `--session`, `--events`, `--project-root`, `--json` | Severity-ranked anomaly findings from event tails |
-| `session budget-enforce` | `--from`, `--max-tokens`, `--max-seconds`, `--max-steps`, `--json` | Hard budget policy gate over observed metrics |
+| `session budget-enforce` | `--from`, `--max-tokens`, `--max-seconds`, `--max-steps`, `--tokens`, `--seconds`, `--steps`, `--json` | Hard budget policy gate over observed metrics |
 | `session replay` | `--from-checkpoint`, `--project-root`, `--json` | Deterministic replay command sequence from checkpoint |
 
 Output shape notes:

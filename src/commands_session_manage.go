@@ -357,7 +357,7 @@ func cmdSessionListWatch(args []string, watchInterval, watchCycles int) int {
 	}
 	watchArgs := make([]string, 0, len(args)+4)
 	haveDelta := false
-	haveJSON := false
+	haveJSONMin := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
@@ -370,15 +370,15 @@ func cmdSessionListWatch(args []string, watchInterval, watchCycles int) int {
 		if arg == "--delta-json" {
 			haveDelta = true
 		}
-		if arg == "--json" || arg == "--json-min" {
-			haveJSON = true
+		if arg == "--json-min" {
+			haveJSONMin = true
 		}
 		watchArgs = append(watchArgs, arg)
 	}
 	if !haveDelta {
 		watchArgs = append(watchArgs, "--delta-json")
 	}
-	if !haveJSON {
+	if !haveJSONMin {
 		watchArgs = append(watchArgs, "--json-min")
 	}
 

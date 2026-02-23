@@ -683,7 +683,7 @@ func helpSessionList() {
 	fmt.Fprintln(os.Stderr, "  --delta-json          Emit added/removed/changed since cursor snapshot")
 	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Cursor snapshot file for --delta-json")
 	fmt.Fprintln(os.Stderr, "  --watch-json          Emit polling delta-json stream events")
-	fmt.Fprintln(os.Stderr, "  --watch-interval N    Seconds between watch polls (default: 5)")
+	fmt.Fprintln(os.Stderr, "  --watch-interval N    Seconds between watch polls (default: 2)")
 	fmt.Fprintln(os.Stderr, "  --watch-cycles N      Max watch cycles before exit (0=infinite)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
