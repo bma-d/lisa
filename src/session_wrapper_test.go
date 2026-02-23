@@ -1099,7 +1099,18 @@ func TestWrapSessionCommandTrapEmitsDoneOnInterrupt(t *testing.T) {
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("failed to interrupt process: %v", err)
 	}
-	waitErr := cmd.Wait()
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+	var waitErr error
+	select {
+	case waitErr = <-waitCh:
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		_ = <-waitCh
+		t.Fatalf("timed out waiting for wrapped command to exit after interrupt; output=%q", outBuf.String())
+	}
 	if waitErr == nil {
 		t.Fatalf("expected interrupt to produce non-zero exit")
 	}

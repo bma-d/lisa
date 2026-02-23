@@ -23,6 +23,14 @@ Axiom: minimum context, deterministic command contracts.
 8. In shared tmux environments, run `session guard --shared-tmux --json` before cleanup/kill-all actions.
 9. `session guard --shared-tmux` returning `safe:false` is expected risk signaling (often exit `1`); switch to `--project-only` flows.
 
+## LLM Fast Loop
+
+1. Contract gate first: `./lisa session preflight --project-root "$ROOT" --json`.
+2. Prompt gate before spawn: `./lisa session spawn --agent codex --mode exec --project-root "$ROOT" --prompt "$P" --dry-run --detect-nested --json`.
+3. For multi-step plans, derive deterministic steps via `./lisa session route --goal analysis --project-root "$ROOT" --emit-runbook --json`.
+4. Use compact polling defaults in loops: `session monitor --json-min --stream-json --emit-handoff`.
+5. Prefer resume-safe cursors in loops: `session capture --cursor-file`, `session handoff --cursor-file`, `session packet --cursor-file`.
+
 ## Crucial Commands
 
 ```bash
@@ -103,6 +111,8 @@ Exit/contract quick-map:
 - `session list --json-min --with-next-action` returns `items[]` detail rows plus `sessions[]` names.
 - `session detect-nested --why` can return `why.spans: []` on non-trigger prompts.
 - `autopilot` propagates failing step exit (`monitor` often `2` for timeout/terminal mismatch)
+- `monitor --webhook` returns exit `1` (`errorCode:"webhook_emit_failed"`) if payload delivery fails.
+- `session guard --machine-policy strict` can return exit `1` (`errorCode:"shared_tmux_risk_detected"`) without `--enforce`.
 
 ## Router (JIT)
 

@@ -20,6 +20,7 @@ Validated: 2026-02-23
 - `session monitor` final payload includes `nextOffset` when capture is available.
 - `session monitor --stream-json --emit-handoff` emits `type=handoff` packets per poll.
 - `session monitor --handoff-cursor-file <PATH>` emits incremental handoff deltas and persists `nextDeltaOffset`.
+- `session monitor --webhook <URL>` fails hard on delivery failure (`errorCode:"webhook_emit_failed"`, exit `1`).
 - `session handoff --json-min` and `session context-pack --json-min` provide compact transfer payloads for multi-agent loops.
 - `session handoff --delta-from <N>` returns incremental `recent` events + `nextDeltaOffset`.
 - `session handoff --cursor-file /tmp/handoff.cursor` persists/reuses `nextDeltaOffset` across loops.
@@ -48,9 +49,12 @@ Validated: 2026-02-23
 - `session list --cursor-file <PATH>` without `--delta-json` is a usage error (`cursor_file_requires_delta_json`, exit `1`).
 - `session tree --cursor-file <PATH>` without `--delta-json` is a usage error (`cursor_file_requires_delta_json`, exit `1`).
 - `session list --delta-json --cursor-file <PATH>` returns added/removed/changed session deltas with persisted cursor snapshots.
+- `session tree --delta --json` includes `delta:true` plus `deltaResult` summary fields.
 - `session guard --shared-tmux --enforce --command ...` returns `errorCode:"shared_tmux_guard_enforced"` on medium/high risk.
 - `session guard --shared-tmux --advice-only --command ...` preserves diagnostics while always exiting `0`.
+- `session guard --machine-policy strict` can hard-fail (`errorCode:"shared_tmux_risk_detected"`) without `--enforce`.
 - `session smoke --chaos delay|drop-marker|fail-child|mixed --json` emits deterministic chaos metadata/results.
+- `session smoke --chaos-report` is boolean-only (passing a value is a flag parse error).
 - `session autopilot --json` emits step-by-step orchestration payload with per-step exit statuses.
 - `session autopilot --resume-from <PATH|->` resumes from first failed step (`resumedFrom`,`resumeStep`); `-` reads JSON from stdin.
 - `session preflight --fast --json` runs reduced high-risk contract checks (`contract_count` lower than full mode).
@@ -64,6 +68,9 @@ Validated: 2026-02-23
 - Nested wording detection is case-insensitive (`./LISA` matches `./lisa` hint).
 - `Use lisa inside of lisa inside as well.` returns `nestedDetection.reason:"no_nested_hint"` (does not trigger bypass).
 - `session smoke --levels 1..4 --json` passed in this repository with marker assertions.
+- `session capture --semantic-delta` emits `semanticDelta`, `semanticDeltaCount`, and `semanticLines[]`.
+- `session budget-enforce --from` resolves missing observed metrics to zero values.
+- `skills doctor --contract-check` can exit `1` for install drift even when contract checks are all `ok:true`.
 
 ## Fast Confidence Loop
 
