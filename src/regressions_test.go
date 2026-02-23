@@ -659,6 +659,248 @@ func TestDetectAgentProcessMatchesWrappedPrimaryBinary(t *testing.T) {
 	}
 }
 
+func TestDetectAgentProcessMatchesNestedWrapperChain(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 51, PPID: 1, CPU: 0.3, Command: `timeout 30 env LISA_TASK=1 bash -lc "codex exec task"`},
+			{PID: 52, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 51 {
+		t.Fatalf("expected nested wrapper chain to resolve codex pid=51, got %d", pid)
+	}
+}
+
+func TestDetectAgentProcessMatchesQuotedShellPayload(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 53, PPID: 1, CPU: 0.3, Command: `bash -lc "codex exec task"`},
+			{PID: 54, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 53 {
+		t.Fatalf("expected quoted shell payload to resolve codex pid=53, got %d", pid)
+	}
+}
+
+func TestDetectAgentProcessMatchesQuotedSingleTokenShellPayload(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 153, PPID: 1, CPU: 0.3, Command: `bash -lc "codex"`},
+			{PID: 154, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 153 {
+		t.Fatalf("expected quoted single-token shell payload to resolve codex pid=153, got %d", pid)
+	}
+}
+
+func TestDetectAgentProcessMatchesShellPayloadWithAndAnd(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 155, PPID: 1, CPU: 0.3, Command: `bash -lc "cd /tmp && codex"`},
+			{PID: 156, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 155 {
+		t.Fatalf("expected shell payload with && to resolve codex pid=155, got %d", pid)
+	}
+}
+
+func TestDetectAgentProcessDoesNotTreatQuotedShellTextAsAgent(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 55, PPID: 1, CPU: 0.3, Command: `bash -lc "echo codex"`},
+			{PID: 56, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 0 {
+		t.Fatalf("expected shell payload text match to be ignored, got pid=%d", pid)
+	}
+}
+
+func TestDetectAgentProcessMatchesTimeoutWrapperWithKillAfterOption(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 57, PPID: 1, CPU: 0.3, Command: "timeout --kill-after 5s 30s codex exec task"},
+			{PID: 58, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 57 {
+		t.Fatalf("expected timeout --kill-after wrapper to resolve codex pid=57, got %d", pid)
+	}
+}
+
+func TestDetectAgentProcessMatchesNiceWrapperWithNOption(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 59, PPID: 1, CPU: 0.3, Command: "nice -n 10 codex exec task"},
+			{PID: 60, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 59 {
+		t.Fatalf("expected nice -n wrapper to resolve codex pid=59, got %d", pid)
+	}
+}
+
+func TestDetectAgentProcessMatchesEnvWrappedPrimary(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 61, PPID: 1, CPU: 0.3, Command: "env CLAUDE_CODE_OAUTH_TOKEN=token claude --print --output-format text"},
+			{PID: 62, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "claude")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 61 {
+		t.Fatalf("expected env-wrapped claude command to match pid=61, got %d", pid)
+	}
+}
+
+func TestDetectAgentProcessMatchesEnvWrappedPrimaryWithFlags(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 66, PPID: 1, CPU: 0.3, Command: "env -i LISA_TASK=1 codex exec task"},
+			{PID: 67, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 66 {
+		t.Fatalf("expected env-flag wrapped codex command to match pid=66, got %d", pid)
+	}
+}
+
+func TestDetectAgentProcessMatchesClaudeAliasExecutable(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 71, PPID: 1, CPU: 0.3, Command: "claude-code --print --output-format text"},
+			{PID: 72, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "claude")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 71 {
+		t.Fatalf("expected claude alias executable to match pid=71, got %d", pid)
+	}
+}
+
+func TestDetectAgentProcessMatchesCodexAliasExecutable(t *testing.T) {
+	origList := listProcessesFn
+	t.Cleanup(func() {
+		listProcessesFn = origList
+	})
+
+	listProcessesFn = func() ([]processInfo, error) {
+		return []processInfo{
+			{PID: 73, PPID: 1, CPU: 0.3, Command: "codex-cli exec task"},
+			{PID: 74, PPID: 1, CPU: 0.4, Command: "bash"},
+		}, nil
+	}
+
+	pid, _, err := detectAgentProcess(1, "codex")
+	if err != nil {
+		t.Fatalf("unexpected detectAgentProcess error: %v", err)
+	}
+	if pid != 73 {
+		t.Fatalf("expected codex alias executable to match pid=73, got %d", pid)
+	}
+}
+
 func TestDetectAgentProcessDoesNotTreatArgumentTokenAsAgent(t *testing.T) {
 	origList := listProcessesFn
 	t.Cleanup(func() {

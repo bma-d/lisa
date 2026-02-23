@@ -1,6 +1,6 @@
 # Tmux Interaction Layer
 
-Last Updated: 2026-02-22
+Last Updated: 2026-02-23
 Related Files: `src/tmux.go`
 
 ## Overview
@@ -39,12 +39,12 @@ Spawn path now hard-fails before session creation if heartbeat artifact path can
 
 ## Process Detection
 
-`detectAgentProcess()`: given pane PID, evaluates both the pane root process and BFS descendants from the process tree (`ps -axo pid=,ppid=,%cpu=,command=`), prefers strict executable-name matches (`claude`/`codex`), supports common wrapper runners (`python`, `node`, `bash`, etc.) when they invoke the agent binary directly, and only uses env-configured custom token matchers as fallback. Returns best match by score+CPU; no-match returns `(0, 0)` and `ps` failures return an error surfaced via `signals.agentScanError`.
+`detectAgentProcess()`: given pane PID, evaluates both the pane root process and BFS descendants from the process tree (`ps -axo pid=,ppid=,%cpu=,command=`), prefers strict executable-name matches (`claude`/`codex` + aliases like `claude-code`/`codex-cli`), supports nested wrapper runners (`timeout`/`env`/shell `-c` chains, plus `python`, `node`, `bash`, etc.), and only uses env-configured custom token matchers as fallback. Returns best match by score+CPU; no-match returns `(0, 0)` and `ps` failures return an error surfaced via `signals.agentScanError`.
 
 Process-table reads are shared through a short-lived cache (`LISA_PROCESS_LIST_CACHE_MS`, default 500ms) to reduce repeated full `ps` scans across concurrent status polls.
 Cache stores successful scans only; failed scans are not cached so status polling retries `ps` immediately on the next probe.
 
-Process matching supports strict agent executable defaults (`claude` or `codex`) plus optional custom token matchers via:
+Process matching supports strict agent executable defaults + aliases (`claude`, `claude-code`, `claudecode`, `codex`, `codex-cli`) plus optional custom token matchers via:
 - `LISA_AGENT_PROCESS_MATCH` (applies to both agents)
 - `LISA_AGENT_PROCESS_MATCH_CLAUDE`
 - `LISA_AGENT_PROCESS_MATCH_CODEX`

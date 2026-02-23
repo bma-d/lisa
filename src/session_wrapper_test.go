@@ -217,6 +217,68 @@ func TestComputeSessionStatusHeartbeatStaleFallsBackToStuck(t *testing.T) {
 	}
 }
 
+func TestComputeSessionStatusHeartbeatFreshWithoutAgentPIDStaysInProgress(t *testing.T) {
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	origPaneStatus := tmuxPaneStatusFn
+	origDisplay := tmuxDisplayFn
+	origShowEnv := tmuxShowEnvironmentFn
+	origDetect := detectAgentProcessFn
+	t.Cleanup(func() {
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+		tmuxPaneStatusFn = origPaneStatus
+		tmuxDisplayFn = origDisplay
+		tmuxShowEnvironmentFn = origShowEnv
+		detectAgentProcessFn = origDetect
+	})
+
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "quiet command", nil
+	}
+	tmuxPaneStatusFn = func(session string) (string, error) {
+		return "alive", nil
+	}
+	tmuxDisplayFn = func(session, format string) (string, error) {
+		switch format {
+		case "#{pane_current_command}":
+			return "zsh", nil
+		case "#{pane_pid}":
+			return "123", nil
+		default:
+			return "", nil
+		}
+	}
+	tmuxShowEnvironmentFn = func(session, key string) (string, error) {
+		return "", errors.New("missing")
+	}
+	detectAgentProcessFn = func(panePID int, agent string) (int, float64, error) {
+		return 0, 0, nil
+	}
+
+	projectRoot := t.TempDir()
+	session := "lisa-heartbeat-fresh-no-pid"
+	hbPath := sessionHeartbeatFile(projectRoot, session)
+	if err := os.WriteFile(hbPath, []byte(""), 0o600); err != nil {
+		t.Fatalf("failed to seed heartbeat file: %v", err)
+	}
+
+	status, err := computeSessionStatus(session, projectRoot, "codex", "exec", false, 4)
+	if err != nil {
+		t.Fatalf("expected status computation to succeed, got %v", err)
+	}
+	if status.SessionState != "in_progress" || status.Status != "active" {
+		t.Fatalf("expected fresh heartbeat session to stay in_progress, got state=%s status=%s", status.SessionState, status.Status)
+	}
+	if status.ClassificationReason != "heartbeat_fresh_agent_pid_unresolved" {
+		t.Fatalf("expected explicit heartbeat fallback reason, got %s", status.ClassificationReason)
+	}
+	if !status.Signals.HeartbeatFresh || status.Signals.AgentProcessDetected {
+		t.Fatalf("unexpected heartbeat/agent signals: heartbeatFresh=%v agentDetected=%v", status.Signals.HeartbeatFresh, status.Signals.AgentProcessDetected)
+	}
+}
+
 func TestComputeSessionStatusUsesDoneFileWhenCaptureHasNoMarker(t *testing.T) {
 	origHas := tmuxHasSessionFn
 	origCapture := tmuxCapturePaneFn

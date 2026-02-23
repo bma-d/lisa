@@ -383,7 +383,7 @@ func computeSessionStatus(session, projectRoot, agentHint, modeHint string, full
 			case heartbeatFresh:
 				status.Status = "active"
 				status.SessionState = "in_progress"
-				status.ClassificationReason = "heartbeat_fresh"
+				status.ClassificationReason = "heartbeat_fresh_agent_pid_unresolved"
 			case !paneIsShell:
 				status.Status = "active"
 				status.SessionState = "in_progress"

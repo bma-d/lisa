@@ -389,7 +389,7 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 
 	queue := []int{panePID}
 	seen := map[int]bool{}
-	primaryExec := agentPrimaryExecutable(agent)
+	primaryExecs := agentPrimaryExecutables(agent)
 	customNeedles := agentProcessNeedles(agent)
 	processByPID := make(map[int]processInfo, len(procs))
 	for _, p := range procs {
@@ -402,8 +402,8 @@ func detectAgentProcess(panePID int, agent string) (int, float64, error) {
 	considerProcess := func(p processInfo) {
 		cmdLower := strings.ToLower(p.Command)
 		execName := commandExecutableName(cmdLower)
-		strictMatch := executableMatchesAgent(execName, primaryExec)
-		wrapperMatch := commandReferencesPrimaryBinary(cmdLower, primaryExec)
+		strictMatch := executableMatchesAnyAgent(execName, primaryExecs)
+		wrapperMatch := commandReferencesPrimaryBinary(cmdLower, primaryExecs)
 		customMatch := matchesAnyNeedleWord(cmdLower, customNeedles)
 		if !strictMatch && !wrapperMatch && !customMatch {
 			return
@@ -596,12 +596,27 @@ func agentProcessNeedles(agent string) []string {
 	return out
 }
 
-func agentPrimaryExecutable(agent string) string {
+func agentPrimaryExecutables(agent string) []string {
 	agent = strings.ToLower(strings.TrimSpace(agent))
-	if agent == "codex" {
-		return "codex"
+	out := []string{}
+	seen := map[string]bool{}
+	add := func(name string) {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
 	}
-	return "claude"
+	if agent == "codex" {
+		add("codex")
+		add("codex-cli")
+		return out
+	}
+	add("claude")
+	add("claude-code")
+	add("claudecode")
+	return out
 }
 
 func commandExecutableName(command string) string {
@@ -621,48 +636,349 @@ func executableMatchesAgent(executable, primary string) bool {
 		strings.HasSuffix(executable, "-"+primary)
 }
 
-func commandReferencesPrimaryBinary(command, primary string) bool {
-	if primary == "" {
-		return false
-	}
-	fields := strings.Fields(strings.TrimSpace(command))
-	if len(fields) < 2 {
-		return false
-	}
-
-	runner := strings.ToLower(strings.TrimSpace(filepath.Base(fields[0])))
-	idx := 1
-	if runner == "env" {
-		for idx < len(fields) && strings.Contains(fields[idx], "=") {
-			idx++
+func executableMatchesAnyAgent(executable string, primaries []string) bool {
+	for _, primary := range primaries {
+		if executableMatchesAgent(executable, primary) {
+			return true
 		}
-		if idx >= len(fields) {
-			return false
-		}
-		runner = strings.ToLower(strings.TrimSpace(filepath.Base(fields[idx])))
-		idx++
-	}
-	if !isWrapperRunner(runner) {
-		return false
-	}
-	for ; idx < len(fields); idx++ {
-		token := strings.TrimSpace(fields[idx])
-		if token == "" || strings.HasPrefix(token, "-") {
-			continue
-		}
-		target := strings.ToLower(strings.TrimSpace(filepath.Base(token)))
-		return executableMatchesAgent(target, primary)
 	}
 	return false
 }
 
-func isWrapperRunner(executable string) bool {
-	switch executable {
-	case "bash", "sh", "zsh", "dash", "fish", "python", "python3", "node", "ruby", "perl":
+func commandReferencesPrimaryBinary(command string, primaries []string) bool {
+	if len(primaries) == 0 {
+		return false
+	}
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return false
+	}
+
+	runner := strings.ToLower(strings.TrimSpace(filepath.Base(normalizeCommandToken(fields[0]))))
+	idx := 1
+	if runner == "env" {
+		for idx < len(fields) {
+			token := normalizeCommandToken(fields[idx])
+			if token == "" {
+				idx++
+				continue
+			}
+			if token == "--" {
+				idx++
+				break
+			}
+			if strings.Contains(token, "=") {
+				idx++
+				continue
+			}
+			if strings.HasPrefix(token, "-") {
+				if envOptionConsumesValue(token) && idx+1 < len(fields) {
+					idx += 2
+					continue
+				}
+				idx++
+				continue
+			}
+			break
+		}
+		if idx >= len(fields) {
+			return false
+		}
+		runner = strings.ToLower(strings.TrimSpace(filepath.Base(normalizeCommandToken(fields[idx]))))
+		idx++
+	}
+	if executableMatchesAnyAgent(runner, primaries) {
+		return true
+	}
+	if len(fields) == 1 {
+		return false
+	}
+	if !isWrapperRunner(runner) {
+		return false
+	}
+
+	if isShellRunner(runner) {
+		return shellWrapperReferencesPrimary(fields, idx, primaries)
+	}
+	if isPassThroughWrapperRunner(runner) {
+		return passThroughWrapperReferencesPrimary(fields, idx, runner, primaries)
+	}
+
+	for ; idx < len(fields); idx++ {
+		token := normalizeCommandToken(fields[idx])
+		if token == "" || token == "--" {
+			continue
+		}
+		if strings.HasPrefix(token, "-") {
+			if wrapperOptionConsumesValue(runner, token) && idx+1 < len(fields) {
+				idx++
+			}
+			continue
+		}
+		target := strings.ToLower(strings.TrimSpace(filepath.Base(token)))
+		return executableMatchesAnyAgent(target, primaries)
+	}
+	return false
+}
+
+func envOptionConsumesValue(token string) bool {
+	switch token {
+	case "-u", "--unset", "-C", "--chdir", "-S", "--split-string":
 		return true
 	default:
 		return false
 	}
+}
+
+func isWrapperRunner(executable string) bool {
+	switch executable {
+	case "bash", "sh", "zsh", "dash", "fish",
+		"python", "python3", "node", "ruby", "perl",
+		"uv", "uvx", "npx", "npm", "pnpm", "yarn", "bun",
+		"env", "timeout", "gtimeout", "stdbuf", "nohup", "setsid", "nice", "ionice", "chrt", "command":
+		return true
+	default:
+		return false
+	}
+}
+
+func isShellRunner(executable string) bool {
+	switch executable {
+	case "bash", "sh", "zsh", "dash", "fish":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPassThroughWrapperRunner(executable string) bool {
+	switch executable {
+	case "env", "timeout", "gtimeout", "stdbuf", "nohup", "setsid", "nice", "ionice", "chrt", "command":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeCommandToken(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	return strings.Trim(token, "\"'`")
+}
+
+func shellWrapperReferencesPrimary(fields []string, idx int, primaries []string) bool {
+	for ; idx < len(fields); idx++ {
+		token := normalizeCommandToken(fields[idx])
+		if token == "" || token == "--" {
+			continue
+		}
+		if isShellCommandFlag(token) {
+			if idx+1 >= len(fields) {
+				return false
+			}
+			nested := strings.TrimSpace(strings.Join(fields[idx+1:], " "))
+			nested = strings.TrimSpace(strings.Trim(nested, "\"'`"))
+			if nested == "" {
+				return false
+			}
+			return shellPayloadReferencesPrimary(nested, primaries)
+		}
+		if strings.HasPrefix(token, "-") {
+			continue
+		}
+		target := strings.ToLower(strings.TrimSpace(filepath.Base(token)))
+		return executableMatchesAnyAgent(target, primaries)
+	}
+	return false
+}
+
+func shellPayloadReferencesPrimary(payload string, primaries []string) bool {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return false
+	}
+	if commandReferencesPrimaryBinary(payload, primaries) {
+		return true
+	}
+	for _, segment := range splitShellCommandPayload(payload) {
+		if segment == "" {
+			continue
+		}
+		if commandReferencesPrimaryBinary(segment, primaries) {
+			return true
+		}
+	}
+	return false
+}
+
+func splitShellCommandPayload(payload string) []string {
+	segments := []string{}
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	inBacktick := false
+	escaped := false
+	flush := func() {
+		segment := strings.TrimSpace(current.String())
+		if segment != "" {
+			segments = append(segments, segment)
+		}
+		current.Reset()
+	}
+
+	for i := 0; i < len(payload); i++ {
+		ch := payload[i]
+		if escaped {
+			current.WriteByte(ch)
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			current.WriteByte(ch)
+			escaped = true
+			continue
+		}
+		if !inDouble && !inBacktick && ch == '\'' {
+			inSingle = !inSingle
+			current.WriteByte(ch)
+			continue
+		}
+		if !inSingle && !inBacktick && ch == '"' {
+			inDouble = !inDouble
+			current.WriteByte(ch)
+			continue
+		}
+		if !inSingle && !inDouble && ch == '`' {
+			inBacktick = !inBacktick
+			current.WriteByte(ch)
+			continue
+		}
+		if inSingle || inDouble || inBacktick {
+			current.WriteByte(ch)
+			continue
+		}
+		if ch == '\n' || ch == ';' {
+			flush()
+			continue
+		}
+		if ch == '&' || ch == '|' {
+			flush()
+			if i+1 < len(payload) && payload[i+1] == ch {
+				i++
+			}
+			continue
+		}
+		current.WriteByte(ch)
+	}
+	flush()
+	return segments
+}
+
+func passThroughWrapperReferencesPrimary(fields []string, idx int, runner string, primaries []string) bool {
+	positionalSkips := 0
+	for ; idx < len(fields); idx++ {
+		token := normalizeCommandToken(fields[idx])
+		if token == "" || token == "--" {
+			continue
+		}
+		if strings.HasPrefix(token, "-") {
+			if wrapperOptionConsumesValue(runner, token) && idx+1 < len(fields) {
+				idx++
+			}
+			continue
+		}
+		if passThroughWrapperSkipsPositionalToken(runner, token, positionalSkips) {
+			positionalSkips++
+			continue
+		}
+		target := strings.ToLower(strings.TrimSpace(filepath.Base(token)))
+		if executableMatchesAnyAgent(target, primaries) {
+			return true
+		}
+		if isWrapperRunner(target) {
+			nested := strings.TrimSpace(strings.Join(fields[idx:], " "))
+			return commandReferencesPrimaryBinary(nested, primaries)
+		}
+		return false
+	}
+	return false
+}
+
+func isShellCommandFlag(token string) bool {
+	switch token {
+	case "-c", "-lc", "-cl", "-ic", "-xc", "-xec", "-lxc", "--command":
+		return true
+	default:
+		return false
+	}
+}
+
+func wrapperOptionConsumesValue(runner, token string) bool {
+	switch runner {
+	case "timeout", "gtimeout":
+		return token == "-k" || token == "--kill-after" || token == "-s" || token == "--signal"
+	case "nice":
+		return token == "-n" || token == "--adjustment"
+	case "ionice":
+		return token == "-c" || token == "--class" || token == "-n" || token == "--classdata"
+	default:
+		return false
+	}
+}
+
+func passThroughWrapperSkipsPositionalToken(runner, token string, skipped int) bool {
+	switch runner {
+	case "timeout", "gtimeout":
+		return skipped == 0 && isTimeoutDurationToken(token)
+	case "nice":
+		return skipped == 0 && isSignedIntegerToken(token)
+	default:
+		return false
+	}
+}
+
+func isTimeoutDurationToken(token string) bool {
+	token = strings.ToLower(strings.TrimSpace(token))
+	if token == "" {
+		return false
+	}
+	for _, suffix := range []string{"ms", "s", "m", "h", "d"} {
+		if strings.HasSuffix(token, suffix) {
+			token = strings.TrimSuffix(token, suffix)
+			break
+		}
+	}
+	if token == "" {
+		return false
+	}
+	if strings.HasPrefix(token, "+") {
+		token = strings.TrimPrefix(token, "+")
+	}
+	if token == "" {
+		return false
+	}
+	_, err := strconv.ParseFloat(token, 64)
+	return err == nil
+}
+
+func isSignedIntegerToken(token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	_, err := strconv.Atoi(token)
+	return err == nil
+}
+
+func matchesAnyPrimaryWord(command string, primaries []string) bool {
+	for _, primary := range primaries {
+		if containsWordToken(command, primary) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseNeedleEnv(key string) []string {
