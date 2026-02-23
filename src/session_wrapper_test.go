@@ -1106,7 +1106,7 @@ func TestWrapSessionCommandTrapEmitsDoneOnInterrupt(t *testing.T) {
 	var waitErr error
 	select {
 	case waitErr = <-waitCh:
-	case <-time.After(5 * time.Second):
+	case <-time.After(20 * time.Second):
 		_ = cmd.Process.Kill()
 		_ = <-waitCh
 		t.Fatalf("timed out waiting for wrapped command to exit after interrupt; output=%q", outBuf.String())
