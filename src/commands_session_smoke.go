@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,6 +30,8 @@ type sessionSmokeSummary struct {
 	Levels          int                `json:"levels"`
 	Model           string             `json:"model,omitempty"`
 	LLMProfile      string             `json:"llmProfile,omitempty"`
+	ContractProfile string             `json:"contractProfile,omitempty"`
+	ContractChecks  []smokeContractRow `json:"contractChecks,omitempty"`
 	PromptStyle     string             `json:"promptStyle,omitempty"`
 	PromptProbe     *smokePromptProbe  `json:"promptProbe,omitempty"`
 	PromptMatrix    []smokeMatrixProbe `json:"promptMatrix,omitempty"`
@@ -60,6 +63,25 @@ type smokeMatrixProbe struct {
 	Command      string               `json:"command,omitempty"`
 }
 
+type smokeContractCase struct {
+	Name              string
+	Args              []string
+	ExpectedExit      int
+	ExpectedErrorCode string
+	RequiredKeys      []string
+}
+
+type smokeContractRow struct {
+	Name              string   `json:"name"`
+	OK                bool     `json:"ok"`
+	ExpectedExit      int      `json:"expectedExit"`
+	ActualExit        int      `json:"actualExit"`
+	ExpectedErrorCode string   `json:"expectedErrorCode,omitempty"`
+	ActualErrorCode   string   `json:"actualErrorCode,omitempty"`
+	MissingKeys       []string `json:"missingKeys,omitempty"`
+	Detail            string   `json:"detail,omitempty"`
+}
+
 func cmdSessionSmoke(args []string) int {
 	projectRoot := getPWD()
 	levels := 3
@@ -72,6 +94,7 @@ func cmdSessionSmoke(args []string) int {
 	keepSessions := false
 	reportMin := false
 	chaosReport := false
+	contractProfile := "none"
 	exportArtifacts := ""
 	llmProfile := ""
 	jsonOut := hasJSONFlag(args)
@@ -146,6 +169,12 @@ func cmdSessionSmoke(args []string) int {
 			reportMin = true
 		case "--chaos-report":
 			chaosReport = true
+		case "--contract-profile":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --contract-profile")
+			}
+			contractProfile = strings.ToLower(strings.TrimSpace(args[i+1]))
+			i++
 		case "--export-artifacts":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --export-artifacts")
@@ -180,6 +209,10 @@ func cmdSessionSmoke(args []string) int {
 	llmProfile, err = parseSmokeLLMProfile(llmProfile)
 	if err != nil {
 		return commandError(jsonOut, "invalid_llm_profile", err.Error())
+	}
+	contractProfile, err = parseSmokeContractProfile(contractProfile)
+	if err != nil {
+		return commandError(jsonOut, "invalid_contract_profile", err.Error())
 	}
 	if llmProfile != "none" {
 		preset := smokeProfilePreset(llmProfile)
@@ -244,6 +277,7 @@ func cmdSessionSmoke(args []string) int {
 		Levels:          levels,
 		Model:           model,
 		LLMProfile:      llmProfile,
+		ContractProfile: contractProfile,
 		PromptStyle:     promptStyle,
 		Chaos:           chaos,
 		WorkDir:         workDir,
@@ -420,6 +454,13 @@ func cmdSessionSmoke(args []string) int {
 			summary.Tree = &tree
 		}
 	}
+	if contractProfile == "full" {
+		contractRows, contractErr := runSmokeContractProfileFull(binPath, projectRoot, rootSession)
+		summary.ContractChecks = contractRows
+		if contractErr != nil {
+			return emitSmokeFailure(jsonOut, reportMin, &summary, "smoke_contract_profile_failed", contractErr.Error())
+		}
+	}
 
 	summary.OK = true
 	if summary.ChaosReport {
@@ -513,14 +554,15 @@ func writeSmokeSummaryJSON(summary sessionSmokeSummary, reportMin bool) {
 		return
 	}
 	payload := map[string]any{
-		"ok":          summary.OK,
-		"errorCode":   summary.ErrorCode,
-		"error":       summary.Error,
-		"levels":      summary.Levels,
-		"model":       summary.Model,
-		"llmProfile":  summary.LLMProfile,
-		"chaos":       summary.Chaos,
-		"projectRoot": summary.ProjectRoot,
+		"ok":              summary.OK,
+		"errorCode":       summary.ErrorCode,
+		"error":           summary.Error,
+		"levels":          summary.Levels,
+		"model":           summary.Model,
+		"llmProfile":      summary.LLMProfile,
+		"contractProfile": summary.ContractProfile,
+		"chaos":           summary.Chaos,
+		"projectRoot":     summary.ProjectRoot,
 	}
 	if summary.ChaosReport {
 		payload["chaosReport"] = true
@@ -558,6 +600,20 @@ func writeSmokeSummaryJSON(summary sessionSmokeSummary, reportMin bool) {
 		}
 		if len(failed) > 0 {
 			payload["failedMatrix"] = failed
+		}
+	}
+	if len(summary.ContractChecks) > 0 {
+		failed := make([]string, 0)
+		for _, row := range summary.ContractChecks {
+			if row.OK {
+				continue
+			}
+			failed = append(failed, row.Name)
+		}
+		payload["contractChecks"] = len(summary.ContractChecks)
+		payload["contractFailed"] = len(failed)
+		if len(failed) > 0 {
+			payload["failedContractChecks"] = failed
 		}
 	}
 	writeJSON(payload)
@@ -671,6 +727,162 @@ func parseSmokeLLMProfile(raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid --llm-profile: %s (expected none|codex|claude|mixed)", raw)
 	}
+}
+
+func parseSmokeContractProfile(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "none":
+		return "none", nil
+	case "full":
+		return "full", nil
+	default:
+		return "", fmt.Errorf("invalid --contract-profile: %s (expected none|full)", raw)
+	}
+}
+
+func runSmokeContractProfileFull(binPath, projectRoot, rootSession string) ([]smokeContractRow, error) {
+	cases := []smokeContractCase{
+		{
+			Name:         "status_json_min",
+			Args:         []string{"session", "status", "--session", rootSession, "--project-root", projectRoot, "--json-min"},
+			ExpectedExit: 0,
+			RequiredKeys: []string{"session", "status", "sessionState"},
+		},
+		{
+			Name:         "packet_json_min",
+			Args:         []string{"session", "packet", "--session", rootSession, "--project-root", projectRoot, "--json-min"},
+			ExpectedExit: 0,
+			RequiredKeys: []string{"session", "status", "sessionState", "nextAction"},
+		},
+		{
+			Name:         "schema_packet",
+			Args:         []string{"session", "schema", "--command", "session packet", "--json"},
+			ExpectedExit: 0,
+			RequiredKeys: []string{"command", "schema"},
+		},
+		{
+			Name:              "turn_missing_session",
+			Args:              []string{"session", "turn", "--json"},
+			ExpectedExit:      1,
+			ExpectedErrorCode: "missing_required_flag",
+			RequiredKeys:      []string{"ok", "errorCode", "error"},
+		},
+		{
+			Name:         "state_sandbox_list",
+			Args:         []string{"session", "state-sandbox", "list", "--project-root", projectRoot, "--json-min"},
+			ExpectedExit: 0,
+			RequiredKeys: []string{"action", "objectiveCount", "laneCount"},
+		},
+		{
+			Name:              "state_sandbox_restore_missing_file",
+			Args:              []string{"session", "state-sandbox", "restore", "--project-root", projectRoot, "--json"},
+			ExpectedExit:      1,
+			ExpectedErrorCode: "missing_required_flag",
+			RequiredKeys:      []string{"ok", "errorCode", "error"},
+		},
+	}
+
+	rows := make([]smokeContractRow, 0, len(cases))
+	failures := make([]string, 0)
+	for _, c := range cases {
+		row := smokeContractRow{
+			Name:              c.Name,
+			ExpectedExit:      c.ExpectedExit,
+			ExpectedErrorCode: c.ExpectedErrorCode,
+			OK:                true,
+		}
+		stdout, stderrText, runErr := runLisaSubcommandFn(binPath, c.Args...)
+		row.ActualExit = smokeSubcommandExitCode(runErr)
+		if row.ActualExit != c.ExpectedExit {
+			row.OK = false
+			row.Detail = fmt.Sprintf("exit mismatch: expected=%d actual=%d", c.ExpectedExit, row.ActualExit)
+		}
+
+		payload := map[string]any{}
+		trimmedStdout := strings.TrimSpace(stdout)
+		if trimmedStdout != "" {
+			if err := json.Unmarshal([]byte(trimmedStdout), &payload); err != nil {
+				row.OK = false
+				if row.Detail == "" {
+					row.Detail = fmt.Sprintf("invalid json output: %v", err)
+				} else {
+					row.Detail = row.Detail + "; invalid json output"
+				}
+			}
+		} else {
+			row.OK = false
+			if row.Detail == "" {
+				row.Detail = "missing JSON output"
+			}
+		}
+
+		if c.ExpectedErrorCode != "" {
+			row.ActualErrorCode = payloadString(payload, "errorCode")
+			if row.ActualErrorCode != c.ExpectedErrorCode {
+				row.OK = false
+				if row.Detail == "" {
+					row.Detail = fmt.Sprintf("errorCode mismatch: expected=%s actual=%s", c.ExpectedErrorCode, row.ActualErrorCode)
+				} else {
+					row.Detail = row.Detail + "; errorCode mismatch"
+				}
+			}
+		}
+
+		row.MissingKeys = missingPayloadKeys(payload, c.RequiredKeys)
+		if len(row.MissingKeys) > 0 {
+			row.OK = false
+			if row.Detail == "" {
+				row.Detail = "missing keys: " + strings.Join(row.MissingKeys, ", ")
+			} else {
+				row.Detail = row.Detail + "; missing keys: " + strings.Join(row.MissingKeys, ", ")
+			}
+		}
+		if !row.OK && strings.TrimSpace(stderrText) != "" {
+			row.Detail = strings.TrimSpace(row.Detail + "; stderr: " + stderrText)
+		}
+		rows = append(rows, row)
+		if !row.OK {
+			failures = append(failures, c.Name)
+		}
+	}
+
+	if len(failures) > 0 {
+		return rows, fmt.Errorf("contract assertions failed: %s", strings.Join(failures, ", "))
+	}
+	return rows, nil
+}
+
+func smokeSubcommandExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return 1
+}
+
+func payloadString(payload map[string]any, key string) string {
+	if payload == nil {
+		return ""
+	}
+	value, ok := payload[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprintf("%v", value))
+}
+
+func missingPayloadKeys(payload map[string]any, keys []string) []string {
+	missing := make([]string, 0)
+	for _, key := range keys {
+		value, ok := payload[key]
+		if !ok || value == nil {
+			missing = append(missing, key)
+		}
+	}
+	return missing
 }
 
 func smokeProfilePreset(profile string) smokeLLMProfilePreset {

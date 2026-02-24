@@ -45,6 +45,8 @@ func cmdSession(args []string) int {
 		return cmdSessionCapture(args[1:])
 	case "packet":
 		return cmdSessionPacket(args[1:])
+	case "turn":
+		return cmdSessionTurn(args[1:])
 	case "schema":
 		return cmdSessionSchema(args[1:])
 	case "contract-check":
@@ -93,6 +95,8 @@ func cmdSession(args []string) int {
 		return cmdSessionMemory(args[1:])
 	case "lane":
 		return cmdSessionLane(args[1:])
+	case "state-sandbox":
+		return cmdSessionStateSandbox(args[1:])
 	case "tree":
 		return cmdSessionTree(args[1:])
 	case "smoke":

@@ -1,10 +1,25 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
+
+type sessionPacketDeltaCursor struct {
+	UpdatedAt string         `json:"updatedAt"`
+	Fields    map[string]any `json:"fields"`
+}
+
+type sessionPacketDeltaFieldChange struct {
+	Field  string `json:"field"`
+	Before any    `json:"before,omitempty"`
+	After  any    `json:"after,omitempty"`
+}
 
 func cmdSessionPacket(args []string) int {
 	session := ""
@@ -18,6 +33,7 @@ func cmdSessionPacket(args []string) int {
 	summaryStyle := "ops"
 	cursorFile := ""
 	fieldsRaw := ""
+	deltaJSON := false
 	jsonOut := hasJSONFlag(args)
 	jsonMin := false
 
@@ -92,6 +108,9 @@ func cmdSessionPacket(args []string) int {
 			}
 			cursorFile = strings.TrimSpace(args[i+1])
 			i++
+		case "--delta-json":
+			deltaJSON = true
+			jsonOut = true
 		case "--fields":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --fields")
@@ -111,6 +130,9 @@ func cmdSessionPacket(args []string) int {
 	if session == "" {
 		return commandError(jsonOut, "missing_required_flag", "--session is required")
 	}
+	if deltaJSON && cursorFile == "" {
+		return commandError(jsonOut, "cursor_file_required_for_delta_json", "--delta-json requires --cursor-file")
+	}
 	fields := []string{}
 	if fieldsRaw != "" {
 		var parseErr error
@@ -126,6 +148,12 @@ func cmdSessionPacket(args []string) int {
 	summaryStyle, err = parseCaptureSummaryStyle(summaryStyle)
 	if err != nil {
 		return commandError(jsonOut, "invalid_summary_style", err.Error())
+	}
+	if cursorFile != "" {
+		cursorFile, err = expandAndCleanPath(cursorFile)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", err)
+		}
 	}
 	resolvedRoot, resolveErr := resolveSessionProjectRootChecked(session, projectRoot, projectRootExplicit)
 	if resolveErr != nil {
@@ -165,16 +193,68 @@ func cmdSessionPacket(args []string) int {
 		captureText = "(no live capture)"
 	}
 	summaryText, truncated := summarizeCaptureTextByStyle(session, projectRoot, captureText, tokenBudget, summaryStyle)
+	nextAction := nextActionForState(status.SessionState)
+	nextOffset := computeSessionCaptureNextOffset(session)
+
+	if deltaJSON {
+		current := map[string]any{
+			"session":      session,
+			"status":       status.Status,
+			"sessionState": status.SessionState,
+			"reason":       status.ClassificationReason,
+			"nextAction":   nextAction,
+			"nextOffset":   nextOffset,
+			"summary":      summaryText,
+			"summaryStyle": summaryStyle,
+			"tokenBudget":  tokenBudget,
+			"truncated":    truncated,
+		}
+		if status.SessionState == "not_found" {
+			current["errorCode"] = "session_not_found"
+		}
+		if len(fields) > 0 {
+			current = projectPayloadFields(current, fields)
+		}
+		flat := flattenSessionPacketDeltaFields(current)
+		cursor, loadErr := loadSessionPacketDeltaCursor(cursorFile)
+		if loadErr != nil {
+			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", loadErr)
+		}
+		added, removed, changed, deltaCount := computeSessionPacketDelta(flat, cursor.Fields)
+		cursor.Fields = flat
+		cursor.UpdatedAt = nowFn().UTC().Format(time.RFC3339)
+		if err := writeSessionPacketDeltaCursor(cursorFile, cursor); err != nil {
+			return commandErrorf(jsonOut, "cursor_file_write_failed", "failed writing --cursor-file: %v", err)
+		}
+
+		payload := map[string]any{
+			"session": session,
+			"delta": map[string]any{
+				"added":   added,
+				"removed": removed,
+				"changed": changed,
+				"count":   deltaCount,
+			},
+			"deltaCount": deltaCount,
+		}
+		if !jsonMin {
+			payload["cursorFile"] = cursorFile
+		}
+		if status.SessionState == "not_found" {
+			payload["errorCode"] = "session_not_found"
+		}
+		writeJSON(payload)
+		if status.SessionState == "not_found" {
+			return 1
+		}
+		return 0
+	}
 
 	items := make([]sessionHandoffItem, 0)
 	droppedRecent := 0
 	deltaFrom := -1
 	nextDeltaOffset := -1
 	if cursorFile != "" {
-		cursorFile, err = expandAndCleanPath(cursorFile)
-		if err != nil {
-			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", err)
-		}
 		deltaFrom, err = loadCursorOffset(cursorFile)
 		if err != nil {
 			return commandErrorf(jsonOut, "invalid_cursor_file", "invalid --cursor-file: %v", err)
@@ -199,8 +279,6 @@ func cmdSessionPacket(args []string) int {
 			})
 		}
 	}
-	nextAction := nextActionForState(status.SessionState)
-	nextOffset := computeSessionCaptureNextOffset(session)
 
 	if jsonOut {
 		payload := map[string]any{
@@ -251,4 +329,114 @@ func cmdSessionPacket(args []string) int {
 	fmt.Printf("state=%s status=%s reason=%s next=%s\n", status.SessionState, status.Status, status.ClassificationReason, nextAction)
 	fmt.Println(summaryText)
 	return boolExit(status.SessionState != "not_found")
+}
+
+func loadSessionPacketDeltaCursor(path string) (sessionPacketDeltaCursor, error) {
+	cursor := sessionPacketDeltaCursor{Fields: map[string]any{}}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cursor, nil
+		}
+		return cursor, err
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return cursor, nil
+	}
+	if err := json.Unmarshal(raw, &cursor); err != nil {
+		return sessionPacketDeltaCursor{}, err
+	}
+	if cursor.Fields == nil {
+		cursor.Fields = map[string]any{}
+	}
+	return cursor, nil
+}
+
+func writeSessionPacketDeltaCursor(path string, cursor sessionPacketDeltaCursor) error {
+	if cursor.Fields == nil {
+		cursor.Fields = map[string]any{}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(cursor)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(path, append(data, '\n'))
+}
+
+func flattenSessionPacketDeltaFields(payload map[string]any) map[string]any {
+	out := map[string]any{}
+	flattenSessionPacketDeltaValue("", payload, out)
+	return out
+}
+
+func flattenSessionPacketDeltaValue(prefix string, value any, out map[string]any) {
+	typed, ok := value.(map[string]any)
+	if !ok {
+		if prefix != "" {
+			out[prefix] = value
+		}
+		return
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		nextPrefix := key
+		if prefix != "" {
+			nextPrefix = prefix + "." + key
+		}
+		flattenSessionPacketDeltaValue(nextPrefix, typed[key], out)
+	}
+}
+
+func computeSessionPacketDelta(current, previous map[string]any) ([]sessionPacketDeltaFieldChange, []sessionPacketDeltaFieldChange, []sessionPacketDeltaFieldChange, int) {
+	if previous == nil {
+		previous = map[string]any{}
+	}
+	added := make([]sessionPacketDeltaFieldChange, 0)
+	removed := make([]sessionPacketDeltaFieldChange, 0)
+	changed := make([]sessionPacketDeltaFieldChange, 0)
+
+	currentKeys := make([]string, 0, len(current))
+	for field := range current {
+		currentKeys = append(currentKeys, field)
+	}
+	sort.Strings(currentKeys)
+	for _, field := range currentKeys {
+		currentValue := current[field]
+		previousValue, ok := previous[field]
+		if !ok {
+			added = append(added, sessionPacketDeltaFieldChange{Field: field, After: currentValue})
+			continue
+		}
+		if sessionPacketDeltaValueSignature(currentValue) != sessionPacketDeltaValueSignature(previousValue) {
+			changed = append(changed, sessionPacketDeltaFieldChange{Field: field, Before: previousValue, After: currentValue})
+		}
+	}
+
+	previousKeys := make([]string, 0, len(previous))
+	for field := range previous {
+		previousKeys = append(previousKeys, field)
+	}
+	sort.Strings(previousKeys)
+	for _, field := range previousKeys {
+		if _, ok := current[field]; ok {
+			continue
+		}
+		removed = append(removed, sessionPacketDeltaFieldChange{Field: field, Before: previous[field]})
+	}
+	return added, removed, changed, len(added) + len(removed) + len(changed)
+}
+
+func sessionPacketDeltaValueSignature(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf("%v", value)
+	}
+	return string(data)
 }

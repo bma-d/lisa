@@ -9,10 +9,10 @@ Use `--project-root` across session flows (and optionally `agent build-cmd`) for
 
 Contract coverage list (must stay aligned with `lisa capabilities`):
 `capabilities`, `doctor`, `cleanup`, `version`,
-`session name`, `session spawn`, `session detect-nested`, `session send`, `session snapshot`, `session status`, `session explain`,
+`session name`, `session spawn`, `session detect-nested`, `session send`, `session turn`, `session snapshot`, `session status`, `session explain`,
 `session monitor`, `session capture`, `session packet`, `session contract-check`, `session schema`, `session checkpoint`, `session dedupe`,
 `session next`, `session aggregate`, `session prompt-lint`, `session diff-pack`, `session loop`, `session context-cache`, `session anomaly`, `session budget-observe`, `session budget-enforce`, `session budget-plan`, `session replay`, `session objective`, `session memory`, `session lane`,
-`session handoff`, `session context-pack`, `session route`, `session autopilot`, `session guard`, `session tree`, `session smoke`,
+`session state-sandbox`, `session handoff`, `session context-pack`, `session route`, `session autopilot`, `session guard`, `session tree`, `session smoke`,
 `session preflight`, `session list`, `session exists`, `session kill`, `session kill-all`,
 `agent build-cmd`,
 `oauth add`, `oauth list`, `oauth remove`,
@@ -21,7 +21,7 @@ Contract coverage list (must stay aligned with `lisa capabilities`):
 ## Contract flag lexicon
 
 Canonical flag surface mirror for `session contract-check` / `skills doctor --contract-check`.
-`--json --dry-run --include-tmux-default --version -version -v --agent --mode --project-root --tag --nested-policy --nesting-intent --session --prompt --command --agent-args --model --width --height --cleanup-all-hashes --detect-nested --no-dangerously-skip-permissions --rewrite --why --text --keys --enter --json-min --lines --delta-from --markers --keep-noise --strip-noise --fail-not-found --full --events --recent --since --poll-interval --max-polls --timeout-seconds --stop-on-waiting --waiting-requires-turn-complete --until-marker --until-state --until-jsonpath --expect --stream-json --emit-handoff --handoff-cursor-file --event-budget --webhook --verbose --raw --cursor-file --markers-json --summary --summary-style --token-budget --semantic-delta --fields --action --file --strategy --task-hash --release --budget --sessions --dedupe --strict --redact --from --max-tokens --max-seconds --max-steps --tokens --seconds --steps --from-checkpoint --compress --for --from-handoff --goal --profile --topology --cost-estimate --from-state --emit-runbook --capture-lines --kill-after --resume-from --shared-tmux --enforce --advice-only --machine-policy --all-hashes --active-only --delta --delta-json --flat --with-state --levels --prompt-style --matrix-file --chaos --chaos-report --keep-sessions --report-min --export-artifacts --auto-model --auto-model-candidates --fast --all-sockets --project-only --with-next-action --priority --stale --prune-preview --watch-json --watch-interval --watch-cycles --auto-remediate --concurrency --semantic-diff --token --stdin --id --path --repo-root --deep --explain-drift --fix --contract-check --sync-plan --to --project-path`
+`--json --dry-run --include-tmux-default --version -version -v --agent --mode --project-root --tag --nested-policy --nesting-intent --session --prompt --command --agent-args --model --width --height --cleanup-all-hashes --detect-nested --no-dangerously-skip-permissions --rewrite --why --text --keys --enter --json-min --lines --delta-from --markers --keep-noise --strip-noise --strip-banner --fail-not-found --full --events --recent --since --poll-interval --adaptive-poll --max-polls --timeout-seconds --stop-on-waiting --waiting-requires-turn-complete --until-marker --until-state --until-jsonpath --expect --stream-json --emit-handoff --handoff-cursor-file --event-budget --webhook --verbose --raw --cursor-file --markers-json --summary --summary-style --token-budget --semantic-delta --fields --action --file --strategy --task-hash --release --budget --sessions --dedupe --strict --redact --from --from-jsonl --max-tokens --max-seconds --max-steps --tokens --seconds --steps --from-checkpoint --compress --for --from-handoff --goal --profile --topology --cost-estimate --from-state --emit-runbook --capture-lines --kill-after --resume-from --shared-tmux --enforce --advice-only --machine-policy --all-hashes --active-only --delta --delta-json --flat --with-state --levels --prompt-style --matrix-file --chaos --chaos-report --contract-profile --keep-sessions --report-min --export-artifacts --auto-model --auto-model-candidates --fast --all-sockets --project-only --with-next-action --priority --stale --prune-preview --watch-json --watch-interval --watch-cycles --auto-remediate --concurrency --semantic-diff --token --stdin --id --path --repo-root --deep --explain-drift --fix --contract-check --sync-plan --to --project-path`
 
 ## session spawn
 
@@ -105,6 +105,28 @@ JSON: `{"nestedPolicy","nestingIntent","nestedDetection","agentArgs","effectiveA
 
 JSON: `{"session","ok","enter"}`
 
+## session turn
+
+One-shot orchestration turn: send -> monitor -> packet.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--session` | required | Session name |
+| `--project-root` | cwd | Project directory |
+| `--text` / `--keys` | required (exactly one) | Send payload (`--text`) or tmux key payload (`--keys`) |
+| `--enter` | false | Press Enter after send step |
+| `--agent`, `--mode`, `--expect`, `--poll-interval`, `--max-polls`, `--timeout-seconds`, `--stop-on-waiting`, `--waiting-requires-turn-complete`, `--until-marker`, `--until-state`, `--until-jsonpath`, `--auto-recover`, `--recover-max`, `--recover-budget` | monitor defaults | Passed through to `session monitor` step |
+| `--lines`, `--events`, `--token-budget`, `--summary-style`, `--cursor-file`, `--fields` | packet defaults | Passed through to `session packet` step |
+| `--json-min` | false | Minimal JSON turn summary |
+| `--json` | false | JSON output |
+
+JSON:
+- `--json`: `{"ok","session","projectRoot","send","sendExitCode","monitor","monitorExitCode","packet","packetExitCode"}`
+- `--json-min`: `{"ok","session","projectRoot","finalState?","exitReason?","sessionState?","status?","nextAction?"}`
+
+Failure contract:
+- Returns step-scoped failure payload with `{"ok":false,"failedStep","errorCode","error"}` and propagates failing sub-step exit code.
+
 ## session snapshot
 
 One-shot `status + capture + nextOffset` poll helper.
@@ -161,6 +183,7 @@ Block until success/terminal condition per flags.
 | `--agent` | `auto` | Agent hint |
 | `--mode` | `auto` | Mode hint |
 | `--poll-interval` | `30` | Seconds between polls |
+| `--adaptive-poll` | false | Auto-tune polling cadence by heartbeat/state |
 | `--max-polls` | `120` | Max polls |
 | `--stop-on-waiting` | `true` | Stop on `waiting_input` |
 | `--waiting-requires-turn-complete` | `false` | Require transcript turn-complete before waiting stop |
@@ -226,6 +249,7 @@ Capture transcript (default for Claude) or raw pane output.
 | `--semantic-delta` | false | Emit semantic line-level deltas (JSON only) |
 | `--keep-noise` | false | Keep Codex/MCP startup noise |
 | `--strip-noise` | n/a | Compatibility alias for default filtering |
+| `--strip-banner` | false | Remove status/banner chrome from raw capture output |
 | `--project-root` | cwd | Project directory |
 | `--json-min` | false | Minimal JSON output for compact polling workflows |
 | `--json` | false | JSON output |
@@ -272,12 +296,14 @@ JSON: `{"status":{...},"eventFile","events":[...],"droppedEventLines"}`
 
 One-shot status + summarized raw capture + handoff event packet.
 
-Flags: `--session` (required), `--project-root`, `--agent`, `--mode`, `--lines`, `--events`, `--token-budget`, `--summary-style`, `--cursor-file`, `--json`, `--json-min`.
+Flags: `--session` (required), `--project-root`, `--agent`, `--mode`, `--lines`, `--events`, `--token-budget`, `--summary-style`, `--cursor-file`, `--delta-json`, `--fields`, `--json`, `--json-min`.
 
 JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","summary","summaryStyle","tokenBudget","truncated","recent?"}`.
 
 Notes:
 - `--cursor-file` enables incremental handoff events (`deltaFrom`,`nextDeltaOffset`,`deltaCount`).
+- `--delta-json` requires `--cursor-file` and emits field-level `delta.added|removed|changed` payloads.
+- `--fields` projects JSON payload fields; requires JSON output.
 - `--json-min` emits compact packet plus `recent` event list.
 - `session_not_found` returns JSON payload with `errorCode` and exit `1`.
 
@@ -316,7 +342,7 @@ Notes:
 
 Recommend mode/policy/model defaults for orchestration goal.
 
-Flags: `--goal` (`nested|analysis|exec`), `--agent`, `--lane`, `--prompt`, `--model`, `--profile`, `--budget`, `--queue`, `--sessions`, `--queue-limit`, `--concurrency`, `--topology`, `--cost-estimate`, `--from-state`, `--project-root`, `--emit-runbook`, `--json`.
+Flags: `--goal` (`nested|analysis|exec`), `--agent`, `--lane`, `--prompt`, `--model`, `--profile`, `--budget`, `--queue`, `--sessions`, `--queue-limit`, `--concurrency`, `--topology`, `--cost-estimate`, `--from-state`, `--strict`, `--project-root`, `--emit-runbook`, `--json`.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -330,6 +356,7 @@ JSON includes command preview + routing rationale:
 
 Route shape note:
 - `runbook` is an object with `steps[]` (not a flat array).
+- `--strict` fails fast on invalid `--from-state` schema/fields (`errorCode:"invalid_from_state_strict"`).
 
 ## session guard
 
@@ -420,8 +447,8 @@ Tree semantics:
 | `session loop` | `--session`, `--project-root`, `--poll-interval`, `--max-polls`, `--strategy`, `--events`, `--lines`, `--token-budget`, `--cursor-file`, `--handoff-cursor-file`, `--schema`, `--steps`, `--max-tokens`, `--max-seconds`, `--max-steps`, `--json`, `--json-min` | One command loop for monitor -> diff-pack -> handoff -> next with budget guards |
 | `session context-cache` | `--key`, `--session`, `--project-root`, `--refresh`, `--from`, `--ttl-hours`, `--max-lines`, `--list`, `--clear`, `--json` | Shared deduplicated semantic cache keyed by task/objective/session |
 | `session anomaly` | `--session`, `--events`, `--project-root`, `--auto-remediate`, `--json` | Severity-ranked anomaly findings from event tails + optional remediation plan |
-| `session budget-observe` | `--from`, `--tokens`, `--seconds`, `--steps`, `--json` | Normalize observed metrics from monitor/capture/autopilot payloads |
-| `session budget-enforce` | `--from`, `--max-tokens`, `--max-seconds`, `--max-steps`, `--tokens`, `--seconds`, `--steps`, `--json` | Hard budget policy gate over observed metrics |
+| `session budget-observe` | `--from`, `--from-jsonl`, `--tokens`, `--seconds`, `--steps`, `--json` | Normalize observed metrics from monitor/capture/autopilot payloads |
+| `session budget-enforce` | `--from`, `--from-jsonl`, `--max-tokens`, `--max-seconds`, `--max-steps`, `--tokens`, `--seconds`, `--steps`, `--json` | Hard budget policy gate over observed metrics |
 | `session budget-plan` | `--goal`, `--agent`, `--profile`, `--budget`, `--topology`, `--from-state`, `--project-root`, `--json` | Simulate route + topology budget and emit hard-stop contract |
 | `session replay` | `--from-checkpoint`, `--project-root`, `--json` | Deterministic replay command sequence from checkpoint |
 | `session objective` | `--project-root`, `--id`, `--goal`, `--acceptance`, `--budget`, `--status`, `--ttl-hours`, `--activate`, `--clear`, `--list`, `--json` | Manage shared objective register propagated into orchestration payloads |
@@ -436,11 +463,34 @@ Output shape notes:
 - `session budget-plan` returns `hardStop.enforceCommand`; use it as executable policy gate after route/autopilot runs.
 - `session objective --activate` and `session lane` writes are immediately reflected in subsequent `spawn/send/handoff/context-pack` payloads.
 
+## session state-sandbox
+
+Deterministic objective/lane registry sandbox helper (`list|snapshot|restore|clear`).
+
+| Flag | Default | Description |
+|---|---|---|
+| `list|snapshot|restore|clear` | `list` | Positional action selector (alias: `--action`) |
+| `--action` | `list` | Explicit action selector |
+| `--project-root` | cwd | Target project root |
+| `--file` | `""` | Snapshot path (required for `restore`; optional for `snapshot`) |
+| `--json-min` | false | Minimal JSON output |
+| `--json` | false | JSON output |
+
+JSON action summaries:
+- `list`: `{"action":"list","projectRoot","objectiveCount","laneCount","currentId",...}`
+- `snapshot`: `{"action":"snapshot","projectRoot","objectiveCount","laneCount","file?","snapshot?"}`
+- `restore`: `{"action":"restore","projectRoot","sourceFile","version","objectiveCount","laneCount",...}`
+- `clear`: `{"action":"clear","projectRoot","clearedObjectives","clearedLanes",...}`
+
+Notes:
+- `restore` without `--file` returns `errorCode:"missing_required_flag"` (exit `1`).
+- `snapshot --json-min --file <PATH>` can omit inline `snapshot` body and return counts+path only.
+
 ## session smoke
 
 Deterministic nested smoke (`L1 -> ... -> LN`) with marker assertions.
 
-Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|dot-slash|spawn|nested|neutral`), `--matrix-file` (`mode|prompt` lines; mode=`bypass|full-auto|any`), `--chaos` (`none|delay|drop-marker|fail-child|mixed`), `--chaos-report`, `--llm-profile`, `--model`, `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--report-min`, `--export-artifacts`, `--json`.
+Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|dot-slash|spawn|nested|neutral`), `--matrix-file` (`mode|prompt` lines; mode=`bypass|full-auto|any`), `--chaos` (`none|delay|drop-marker|fail-child|mixed`), `--chaos-report`, `--contract-profile`, `--llm-profile`, `--model`, `--poll-interval` (default `1`), `--max-polls` (default `180`), `--keep-sessions`, `--report-min`, `--export-artifacts`, `--json`.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -450,6 +500,7 @@ Flags: `--project-root`, `--levels` (1-4, default `3`), `--prompt-style` (`none|
 Behavior: uses nested `session spawn/monitor/capture`, asserts all level markers, non-zero exit on spawn/monitor/marker failure.
 `--prompt-style` adds a pre-smoke dry-run probe that validates nested wording detection.
 `--matrix-file` adds multi-prompt expectation regression before smoke execution and fails on mismatches.
+`--contract-profile full` runs command contract probes (`status/packet/schema/turn/state-sandbox`) in the smoke flow.
 `--model` pins model on smoke `session spawn` calls. Smoke validates Lisa orchestration plumbing, not model answer quality.
 Prompt-style JSON probe fields are under `promptProbe.detection.*` (not `promptProbe.nestedDetection.*`).
 `--report-min` emits compact CI-focused JSON (`ok`,`errorCode`,`finalState`,`missingMarkers`,`failedMatrix?`).
@@ -525,7 +576,7 @@ Aliases `execution` and `non-interactive` map to `exec`.
 
 ## JSON Surface
 
-`--json` exists on: `doctor`, `capabilities`, `cleanup`, `agent build-cmd`, `skills sync|doctor|install`, `session name|spawn|detect-nested|send|snapshot|status|explain|monitor|capture|packet|aggregate|prompt-lint|diff-pack|loop|context-cache|anomaly|budget-observe|budget-enforce|budget-plan|replay|objective|memory|lane|handoff|context-pack|route|guard|tree|smoke|preflight|list|exists|kill|kill-all`.
+`--json` exists on: `doctor`, `capabilities`, `cleanup`, `agent build-cmd`, `skills sync|doctor|install`, `session name|spawn|detect-nested|send|turn|snapshot|status|explain|monitor|capture|packet|aggregate|prompt-lint|diff-pack|loop|context-cache|anomaly|budget-observe|budget-enforce|budget-plan|replay|objective|memory|lane|state-sandbox|handoff|context-pack|route|guard|tree|smoke|preflight|list|exists|kill|kill-all`.
 
 JSON error contract:
 - command/runtime failures emit `{"ok":false,"errorCode":"...","error":"..."}` when `--json` is enabled.

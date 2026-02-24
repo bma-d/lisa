@@ -30,6 +30,7 @@ func TestHelpExitZero(t *testing.T) {
 		{"session explain --help", []string{"session", "explain", "--help"}},
 		{"session monitor --help", []string{"session", "monitor", "--help"}},
 		{"session capture --help", []string{"session", "capture", "--help"}},
+		{"session turn --help", []string{"session", "turn", "--help"}},
 		{"session contract-check --help", []string{"session", "contract-check", "--help"}},
 		{"session context-pack --help", []string{"session", "context-pack", "--help"}},
 		{"session schema --help", []string{"session", "schema", "--help"}},
@@ -48,6 +49,7 @@ func TestHelpExitZero(t *testing.T) {
 		{"session route --help", []string{"session", "route", "--help"}},
 		{"session guard --help", []string{"session", "guard", "--help"}},
 		{"session tree --help", []string{"session", "tree", "--help"}},
+		{"session state-sandbox --help", []string{"session", "state-sandbox", "--help"}},
 		{"session autopilot --help", []string{"session", "autopilot", "--help"}},
 		{"session smoke --help", []string{"session", "smoke", "--help"}},
 		{"session preflight --help", []string{"session", "preflight", "--help"}},
@@ -139,7 +141,7 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session",
 			[]string{"session", "--help"},
-			[]string{"lisa session", "spawn", "send", "status", "smoke", "preflight", "kill"},
+			[]string{"lisa session", "spawn", "send", "turn", "status", "smoke", "state-sandbox", "preflight", "kill"},
 		},
 		{
 			"session spawn",
@@ -149,7 +151,22 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session monitor",
 			[]string{"session", "monitor", "--help"},
-			[]string{"lisa session monitor", "--until-jsonpath", "--event-budget", "--timeout-seconds", "--webhook", "--json"},
+			[]string{"lisa session monitor", "--adaptive-poll", "--until-jsonpath", "--event-budget", "--timeout-seconds", "--webhook", "--json"},
+		},
+		{
+			"session capture",
+			[]string{"session", "capture", "--help"},
+			[]string{"lisa session capture", "--strip-banner", "--semantic-delta", "--json"},
+		},
+		{
+			"session turn",
+			[]string{"session", "turn", "--help"},
+			[]string{"lisa session turn", "--session", "--text", "--keys", "--until-jsonpath", "--fields", "--json"},
+		},
+		{
+			"session packet",
+			[]string{"session", "packet", "--help"},
+			[]string{"lisa session packet", "--delta-json", "--cursor-file", "--fields", "--json"},
 		},
 		{
 			"session explain",
@@ -214,12 +231,12 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session budget-observe",
 			[]string{"session", "budget-observe", "--help"},
-			[]string{"lisa session budget-observe", "--from", "--tokens", "--seconds", "--steps", "--json"},
+			[]string{"lisa session budget-observe", "--from", "--from-jsonl", "--tokens", "--seconds", "--steps", "--json"},
 		},
 		{
 			"session budget-enforce",
 			[]string{"session", "budget-enforce", "--help"},
-			[]string{"lisa session budget-enforce", "--max-tokens", "--from", "--json"},
+			[]string{"lisa session budget-enforce", "--max-tokens", "--from", "--from-jsonl", "--json"},
 		},
 		{
 			"session replay",
@@ -239,7 +256,7 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session route",
 			[]string{"session", "route", "--help"},
-			[]string{"lisa session route", "--profile", "--budget", "--concurrency", "--topology", "--cost-estimate", "--emit-runbook", "--json"},
+			[]string{"lisa session route", "--profile", "--budget", "--concurrency", "--topology", "--cost-estimate", "--strict", "--emit-runbook", "--json"},
 		},
 		{
 			"session guard",
@@ -259,7 +276,12 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session smoke",
 			[]string{"session", "smoke", "--help"},
-			[]string{"lisa session smoke", "--levels", "--chaos-report", "--poll-interval", "--max-polls", "--export-artifacts", "--json"},
+			[]string{"lisa session smoke", "--levels", "--chaos-report", "--contract-profile", "--poll-interval", "--max-polls", "--export-artifacts", "--json"},
+		},
+		{
+			"session state-sandbox",
+			[]string{"session", "state-sandbox", "--help"},
+			[]string{"lisa session state-sandbox", "--action", "--file", "--json"},
 		},
 		{
 			"session preflight",

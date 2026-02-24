@@ -180,6 +180,7 @@ func buildAnomalyRemediationPlan(session, projectRoot string, status sessionStat
 
 func cmdSessionBudgetObserve(args []string) int {
 	sources := make([]string, 0, 2)
+	jsonlSources := make([]string, 0, 2)
 	obsTokens := -1
 	obsSeconds := -1
 	obsSteps := -1
@@ -198,6 +199,18 @@ func cmdSessionBudgetObserve(args []string) int {
 				part = strings.TrimSpace(part)
 				if part != "" {
 					sources = append(sources, part)
+				}
+			}
+			i++
+		case "--from-jsonl":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --from-jsonl")
+			}
+			value := strings.TrimSpace(args[i+1])
+			for _, part := range strings.Split(value, ",") {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					jsonlSources = append(jsonlSources, part)
 				}
 			}
 			i++
@@ -243,6 +256,13 @@ func cmdSessionBudgetObserve(args []string) int {
 		payload, err := loadAnyJSONMap(source)
 		if err != nil {
 			return commandErrorf(jsonOut, "invalid_from", "failed loading --from source %q: %v", source, err)
+		}
+		extractObservedBudgets(payload, observed)
+	}
+	for _, source := range jsonlSources {
+		payload, err := loadLatestJSONMapFromMixedJSONL(source)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_from_jsonl", "failed loading --from-jsonl source %q: %v", source, err)
 		}
 		extractObservedBudgets(payload, observed)
 	}
@@ -395,6 +415,7 @@ func anomalySeverityRank(value string) int {
 
 func cmdSessionBudgetEnforce(args []string) int {
 	from := ""
+	fromJSONL := ""
 	maxTokens := 0
 	maxSeconds := 0
 	maxSteps := 0
@@ -412,6 +433,12 @@ func cmdSessionBudgetEnforce(args []string) int {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --from")
 			}
 			from = strings.TrimSpace(args[i+1])
+			i++
+		case "--from-jsonl":
+			if i+1 >= len(args) {
+				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --from-jsonl")
+			}
+			fromJSONL = strings.TrimSpace(args[i+1])
 			i++
 		case "--max-tokens":
 			if i+1 >= len(args) {
@@ -492,6 +519,13 @@ func cmdSessionBudgetEnforce(args []string) int {
 		}
 		extractObservedBudgets(parsed, observed)
 	}
+	if fromJSONL != "" {
+		parsed, err := loadLatestJSONMapFromMixedJSONL(fromJSONL)
+		if err != nil {
+			return commandErrorf(jsonOut, "invalid_from_jsonl", "failed loading --from-jsonl: %v", err)
+		}
+		extractObservedBudgets(parsed, observed)
+	}
 	if observed["tokens"] < 0 {
 		observed["tokens"] = 0
 	}
@@ -561,6 +595,9 @@ func extractObservedBudgets(payload map[string]any, observed map[string]int) {
 	if value, ok := numberFromAny(payload["totalSteps"]); ok {
 		observed["steps"] = maxInt(observed["steps"], value)
 	}
+	if value, ok := numberFromAny(payload["steps"]); ok {
+		observed["steps"] = maxInt(observed["steps"], value)
+	}
 	if stepsRaw, ok := payload["steps"].([]any); ok {
 		observed["steps"] = maxInt(observed["steps"], len(stepsRaw))
 	}
@@ -573,6 +610,9 @@ func extractObservedBudgets(payload map[string]any, observed map[string]int) {
 		}
 		if stepsRaw, ok := costRaw["steps"].([]any); ok {
 			observed["steps"] = maxInt(observed["steps"], len(stepsRaw))
+		}
+		if value, ok := numberFromAny(costRaw["steps"]); ok {
+			observed["steps"] = maxInt(observed["steps"], value)
 		}
 	}
 }
@@ -859,6 +899,60 @@ func replayStepsFromCheckpoint(bundle sessionCheckpointBundle, projectRoot strin
 }
 
 func loadAnyJSONMap(from string) (map[string]any, error) {
+	raw, err := readJSONSourceBytes(from)
+	if err != nil {
+		return nil, err
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func loadLatestJSONMapFromMixedJSONL(from string) (map[string]any, error) {
+	raw, err := readJSONSourceBytes(from)
+	if err != nil {
+		return nil, err
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(raw, &payload); err == nil {
+		return payload, nil
+	}
+	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	var latest map[string]any
+	for _, line := range lines {
+		candidate := strings.TrimSpace(line)
+		if candidate == "" {
+			continue
+		}
+		if parsed, ok := parseJSONMapLineCandidate(candidate); ok {
+			latest = parsed
+		}
+	}
+	if latest == nil {
+		return nil, fmt.Errorf("no valid JSON object found")
+	}
+	return latest, nil
+}
+
+func parseJSONMapLineCandidate(candidate string) (map[string]any, bool) {
+	out := map[string]any{}
+	if err := json.Unmarshal([]byte(candidate), &out); err == nil {
+		return out, true
+	}
+	start := strings.Index(candidate, "{")
+	end := strings.LastIndex(candidate, "}")
+	if start < 0 || end <= start {
+		return nil, false
+	}
+	if err := json.Unmarshal([]byte(candidate[start:end+1]), &out); err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func readJSONSourceBytes(from string) ([]byte, error) {
 	source := strings.TrimSpace(from)
 	if source == "" {
 		return nil, fmt.Errorf("empty source")
@@ -878,9 +972,5 @@ func loadAnyJSONMap(from string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	payload := map[string]any{}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, err
-	}
-	return payload, nil
+	return raw, nil
 }

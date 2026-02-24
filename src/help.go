@@ -25,6 +25,7 @@ var helpFuncs = map[string]func(){
 	"session monitor":        helpSessionMonitor,
 	"session capture":        helpSessionCapture,
 	"session packet":         helpSessionPacket,
+	"session turn":           helpSessionTurn,
 	"session contract-check": helpSessionContractCheck,
 	"session schema":         helpSessionSchema,
 	"session checkpoint":     helpSessionCheckpoint,
@@ -48,6 +49,7 @@ var helpFuncs = map[string]func(){
 	"session objective":      helpSessionObjective,
 	"session memory":         helpSessionMemory,
 	"session lane":           helpSessionLane,
+	"session state-sandbox":  helpSessionStateSandbox,
 	"session tree":           helpSessionTree,
 	"session smoke":          helpSessionSmoke,
 	"session preflight":      helpSessionPreflight,
@@ -95,6 +97,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session monitor       Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  session capture       Capture session pane output or transcript")
 	fmt.Fprintln(os.Stderr, "  session packet        Build status+capture+handoff packet")
+	fmt.Fprintln(os.Stderr, "  session turn          Run send->monitor->packet one-shot turn")
 	fmt.Fprintln(os.Stderr, "  session contract-check Validate schema/docs command+flag contract sync")
 	fmt.Fprintln(os.Stderr, "  session schema        Emit JSON schemas for session command payloads")
 	fmt.Fprintln(os.Stderr, "  session checkpoint    Save/resume orchestration state bundles")
@@ -118,6 +121,7 @@ func helpTop() {
 	fmt.Fprintln(os.Stderr, "  session objective     Manage shared orchestration objective register")
 	fmt.Fprintln(os.Stderr, "  session memory        Build/read rolling semantic session memory")
 	fmt.Fprintln(os.Stderr, "  session lane          Manage orchestration lane defaults/contracts")
+	fmt.Fprintln(os.Stderr, "  session state-sandbox Manage objective/lane state snapshots")
 	fmt.Fprintln(os.Stderr, "  session tree          Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  session smoke         Run deterministic nested smoke test")
 	fmt.Fprintln(os.Stderr, "  session preflight     Validate env + contract assumptions")
@@ -184,6 +188,7 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  monitor    Poll session until terminal state")
 	fmt.Fprintln(os.Stderr, "  capture    Capture session pane output or transcript")
 	fmt.Fprintln(os.Stderr, "  packet     Build status+capture+handoff packet")
+	fmt.Fprintln(os.Stderr, "  turn       Run send->monitor->packet one-shot turn")
 	fmt.Fprintln(os.Stderr, "  contract-check Validate schema/docs command+flag contract sync")
 	fmt.Fprintln(os.Stderr, "  schema     Emit JSON schemas for session payload contracts")
 	fmt.Fprintln(os.Stderr, "  checkpoint Save/resume orchestration state bundles")
@@ -207,6 +212,7 @@ func helpSession() {
 	fmt.Fprintln(os.Stderr, "  objective  Manage objective register for orchestration loops")
 	fmt.Fprintln(os.Stderr, "  memory     Build/read rolling semantic memory")
 	fmt.Fprintln(os.Stderr, "  lane       Manage lane defaults/contracts")
+	fmt.Fprintln(os.Stderr, "  state-sandbox Manage objective/lane state snapshots")
 	fmt.Fprintln(os.Stderr, "  tree       Show parent/child session tree")
 	fmt.Fprintln(os.Stderr, "  smoke      Run deterministic nested smoke test")
 	fmt.Fprintln(os.Stderr, "  preflight  Validate env + contract assumptions")
@@ -357,6 +363,7 @@ func helpSessionMonitor() {
 	fmt.Fprintln(os.Stderr, "  --mode MODE           Mode hint: auto|interactive|exec (default: auto)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --poll-interval N     Seconds between polls (default: 30)")
+	fmt.Fprintln(os.Stderr, "  --adaptive-poll       Auto-tune polling cadence by session heartbeat/state")
 	fmt.Fprintln(os.Stderr, "  --max-polls N         Maximum number of polls (default: 120)")
 	fmt.Fprintln(os.Stderr, "  --timeout-seconds N   Optional wall-clock timeout budget in seconds")
 	fmt.Fprintln(os.Stderr, "  --stop-on-waiting BOOL  Stop on waiting_input (default: true)")
@@ -396,6 +403,7 @@ func helpSessionCapture() {
 	fmt.Fprintln(os.Stderr, "  --semantic-delta      Return meaning-level delta against semantic cursor")
 	fmt.Fprintln(os.Stderr, "  --keep-noise          Keep Codex/MCP startup noise in pane capture")
 	fmt.Fprintln(os.Stderr, "  --strip-noise         Compatibility alias for default noise filtering")
+	fmt.Fprintln(os.Stderr, "  --strip-banner        Remove status/banner chrome from raw capture output")
 	fmt.Fprintln(os.Stderr, "  --lines N             Number of pane lines for raw capture (default: 200)")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
@@ -417,7 +425,44 @@ func helpSessionPacket() {
 	fmt.Fprintln(os.Stderr, "  --token-budget N      Summary token budget (default: 320)")
 	fmt.Fprintln(os.Stderr, "  --summary-style MODE  Summary style: terse|ops|debug (default: ops)")
 	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Persist/reuse handoff delta offset")
+	fmt.Fprintln(os.Stderr, "  --delta-json          Emit field-level packet delta payloads")
 	fmt.Fprintln(os.Stderr, "  --fields CSV          Project output to selected JSON fields")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
+}
+
+func helpSessionTurn() {
+	fmt.Fprintln(os.Stderr, "lisa session turn — one-shot send->monitor->packet orchestration")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session turn --session NAME (--text TEXT|--keys \"KEYS...\") [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --session NAME        Session name (required)")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --text TEXT           Send text payload")
+	fmt.Fprintln(os.Stderr, "  --keys \"KEYS...\"     Send key payload")
+	fmt.Fprintln(os.Stderr, "  --enter               Press Enter after send step")
+	fmt.Fprintln(os.Stderr, "  --agent NAME          Monitor/packet agent hint: auto|claude|codex")
+	fmt.Fprintln(os.Stderr, "  --mode MODE           Monitor/packet mode hint: auto|interactive|exec")
+	fmt.Fprintln(os.Stderr, "  --expect MODE         Monitor expectation: any|terminal|marker")
+	fmt.Fprintln(os.Stderr, "  --poll-interval N     Monitor poll interval seconds")
+	fmt.Fprintln(os.Stderr, "  --max-polls N         Monitor max polls")
+	fmt.Fprintln(os.Stderr, "  --timeout-seconds N   Monitor wall-clock timeout")
+	fmt.Fprintln(os.Stderr, "  --stop-on-waiting BOOL  Monitor waiting stop behavior")
+	fmt.Fprintln(os.Stderr, "  --waiting-requires-turn-complete BOOL")
+	fmt.Fprintln(os.Stderr, "                        Require turn completion before waiting_input success")
+	fmt.Fprintln(os.Stderr, "  --until-marker TEXT   Monitor marker gate")
+	fmt.Fprintln(os.Stderr, "  --until-state STATE   Monitor state gate")
+	fmt.Fprintln(os.Stderr, "  --until-jsonpath EXPR Monitor JSONPath gate")
+	fmt.Fprintln(os.Stderr, "  --auto-recover        Enable monitor recovery")
+	fmt.Fprintln(os.Stderr, "  --recover-max N       Monitor recover attempts")
+	fmt.Fprintln(os.Stderr, "  --recover-budget N    Monitor total recover poll budget")
+	fmt.Fprintln(os.Stderr, "  --lines N             Packet capture lines")
+	fmt.Fprintln(os.Stderr, "  --events N            Packet event window")
+	fmt.Fprintln(os.Stderr, "  --token-budget N      Packet summary token budget")
+	fmt.Fprintln(os.Stderr, "  --summary-style MODE  Packet summary style: terse|ops|debug")
+	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Packet handoff cursor persistence")
+	fmt.Fprintln(os.Stderr, "  --fields CSV          Packet JSON projection")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
@@ -605,6 +650,7 @@ func helpSessionBudgetObserve() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --from PATHS          JSON source(s), comma-separated paths or '-'")
+	fmt.Fprintln(os.Stderr, "  --from-jsonl PATHS    Mixed log/JSONL source(s); last valid JSON object wins")
 	fmt.Fprintln(os.Stderr, "  --tokens N            Override observed tokens")
 	fmt.Fprintln(os.Stderr, "  --seconds N           Override observed seconds")
 	fmt.Fprintln(os.Stderr, "  --steps N             Override observed steps")
@@ -618,6 +664,7 @@ func helpSessionBudgetEnforce() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --from PATH           Optional JSON payload source (file path or '-')")
+	fmt.Fprintln(os.Stderr, "  --from-jsonl PATH     Optional mixed log/JSONL payload source")
 	fmt.Fprintln(os.Stderr, "  --max-tokens N        Maximum allowed tokens")
 	fmt.Fprintln(os.Stderr, "  --max-seconds N       Maximum allowed elapsed seconds")
 	fmt.Fprintln(os.Stderr, "  --max-steps N         Maximum allowed step count")
@@ -668,7 +715,7 @@ func helpSessionHandoff() {
 	fmt.Fprintln(os.Stderr, "  --delta-from N        Incremental event offset (non-negative integer)")
 	fmt.Fprintln(os.Stderr, "  --cursor-file PATH    Persist/reuse incremental event offset")
 	fmt.Fprintln(os.Stderr, "  --compress MODE       Payload compression: none|zstd (default: none)")
-	fmt.Fprintln(os.Stderr, "  --schema MODE         Handoff schema: v1|v2|v3 (default: v1)")
+	fmt.Fprintln(os.Stderr, "  --schema MODE         Handoff schema: v1|v2|v3|v4 (default: v1)")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
 	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
@@ -713,6 +760,7 @@ func helpSessionRoute() {
 	fmt.Fprintln(os.Stderr, "  --topology CSV        Optional topology roles: planner,workers,reviewer")
 	fmt.Fprintln(os.Stderr, "  --cost-estimate       Include token/time cost estimate payload")
 	fmt.Fprintln(os.Stderr, "  --from-state PATH     Route using handoff/status JSON (use '-' for stdin)")
+	fmt.Fprintln(os.Stderr, "  --strict              Fail fast on invalid --from-state schema/fields")
 	fmt.Fprintln(os.Stderr, "  --project-root PATH   Project directory context (default: cwd)")
 	fmt.Fprintln(os.Stderr, "  --emit-runbook        Include executable runbook JSON steps")
 	fmt.Fprintln(os.Stderr, "  --json                JSON output")
@@ -888,6 +936,7 @@ func helpSessionSmoke() {
 	fmt.Fprintln(os.Stderr, "  --matrix-file PATH    Prompt matrix file: mode|prompt (mode=bypass|full-auto|any)")
 	fmt.Fprintln(os.Stderr, "  --chaos MODE          Fault mode: none|delay|drop-marker|fail-child|mixed")
 	fmt.Fprintln(os.Stderr, "  --chaos-report        Normalize chaos outcomes against expected-failure contracts")
+	fmt.Fprintln(os.Stderr, "  --contract-profile NAME  Command contract profile: none|full (default: none)")
 	fmt.Fprintln(os.Stderr, "  --llm-profile NAME    Profile preset: none|codex|claude|mixed")
 	fmt.Fprintln(os.Stderr, "  --model NAME          Optional codex model pin for smoke spawn sessions")
 	fmt.Fprintln(os.Stderr, "  --poll-interval N     Seconds between monitor polls (default: 1)")
@@ -896,6 +945,19 @@ func helpSessionSmoke() {
 	fmt.Fprintln(os.Stderr, "  --report-min          Emit compact CI-focused JSON summary")
 	fmt.Fprintln(os.Stderr, "  --export-artifacts PATH  Export smoke artifacts bundle to path")
 	fmt.Fprintln(os.Stderr, "  --json                JSON summary output")
+}
+
+func helpSessionStateSandbox() {
+	fmt.Fprintln(os.Stderr, "lisa session state-sandbox — objective/lane state sandbox controls")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Usage: lisa session state-sandbox [list|snapshot|restore|clear] [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --action MODE         Action alias: list|snapshot|restore|clear")
+	fmt.Fprintln(os.Stderr, "  --project-root PATH   Target project root (default: cwd)")
+	fmt.Fprintln(os.Stderr, "  --file PATH           Snapshot file path (required for restore)")
+	fmt.Fprintln(os.Stderr, "  --json                JSON output")
+	fmt.Fprintln(os.Stderr, "  --json-min            Minimal JSON output")
 }
 
 func helpSessionExists() {

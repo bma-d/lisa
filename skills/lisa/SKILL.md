@@ -2,8 +2,8 @@
 name: lisa
 description: lisa, tmux, orchestration, claude, codex, spawn, monitor, capture, nested, smoke, skills
 author: Claude Code
-version: 5.3.0
-date: 2026-02-23
+version: 5.4.0
+date: 2026-02-24
 tags: [lisa, tmux, orchestration, claude, codex, agents]
 ---
 
@@ -20,17 +20,19 @@ Axiom: minimum context, deterministic command contracts.
 5. For isolated validation, prefer `LISA_TMUX_SOCKET_DIR=/tmp/lisa-tmux-<tag>` and always pass `--project-root` (runtime computes per-project socket path).
 6. For JSON workflows, parse `stdout` contract payloads; treat `stderr` as diagnostics and use `stderrPolicy`.
 7. For marker-gated monitor (`--until-marker`), choose a unique marker not present in prompt text.
-8. In shared tmux environments, run `session guard --shared-tmux --json` before cleanup/kill-all actions.
-9. `session guard --shared-tmux` returning `safe:false` is expected risk signaling (often exit `1`); switch to `--project-only` flows.
-10. `capabilities` and `session schema` support `--json` but not `--json-min`.
+8. For mixed logs, use `budget-observe|budget-enforce --from-jsonl` (last valid JSON object wins).
+9. In shared tmux environments, run `session guard --shared-tmux --json` before cleanup/kill-all actions.
+10. `session guard --shared-tmux` returning `safe:false` is expected risk signaling (often exit `1`); switch to `--project-only` flows.
+11. `capabilities` and `session schema` support `--json` but not `--json-min`.
 
 ## LLM Fast Loop
 
 1. Contract gate first: `./lisa session preflight --project-root "$ROOT" --json`.
 2. Prompt gate before spawn: `./lisa session spawn --agent codex --mode exec --project-root "$ROOT" --prompt "$P" --dry-run --detect-nested --json`.
 3. For multi-step plans, derive deterministic steps via `./lisa session route --goal analysis --project-root "$ROOT" --emit-runbook --json`.
-4. Use compact polling defaults in loops: `session monitor --json-min --stream-json --emit-handoff`.
-5. Prefer resume-safe cursors in loops: `session capture --raw --cursor-file`, `session handoff --cursor-file`, `session packet --cursor-file`.
+4. Use compact polling defaults in loops: `session monitor --adaptive-poll --json-min --stream-json --emit-handoff`.
+5. Prefer resume-safe cursors in loops: `session capture --raw --cursor-file`, `session handoff --cursor-file`, `session packet --cursor-file --delta-json`.
+6. For deterministic single-turn control, use `session turn` instead of ad-hoc send+monitor+packet chaining.
 
 ## Crucial Commands
 
@@ -51,14 +53,18 @@ $LISA_BIN session preflight --agent codex --auto-model --project-root "$ROOT" --
 # spawn + monitor + capture + cleanup
 SESSION=$($LISA_BIN session spawn --agent codex --mode interactive --project-root "$ROOT" --prompt "Do X, then wait." --json | jq -r .session)
 $LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --until-state waiting_input --json-min --stream-json
+$LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --adaptive-poll --max-polls 40 --json-min
 $LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --until-state waiting_input --json-min --stream-json --emit-handoff --handoff-cursor-file /tmp/lisa.monitor.cursor
 $LISA_BIN session monitor --session "$SESSION" --project-root "$ROOT" --until-jsonpath '$.sessionState=waiting_input' --json-min
+$LISA_BIN session turn --session "$SESSION" --project-root "$ROOT" --text "Continue with one concrete step." --enter --max-polls 12 --json-min
 $LISA_BIN session snapshot --session "$SESSION" --project-root "$ROOT" --json-min
 $LISA_BIN session packet --session "$SESSION" --project-root "$ROOT" --cursor-file /tmp/lisa.packet.cursor --json-min
+$LISA_BIN session packet --session "$SESSION" --project-root "$ROOT" --cursor-file /tmp/lisa.packet.cursor --delta-json --json
 $LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --cursor-file /tmp/lisa.cursor --json-min
+$LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --strip-banner --json-min
 $LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --markers "DONE_MARKER,ERROR_MARKER" --markers-json --json
 $LISA_BIN session capture --session "$SESSION" --project-root "$ROOT" --raw --summary --summary-style ops --token-budget 320 --json
-$LISA_BIN session handoff --session "$SESSION" --project-root "$ROOT" --cursor-file /tmp/lisa.handoff.cursor --json-min
+$LISA_BIN session handoff --session "$SESSION" --project-root "$ROOT" --cursor-file /tmp/lisa.handoff.cursor --schema v4 --json-min
 $LISA_BIN session context-pack --for "$SESSION" --project-root "$ROOT" --strategy balanced --json-min
 $LISA_BIN session kill --session "$SESSION" --project-root "$ROOT" --json
 
@@ -79,11 +85,15 @@ $LISA_BIN session objective --project-root "$ROOT" --id sprint --goal "Ship nest
 $LISA_BIN session lane --project-root "$ROOT" --name planner --goal analysis --agent codex --mode interactive --contract "handoff_v2_required" --json
 $LISA_BIN session spawn --project-root "$ROOT" --lane planner --agent codex --mode interactive --prompt "Continue from current objective." --json
 $LISA_BIN session memory --session "$SESSION" --project-root "$ROOT" --refresh --max-lines 80 --ttl-hours 24 --json
-$LISA_BIN session handoff --session "$SESSION" --project-root "$ROOT" --schema v2 --json
-$LISA_BIN session route --project-root "$ROOT" --queue --json
+$LISA_BIN session handoff --session "$SESSION" --project-root "$ROOT" --schema v4 --json
+$LISA_BIN session route --project-root "$ROOT" --queue --strict --json
 $LISA_BIN session budget-plan --project-root "$ROOT" --goal analysis --budget 480 --topology planner,workers --json
+$LISA_BIN session budget-observe --from-jsonl /tmp/lisa.monitor.log --json
+$LISA_BIN session budget-enforce --from-jsonl /tmp/lisa.monitor.log --max-tokens 1200 --json
+$LISA_BIN session state-sandbox snapshot --project-root "$ROOT" --file /tmp/lisa.state.json --json
+$LISA_BIN session state-sandbox restore --file /tmp/lisa.state.json --json
 $LISA_BIN session guard --shared-tmux --policy-file ./guard-policy.json --command "./lisa cleanup --include-tmux-default" --json
-$LISA_BIN session smoke --project-root "$ROOT" --levels 1 --llm-profile mixed --report-min --json
+$LISA_BIN session smoke --project-root "$ROOT" --levels 1 --llm-profile mixed --contract-profile full --report-min --json
 $ROOT/scripts/lisa-contract-matrix.sh "$ROOT"
 ```
 
@@ -124,15 +134,17 @@ Exit/contract quick-map:
 - `session list --json-min --with-next-action` returns `items[]` detail rows plus `sessions[]` names.
 - `session detect-nested --why` can return `why.spans: []` on non-trigger prompts.
 - `autopilot` propagates failing step exit (`monitor` often `2` for timeout/terminal mismatch)
+- `monitor` timeout/degraded exits can still include useful partial payload; inspect JSON before retry.
 - `monitor --webhook` returns exit `1` (`errorCode:"webhook_emit_failed"`) if payload delivery fails.
 - `session guard --machine-policy strict` can return exit `1` (`errorCode:"shared_tmux_risk_detected"`) without `--enforce`.
-- If active lane contract includes `handoff_v2_required`, `session handoff --json-min` requires `--schema v2` (or `v3`) and otherwise returns `errorCode:"handoff_schema_v2_required"`.
+- If active lane contract includes `handoff_v2_required`, `session handoff --json-min` requires `--schema v2|v3|v4` and otherwise returns `errorCode:"handoff_schema_v2_required"`.
 
 Validated edge contracts (2026-02-23):
 - `cleanup --project-root ...` is an unknown flag (`errorCode:"unknown_flag"`).
 - `session guard --shared-tmux --command "./lisa cleanup --include-tmux-default"` hard-fails with `machine-policy strict` (exit `1`) even without `--enforce`.
 - `session monitor --stream-json --emit-handoff` emits both `type:"poll"` and `type:"handoff"` lines before final payload.
 - `session monitor --webhook <unreachable>` exits `1` with `errorCode:"webhook_emit_failed"`.
+- `session route --strict` accepts `nextAction.commandAst.args` as either typed array entries or object shorthand map.
 - `skills doctor --contract-check` can exit `1` for install drift even when contract checks are all `ok:true`.
 - `session diff-pack` now resolves state under per-project runtime env; false `session_not_found` under mixed socket contexts is fixed.
 

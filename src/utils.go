@@ -264,7 +264,7 @@ func filterCaptureNoise(input string) string {
 		}
 		out = append(out, line)
 	}
-	return strings.Join(out, "\n")
+	return filterCaptureBannerChrome(strings.Join(out, "\n"))
 }
 
 func isCaptureNoiseLine(trimmed string) bool {
@@ -297,6 +297,86 @@ func isCaptureNoiseLine(trimmed string) bool {
 	case strings.Contains(lower, "codex_core::rollout::list: state db missing rollout path"):
 		return true
 	case strings.Contains(lower, "codex_core::state_db: state db record_discrepancy"):
+		return true
+	default:
+		return false
+	}
+}
+
+func filterCaptureBannerChrome(input string) string {
+	lines := trimLines(input)
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		if isCaptureBannerBorderLine(trimmed) {
+			end := -1
+			for j := i + 1; j < len(lines); j++ {
+				if isCaptureBannerBorderLine(strings.TrimSpace(lines[j])) {
+					end = j
+					break
+				}
+			}
+			if end > i {
+				if isCodexBannerBlock(lines[i : end+1]) {
+					i = end
+					continue
+				}
+			}
+		}
+		if isStandaloneBannerChromeLine(trimmed) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func isCaptureBannerBorderLine(trimmed string) bool {
+	if trimmed == "" {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(trimmed, "╭"), strings.HasPrefix(trimmed, "╰"), strings.HasPrefix(trimmed, "┌"), strings.HasPrefix(trimmed, "└"):
+		return strings.Contains(trimmed, "─") || strings.Contains(trimmed, "═") || strings.Contains(trimmed, "-")
+	default:
+		return false
+	}
+}
+
+func isCodexBannerBlock(lines []string) bool {
+	hasCodex := false
+	hasBannerSignals := false
+	for _, line := range lines {
+		lower := strings.ToLower(strings.TrimSpace(line))
+		switch {
+		case strings.Contains(lower, "codex"):
+			hasCodex = true
+		}
+		switch {
+		case strings.Contains(lower, "model:"),
+			strings.Contains(lower, "directory:"),
+			strings.Contains(lower, "approval:"),
+			strings.Contains(lower, "sandbox:"),
+			strings.Contains(lower, "session id"),
+			strings.Contains(lower, "update available"),
+			strings.Contains(lower, "getting started"):
+			hasBannerSignals = true
+		}
+	}
+	return hasCodex && hasBannerSignals
+}
+
+func isStandaloneBannerChromeLine(trimmed string) bool {
+	lower := strings.ToLower(trimmed)
+	switch {
+	case strings.Contains(lower, "codex update available"):
+		return true
+	case strings.HasPrefix(lower, "update available") && strings.Contains(lower, "codex"):
+		return true
+	case strings.Contains(lower, "run `codex") && strings.Contains(lower, "update"):
+		return true
+	case strings.Contains(lower, "run codex") && strings.Contains(lower, "update"):
 		return true
 	default:
 		return false

@@ -89,7 +89,19 @@ type routeStateInput struct {
 	Status       string `json:"status"`
 	SessionState string `json:"sessionState"`
 	Reason       string `json:"reason"`
-	NextAction   string `json:"nextAction"`
+	NextAction   any    `json:"nextAction,omitempty"`
+}
+
+type routeStateValidationError struct {
+	Code    string
+	Message string
+}
+
+func (e *routeStateValidationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Code + ": " + e.Message
 }
 
 func cmdSessionHandoff(args []string) int {
@@ -193,8 +205,10 @@ func cmdSessionHandoff(args []string) int {
 		schemaVersion = "v2"
 	case "3", "v3":
 		schemaVersion = "v3"
+	case "4", "v4":
+		schemaVersion = "v4"
 	default:
-		return commandErrorf(jsonOut, "invalid_schema", "invalid --schema: %s (expected v1|v2|v3)", schemaVersion)
+		return commandErrorf(jsonOut, "invalid_schema", "invalid --schema: %s (expected v1|v2|v3|v4)", schemaVersion)
 	}
 	var err error
 	compressMode, err = parseHandoffCompressMode(compressMode)
@@ -344,28 +358,28 @@ func cmdSessionHandoff(args []string) int {
 		if status.SessionState == "not_found" {
 			payload["errorCode"] = "session_not_found"
 		}
-		if schemaVersion == "v2" || schemaVersion == "v3" {
-			payload["state"] = map[string]any{
+		if schemaVersion == "v2" || schemaVersion == "v3" || schemaVersion == "v4" {
+			statePayload := map[string]any{
 				"status":       status.Status,
 				"sessionState": status.SessionState,
 				"reason":       status.ClassificationReason,
 				"summary":      summary,
 			}
-			payload["nextAction"] = map[string]any{
+			nextActionPayload := map[string]any{
 				"name":    nextAction,
 				"command": recommendedCommandForAction(nextAction, session, projectRoot),
 			}
 			payload["risks"] = risks
 			payload["openQuestions"] = openQuestions
-			if schemaVersion == "v3" {
-				payload["state"] = map[string]any{
+			if schemaVersion == "v3" || schemaVersion == "v4" {
+				statePayload = map[string]any{
 					"id":           deterministicHandoffID(session, status.SessionState, "state", 0),
 					"status":       status.Status,
 					"sessionState": status.SessionState,
 					"reason":       status.ClassificationReason,
 					"summary":      summary,
 				}
-				payload["nextAction"] = map[string]any{
+				nextActionPayload = map[string]any{
 					"id":      deterministicHandoffID(session, status.SessionState, "nextAction:"+nextAction, nextOffset),
 					"name":    nextAction,
 					"command": recommendedCommandForAction(nextAction, session, projectRoot),
@@ -373,6 +387,11 @@ func cmdSessionHandoff(args []string) int {
 				payload["risks"] = handoffRisksV3(session, status.SessionState, risks)
 				payload["openQuestions"] = handoffQuestionsV3(session, status.SessionState, openQuestions)
 			}
+			if schemaVersion == "v4" {
+				nextActionPayload["commandAst"] = recommendedCommandASTForAction(nextAction, session, projectRoot)
+			}
+			payload["state"] = statePayload
+			payload["nextAction"] = nextActionPayload
 		}
 		if compressMode != "none" {
 			compressInput := map[string]any{
@@ -772,6 +791,7 @@ func cmdSessionRoute(args []string) int {
 	laneNestingIntentOverride := ""
 	costEstimate := false
 	fromState := ""
+	strictFromState := false
 	jsonOut := hasJSONFlag(args)
 
 	for i := 0; i < len(args); i++ {
@@ -874,6 +894,8 @@ func cmdSessionRoute(args []string) int {
 			}
 			fromState = strings.TrimSpace(args[i+1])
 			i++
+		case "--strict":
+			strictFromState = true
 		case "--json":
 			jsonOut = true
 		default:
@@ -974,9 +996,13 @@ func cmdSessionRoute(args []string) int {
 	}
 	var parsedFromState *routeStateInput
 	if fromState != "" {
-		parsedFromState, err = loadRouteStateInput(fromState)
+		parsedFromState, err = loadRouteStateInputWithStrict(fromState, strictFromState)
 		if err != nil {
-			return commandErrorf(jsonOut, "invalid_from_state", "failed to load --from-state: %v", err)
+			errorCode := "invalid_from_state"
+			if strictFromState {
+				errorCode = "invalid_from_state_strict"
+			}
+			return commandErrorf(jsonOut, errorCode, "failed to load --from-state: %v", err)
 		}
 	}
 	if strings.TrimSpace(prompt) == "" {
@@ -2357,8 +2383,9 @@ func routePromptFromState(input routeStateInput, fallback string) string {
 	session := strings.TrimSpace(input.Session)
 	state := strings.TrimSpace(input.SessionState)
 	reason := strings.TrimSpace(input.Reason)
-	next := strings.TrimSpace(input.NextAction)
-	if session == "" && state == "" && reason == "" && next == "" {
+	nextAction := routeStateNextActionSummary(input.NextAction)
+	nextCommand := routeStateNextActionCommand(input.NextAction)
+	if session == "" && state == "" && reason == "" && !routeStateHasValue(input.NextAction) {
 		return fallback
 	}
 	lines := []string{"Continue orchestration from existing state context."}
@@ -2371,14 +2398,21 @@ func routePromptFromState(input routeStateInput, fallback string) string {
 	if reason != "" {
 		lines = append(lines, "Reason: "+reason)
 	}
-	if next != "" {
-		lines = append(lines, "Recommended next action: "+next)
+	if nextAction != "" {
+		lines = append(lines, "Recommended next action: "+nextAction)
+	}
+	if nextCommand != "" && nextCommand != nextAction {
+		lines = append(lines, "Recommended command: "+nextCommand)
 	}
 	lines = append(lines, "Return concrete next steps.")
 	return strings.Join(lines, "\n")
 }
 
 func loadRouteStateInput(from string) (*routeStateInput, error) {
+	return loadRouteStateInputWithStrict(from, false)
+}
+
+func loadRouteStateInputWithStrict(from string, strict bool) (*routeStateInput, error) {
 	source := strings.TrimSpace(from)
 	if source == "" {
 		return nil, fmt.Errorf("empty from-state source")
@@ -2400,16 +2434,31 @@ func loadRouteStateInput(from string) (*routeStateInput, error) {
 	}
 
 	// Accept both handoff/status payload shapes.
-	var generic map[string]any
-	if err := json.Unmarshal(raw, &generic); err != nil {
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, err
+	}
+	generic, ok := decoded.(map[string]any)
+	if !ok {
+		if strict {
+			return nil, &routeStateValidationError{
+				Code:    "from_state_not_object",
+				Message: "from-state payload must be a JSON object",
+			}
+		}
+		return nil, fmt.Errorf("from-state payload must be a JSON object")
+	}
+	nextActionRaw, hasNextAction := generic["nextAction"]
+	var nextAction any
+	if hasNextAction {
+		nextAction = normalizeRouteStateValue(nextActionRaw)
 	}
 	input := routeStateInput{
 		Session:      mapStringValue(generic, "session"),
 		Status:       mapStringValue(generic, "status"),
 		SessionState: mapStringValue(generic, "sessionState"),
 		Reason:       mapStringValue(generic, "reason"),
-		NextAction:   mapStringValue(generic, "nextAction"),
+		NextAction:   nextAction,
 	}
 	if input.Reason == "" {
 		input.Reason = mapStringValue(generic, "classificationReason")
@@ -2417,10 +2466,363 @@ func loadRouteStateInput(from string) (*routeStateInput, error) {
 	if input.Status == "" && input.SessionState != "" {
 		input.Status = input.SessionState
 	}
-	if input.Session == "" && input.SessionState == "" && input.Reason == "" && input.NextAction == "" {
+	if strict {
+		if validateErr := validateRouteStateInputStrict(generic, input); validateErr != nil {
+			return nil, validateErr
+		}
+	}
+	if input.Session == "" && input.SessionState == "" && input.Reason == "" && !routeStateHasValue(input.NextAction) {
 		return nil, fmt.Errorf("from-state payload missing session/state fields")
 	}
 	return &input, nil
+}
+
+func normalizeRouteStateValue(raw any) any {
+	switch typed := raw.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, normalizeRouteStateValue(item))
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, value := range typed {
+			out[key] = normalizeRouteStateValue(value)
+		}
+		return out
+	default:
+		return raw
+	}
+}
+
+func routeStateHasValue(raw any) bool {
+	switch typed := raw.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case map[string]any:
+		return len(typed) > 0
+	case []any:
+		return len(typed) > 0
+	default:
+		return true
+	}
+}
+
+func routeStateNextActionSummary(raw any) string {
+	switch typed := raw.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]any:
+		if name := mapStringValue(typed, "name"); name != "" {
+			return name
+		}
+		if command := mapStringValue(typed, "command"); command != "" {
+			return command
+		}
+		if astRaw, ok := typed["commandAst"]; ok && astRaw != nil {
+			if ast, ok := astRaw.(map[string]any); ok {
+				parts := commandASTSubcommands(ast)
+				if len(parts) > 0 {
+					return strings.Join(parts, " ")
+				}
+			}
+		}
+		return ""
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", typed))
+	}
+}
+
+func routeStateNextActionCommand(raw any) string {
+	nextAction, ok := raw.(map[string]any)
+	if !ok {
+		return ""
+	}
+	if command := mapStringValue(nextAction, "command"); command != "" {
+		return command
+	}
+	if astRaw, ok := nextAction["commandAst"]; ok && astRaw != nil {
+		if ast, ok := astRaw.(map[string]any); ok {
+			if argv := commandASTArgv(ast); len(argv) > 0 {
+				return strings.Join(argv, " ")
+			}
+		}
+	}
+	return ""
+}
+
+func validateRouteStateInputStrict(generic map[string]any, input routeStateInput) error {
+	sessionRaw, hasSession := generic["session"]
+	if !hasSession || sessionRaw == nil {
+		return &routeStateValidationError{
+			Code:    "from_state_missing_session",
+			Message: "session is required",
+		}
+	}
+	sessionString, ok := sessionRaw.(string)
+	if !ok {
+		return &routeStateValidationError{
+			Code:    "from_state_invalid_session_type",
+			Message: "session must be a string",
+		}
+	}
+	if strings.TrimSpace(sessionString) == "" {
+		return &routeStateValidationError{
+			Code:    "from_state_empty_session",
+			Message: "session must be non-empty",
+		}
+	}
+	if err := validateRouteStateOptionalStringField(generic, "status"); err != nil {
+		return err
+	}
+	if err := validateRouteStateOptionalStringField(generic, "sessionState"); err != nil {
+		return err
+	}
+	if err := validateRouteStateOptionalStringField(generic, "reason"); err != nil {
+		return err
+	}
+	if err := validateRouteStateOptionalStringField(generic, "classificationReason"); err != nil {
+		return err
+	}
+	if nextActionRaw, ok := generic["nextAction"]; ok {
+		if err := validateRouteStateNextActionStrict(nextActionRaw); err != nil {
+			return err
+		}
+	}
+	if input.Status == "" && input.SessionState == "" && input.Reason == "" && !routeStateHasValue(input.NextAction) {
+		return &routeStateValidationError{
+			Code:    "from_state_missing_state",
+			Message: "status/sessionState/reason/nextAction is required",
+		}
+	}
+	return nil
+}
+
+func validateRouteStateOptionalStringField(generic map[string]any, key string) error {
+	raw, ok := generic[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	if _, ok := raw.(string); ok {
+		return nil
+	}
+	return &routeStateValidationError{
+		Code:    "from_state_invalid_" + key + "_type",
+		Message: key + " must be a string",
+	}
+}
+
+func validateRouteStateNextActionStrict(raw any) error {
+	switch typed := raw.(type) {
+	case nil:
+		return nil
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return &routeStateValidationError{
+				Code:    "from_state_empty_next_action",
+				Message: "nextAction string must be non-empty",
+			}
+		}
+		return nil
+	case map[string]any:
+		hasName := false
+		if nameRaw, ok := typed["name"]; ok && nameRaw != nil {
+			name, ok := nameRaw.(string)
+			if !ok {
+				return &routeStateValidationError{
+					Code:    "from_state_invalid_next_action_name_type",
+					Message: "nextAction.name must be a string",
+				}
+			}
+			if strings.TrimSpace(name) == "" {
+				return &routeStateValidationError{
+					Code:    "from_state_empty_next_action_name",
+					Message: "nextAction.name must be non-empty",
+				}
+			}
+			hasName = true
+		}
+		hasCommand := false
+		if commandRaw, ok := typed["command"]; ok && commandRaw != nil {
+			command, ok := commandRaw.(string)
+			if !ok {
+				return &routeStateValidationError{
+					Code:    "from_state_invalid_next_action_command_type",
+					Message: "nextAction.command must be a string",
+				}
+			}
+			if strings.TrimSpace(command) == "" {
+				return &routeStateValidationError{
+					Code:    "from_state_empty_next_action_command",
+					Message: "nextAction.command must be non-empty",
+				}
+			}
+			hasCommand = true
+		}
+		hasAST := false
+		if astRaw, ok := typed["commandAst"]; ok && astRaw != nil {
+			hasAST = true
+			ast, ok := astRaw.(map[string]any)
+			if !ok {
+				return &routeStateValidationError{
+					Code:    "from_state_invalid_next_action_command_ast_type",
+					Message: "nextAction.commandAst must be an object",
+				}
+			}
+			if err := validateRouteStateCommandASTStrict(ast); err != nil {
+				return err
+			}
+		}
+		if !hasName && !hasCommand && !hasAST {
+			return &routeStateValidationError{
+				Code:    "from_state_invalid_next_action_object",
+				Message: "nextAction object must include name, command, or commandAst",
+			}
+		}
+		return nil
+	default:
+		return &routeStateValidationError{
+			Code:    "from_state_invalid_next_action_type",
+			Message: "nextAction must be a string or object",
+		}
+	}
+}
+
+func validateRouteStateCommandASTStrict(ast map[string]any) error {
+	if err := validateRouteStateOptionalStringField(ast, "schema"); err != nil {
+		return wrapRouteStateValidationError(err, "nextAction.commandAst.")
+	}
+	if err := validateRouteStateOptionalStringField(ast, "binary"); err != nil {
+		return wrapRouteStateValidationError(err, "nextAction.commandAst.")
+	}
+	if subcommandsRaw, ok := ast["subcommands"]; ok && subcommandsRaw != nil {
+		if _, err := commandASTSubcommandsFromAny(subcommandsRaw); err != nil {
+			return &routeStateValidationError{
+				Code:    "from_state_invalid_next_action_command_ast_subcommands",
+				Message: "nextAction.commandAst.subcommands must be []string",
+			}
+		}
+	}
+	argsRaw, ok := ast["args"]
+	if !ok || argsRaw == nil {
+		return &routeStateValidationError{
+			Code:    "from_state_missing_next_action_command_ast_args",
+			Message: "nextAction.commandAst.args is required",
+		}
+	}
+	args, err := commandASTArgsFromAny(argsRaw)
+	if err != nil {
+		return &routeStateValidationError{
+			Code:    "from_state_invalid_next_action_command_ast_args_type",
+			Message: "nextAction.commandAst.args must be an array or object",
+		}
+	}
+	for idx, raw := range args {
+		arg := raw
+		nameRaw, ok := arg["name"]
+		if !ok || nameRaw == nil {
+			return &routeStateValidationError{
+				Code:    "from_state_missing_next_action_command_ast_arg_name",
+				Message: fmt.Sprintf("nextAction.commandAst.args[%d].name is required", idx),
+			}
+		}
+		name, ok := nameRaw.(string)
+		if !ok || strings.TrimSpace(name) == "" {
+			return &routeStateValidationError{
+				Code:    "from_state_invalid_next_action_command_ast_arg_name",
+				Message: fmt.Sprintf("nextAction.commandAst.args[%d].name must be a non-empty string", idx),
+			}
+		}
+		typRaw, ok := arg["type"]
+		if !ok || typRaw == nil {
+			return &routeStateValidationError{
+				Code:    "from_state_missing_next_action_command_ast_arg_type",
+				Message: fmt.Sprintf("nextAction.commandAst.args[%d].type is required", idx),
+			}
+		}
+		typ, ok := typRaw.(string)
+		if !ok || strings.TrimSpace(typ) == "" {
+			return &routeStateValidationError{
+				Code:    "from_state_invalid_next_action_command_ast_arg_type_name",
+				Message: fmt.Sprintf("nextAction.commandAst.args[%d].type must be a non-empty string", idx),
+			}
+		}
+		value, ok := arg["value"]
+		if !ok {
+			return &routeStateValidationError{
+				Code:    "from_state_missing_next_action_command_ast_arg_value",
+				Message: fmt.Sprintf("nextAction.commandAst.args[%d].value is required", idx),
+			}
+		}
+		if !routeStateArgValueMatchesType(typ, value) {
+			return &routeStateValidationError{
+				Code:    "from_state_invalid_next_action_command_ast_arg_value",
+				Message: fmt.Sprintf("nextAction.commandAst.args[%d].value does not match type %q", idx, typ),
+			}
+		}
+	}
+	return nil
+}
+
+func wrapRouteStateValidationError(err error, prefix string) error {
+	if err == nil {
+		return nil
+	}
+	stateErr, ok := err.(*routeStateValidationError)
+	if !ok {
+		return err
+	}
+	return &routeStateValidationError{
+		Code:    stateErr.Code,
+		Message: prefix + stateErr.Message,
+	}
+}
+
+func routeStateArgValueMatchesType(typ string, value any) bool {
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "bool", "boolean":
+		_, ok := value.(bool)
+		return ok
+	case "int", "integer":
+		switch typed := value.(type) {
+		case int, int32, int64, uint, uint32, uint64:
+			return true
+		case float64:
+			return typed == float64(int64(typed))
+		case float32:
+			return typed == float32(int64(typed))
+		case json.Number:
+			_, err := typed.Int64()
+			return err == nil
+		default:
+			return false
+		}
+	case "number", "float":
+		switch value.(type) {
+		case int, int32, int64, uint, uint32, uint64, float64, float32, json.Number:
+			return true
+		default:
+			return false
+		}
+	case "array":
+		_, ok := value.([]any)
+		return ok
+	case "object":
+		_, ok := value.(map[string]any)
+		return ok
+	default:
+		return false
+	}
 }
 
 func mapStringValue(m map[string]any, key string) string {
@@ -2517,6 +2919,291 @@ func recommendedCommandForAction(action, session, projectRoot string) string {
 		return "./lisa session spawn --agent codex --mode interactive --project-root " + shellQuote(projectRoot) + " --json"
 	default:
 		return "./lisa session status --session " + shellQuote(session) + " --project-root " + shellQuote(projectRoot) + " --json-min"
+	}
+}
+
+func recommendedCommandASTForAction(action, session, projectRoot string) map[string]any {
+	binary := "./lisa"
+	subcommands := []string{"session", "status"}
+	args := []map[string]any{
+		commandASTArg("session", "--session", "string", session),
+		commandASTArg("projectRoot", "--project-root", "string", projectRoot),
+		commandASTArg("jsonMin", "--json-min", "bool", true),
+	}
+	switch action {
+	case "session send":
+		subcommands = []string{"session", "send"}
+		args = []map[string]any{
+			commandASTArg("session", "--session", "string", session),
+			commandASTArg("projectRoot", "--project-root", "string", projectRoot),
+			commandASTArg("text", "--text", "string", "Continue from objective and latest state."),
+			commandASTArg("enter", "--enter", "bool", true),
+			commandASTArg("jsonMin", "--json-min", "bool", true),
+		}
+	case "session monitor":
+		subcommands = []string{"session", "monitor"}
+		args = []map[string]any{
+			commandASTArg("session", "--session", "string", session),
+			commandASTArg("projectRoot", "--project-root", "string", projectRoot),
+			commandASTArg("jsonMin", "--json-min", "bool", true),
+		}
+	case "session capture":
+		subcommands = []string{"session", "capture"}
+		args = []map[string]any{
+			commandASTArg("session", "--session", "string", session),
+			commandASTArg("projectRoot", "--project-root", "string", projectRoot),
+			commandASTArg("raw", "--raw", "bool", true),
+			commandASTArg("summary", "--summary", "bool", true),
+			commandASTArg("summaryStyle", "--summary-style", "string", "ops"),
+			commandASTArg("json", "--json", "bool", true),
+		}
+	case "session explain":
+		subcommands = []string{"session", "explain"}
+		args = []map[string]any{
+			commandASTArg("session", "--session", "string", session),
+			commandASTArg("projectRoot", "--project-root", "string", projectRoot),
+			commandASTArg("events", "--events", "int", 40),
+			commandASTArg("jsonMin", "--json-min", "bool", true),
+		}
+	case "session spawn":
+		subcommands = []string{"session", "spawn"}
+		args = []map[string]any{
+			commandASTArg("agent", "--agent", "string", "codex"),
+			commandASTArg("mode", "--mode", "string", "interactive"),
+			commandASTArg("projectRoot", "--project-root", "string", projectRoot),
+			commandASTArg("json", "--json", "bool", true),
+		}
+	}
+	ast := map[string]any{
+		"schema":      "lisa.command.ast.v1",
+		"binary":      binary,
+		"subcommands": subcommands,
+		"args":        args,
+	}
+	ast["argv"] = commandASTArgv(ast)
+	return ast
+}
+
+func commandASTArg(name, flag, typ string, value any) map[string]any {
+	return map[string]any{
+		"name":  name,
+		"flag":  flag,
+		"type":  typ,
+		"value": value,
+	}
+}
+
+func commandASTSubcommands(ast map[string]any) []string {
+	parts, err := commandASTSubcommandsFromAny(ast["subcommands"])
+	if err != nil {
+		return nil
+	}
+	return parts
+}
+
+func commandASTSubcommandsFromAny(raw any) ([]string, error) {
+	switch typed := raw.(type) {
+	case nil:
+		return []string{}, nil
+	case []string:
+		out := make([]string, 0, len(typed))
+		for _, part := range typed {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+		return out, nil
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			value, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid command ast subcommand type: %T", item)
+			}
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return nil, fmt.Errorf("invalid command ast subcommand: empty string")
+			}
+			out = append(out, value)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("invalid command ast subcommands type: %T", raw)
+	}
+}
+
+func commandASTArgs(ast map[string]any) []map[string]any {
+	raw, ok := ast["args"]
+	if !ok || raw == nil {
+		return []map[string]any{}
+	}
+	args, err := commandASTArgsFromAny(raw)
+	if err != nil {
+		return []map[string]any{}
+	}
+	return args
+}
+
+func commandASTArgsFromAny(raw any) ([]map[string]any, error) {
+	switch typed := raw.(type) {
+	case []map[string]any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, item)
+		}
+		return out, nil
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			m, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid command ast arg type: %T", item)
+			}
+			out = append(out, m)
+		}
+		return out, nil
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		out := make([]map[string]any, 0, len(keys))
+		for _, key := range keys {
+			name := strings.TrimSpace(key)
+			if name == "" {
+				return nil, fmt.Errorf("invalid command ast arg key: empty")
+			}
+			value := typed[key]
+			if nested, ok := value.(map[string]any); ok {
+				arg := map[string]any{}
+				if nestedName := mapStringValue(nested, "name"); nestedName != "" {
+					arg["name"] = nestedName
+				} else {
+					arg["name"] = name
+				}
+				if flag := mapStringValue(nested, "flag"); flag != "" {
+					arg["flag"] = flag
+				}
+				nestedValue, hasValue := nested["value"]
+				if !hasValue {
+					return nil, fmt.Errorf("command ast arg %q missing value", name)
+				}
+				typ := mapStringValue(nested, "type")
+				if typ == "" {
+					typ = inferCommandASTArgType(nestedValue)
+				}
+				arg["type"] = typ
+				arg["value"] = nestedValue
+				out = append(out, arg)
+				continue
+			}
+			out = append(out, map[string]any{
+				"name":  name,
+				"flag":  "--" + name,
+				"type":  inferCommandASTArgType(value),
+				"value": value,
+			})
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("invalid command ast args type: %T", raw)
+	}
+}
+
+func inferCommandASTArgType(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return "string"
+	case bool:
+		return "bool"
+	case int, int32, int64, uint, uint32, uint64:
+		return "int"
+	case float32:
+		if typed == float32(int64(typed)) {
+			return "int"
+		}
+		return "number"
+	case float64:
+		if typed == float64(int64(typed)) {
+			return "int"
+		}
+		return "number"
+	case json.Number:
+		if _, err := typed.Int64(); err == nil {
+			return "int"
+		}
+		return "number"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		return "string"
+	}
+}
+
+func commandASTArgv(ast map[string]any) []string {
+	binary := mapStringValue(ast, "binary")
+	if binary == "" {
+		binary = "./lisa"
+	}
+	argv := []string{binary}
+	argv = append(argv, commandASTSubcommands(ast)...)
+	for _, arg := range commandASTArgs(ast) {
+		flag := mapStringValue(arg, "flag")
+		if flag == "" {
+			name := mapStringValue(arg, "name")
+			if name != "" {
+				flag = "--" + name
+			}
+		}
+		typ := strings.ToLower(strings.TrimSpace(mapStringValue(arg, "type")))
+		value, hasValue := arg["value"]
+		if typ == "bool" || typ == "boolean" {
+			enabled, ok := value.(bool)
+			if ok && enabled && flag != "" {
+				argv = append(argv, flag)
+			}
+			continue
+		}
+		if flag != "" {
+			argv = append(argv, flag)
+		}
+		if hasValue && value != nil {
+			argv = append(argv, commandASTValueString(value))
+		}
+	}
+	return argv
+}
+
+func commandASTValueString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case int:
+		return strconv.Itoa(typed)
+	case int32:
+		return strconv.Itoa(int(typed))
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case uint:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint64:
+		return strconv.FormatUint(typed, 10)
+	case float32:
+		return strconv.FormatFloat(float64(typed), 'f', -1, 32)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(typed)
+	case json.Number:
+		return typed.String()
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", typed))
 	}
 }
 

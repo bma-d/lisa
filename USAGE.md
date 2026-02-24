@@ -41,19 +41,36 @@ lisa session name
 lisa session spawn
 lisa session detect-nested
 lisa session send
+lisa session turn
 lisa session snapshot
 lisa session status
 lisa session explain
 lisa session monitor
 lisa session capture
+lisa session contract-check
 lisa session schema
 lisa session checkpoint
 lisa session dedupe
+lisa session next
+lisa session aggregate
+lisa session prompt-lint
+lisa session diff-pack
+lisa session loop
+lisa session context-cache
+lisa session anomaly
+lisa session budget-observe
+lisa session budget-enforce
+lisa session budget-plan
+lisa session replay
 lisa session handoff
 lisa session packet
 lisa session context-pack
 lisa session route
 lisa session autopilot
+lisa session objective
+lisa session memory
+lisa session lane
+lisa session state-sandbox
 lisa session guard
 lisa session tree
 lisa session smoke
@@ -416,6 +433,31 @@ Behavior notes:
 - When objective metadata is active for a session, Lisa prepends an `Objective reminder: ...` block to `--text` payloads before sending input.
 - For Codex interactive sessions, `--text ... --enter` uses a staged submit path (paste, short settle, then Enter) to improve multi-turn follow-up reliability.
 
+### `session turn`
+
+One-shot orchestration turn: `send -> monitor -> packet`.
+
+```bash
+lisa session turn --session <NAME> --text "Continue from latest blocker summary" --enter --json
+lisa session turn --session <NAME> --keys "C-c" --expect terminal --json-min
+```
+
+Flags:
+
+- `--session` (required)
+- `--project-root` (default cwd)
+- `--text` or `--keys` (exactly one required)
+- `--enter`
+- monitor pass-through: `--agent`, `--mode`, `--expect`, `--poll-interval`, `--max-polls`, `--timeout-seconds`, `--stop-on-waiting`, `--waiting-requires-turn-complete`, `--until-marker`, `--until-state`, `--until-jsonpath`, `--auto-recover`, `--recover-max`, `--recover-budget`
+- packet pass-through: `--lines`, `--events`, `--token-budget`, `--summary-style`, `--cursor-file`, `--fields`
+- `--json`
+- `--json-min`
+
+Behavior notes:
+
+- Returns step-scoped failure payload (`failedStep`, `errorCode`) and propagates non-zero exit from the failing step.
+- `--json-min` returns compact turn outcome (`session`, `finalState`, `exitReason`, `status`, `sessionState`, `nextAction` when available).
+
 ### `session snapshot`
 
 One-shot poll helper: status + raw capture + `nextOffset` in one call.
@@ -505,6 +547,7 @@ Flags:
 - `--mode`: `auto|interactive|exec`
 - `--project-root`
 - `--poll-interval N` seconds (default `30`)
+- `--adaptive-poll`: auto-tune poll interval by heartbeat/state health
 - `--max-polls N` (default `120`)
 - `--timeout-seconds N`: optional wall-clock timeout budget in seconds
 - `--stop-on-waiting true|false` (default `true`)
@@ -545,6 +588,7 @@ When `--until-marker` is set and marker text appears in pane output, monitor exi
 In interactive multi-turn flows, default `--stop-on-waiting true` can exit early with `waiting_input` before a later marker appears; for deterministic follow-up marker gating, use `--stop-on-waiting false` (or `--waiting-requires-turn-complete true` when transcript metadata is available).
 `--expect terminal` fails fast on `marker_found`/`waiting_input` success cases (`exitReason=expected_terminal_got_*`, exit `2`).
 `--expect marker` fails fast if a terminal/waiting reason occurs before marker match (`exitReason=expected_marker_got_*`, exit `2`).
+On timeout/degraded exits, JSON can still include useful intermediate payloads; treat non-zero as contract signal, not empty output.
 
 Exit code behavior:
 
@@ -576,6 +620,7 @@ Flags:
 - `--semantic-delta`: return meaning-level delta (`semanticDelta`) against semantic cursor state (`--raw` only)
 - `--keep-noise`: keep Codex/MCP startup noise in pane capture
 - `--strip-noise`: compatibility alias to force default noise filtering
+- `--strip-banner`: remove status/banner chrome from raw capture output
 - `--lines N`: pane lines for raw capture (default `200`)
 - `--project-root`
 - `--json`
@@ -689,14 +734,18 @@ Flags:
 - `--mode`: `auto|interactive|exec`
 - `--events N` (default `8`)
 - `--delta-from N`: incremental event offset (non-negative integer)
+- `--cursor-file PATH`: persist/reuse incremental event offset
+- `--compress MODE`: `none|zstd` (default `none`)
+- `--schema MODE`: `v1|v2|v3|v4` (default `v1`)
 - `--json`
 - `--json-min`
 
 Delta handoff behavior:
 
 - `--delta-from` returns events after that offset and includes `nextDeltaOffset` for next incremental pull.
+- `--schema v4` emits typed `nextAction.commandAst` plus deterministic action identifiers.
 - `--json-min` still includes the compact `recent` delta list when `--delta-from` is used.
-- If active lane contract includes `handoff_v2_required`, handoff requires `--schema v2` (or `v3`) and returns `errorCode=handoff_schema_v2_required` otherwise.
+- If active lane contract includes `handoff_v2_required`, handoff requires `--schema v2|v3|v4` and returns `errorCode=handoff_schema_v2_required` otherwise.
 
 ### `session packet`
 
@@ -719,6 +768,7 @@ Flags:
 - `--token-budget N` (default `320`)
 - `--summary-style`: `terse|ops|debug` (default `ops`)
 - `--cursor-file PATH`: persist/reuse handoff delta offset
+- `--delta-json`: include field-level packet delta payloads (`--cursor-file` required)
 - `--fields CSV`: project JSON payload to selected fields (requires `--json`)
 - `--json`
 - `--json-min`
@@ -727,6 +777,7 @@ Behavior notes:
 
 - `--json-min` emits compact packet fields plus `recent`.
 - `--cursor-file` switches handoff output to incremental delta fields: `deltaFrom`, `nextDeltaOffset`, `deltaCount`.
+- `--delta-json` emits `delta.added|removed|changed` for selected packet fields and persists cursor snapshots.
 - `--fields` supports dotted JSON path projection for low-token caller payloads.
 - Missing session still emits packet JSON with `errorCode=session_not_found` and exits non-zero.
 
@@ -785,6 +836,7 @@ Flags:
 - `--topology CSV`: optional roles `planner,workers,reviewer`
 - `--cost-estimate`: include token/time estimate payload
 - `--from-state PATH`: route using handoff/status JSON payload (`-` for stdin)
+- `--strict`: fail fast on invalid `--from-state` schema/fields
 - `--project-root`
 - `--emit-runbook`: include executable spawn/monitor/capture/handoff/cleanup plan JSON
 - `--json`
@@ -795,6 +847,7 @@ Behavior notes:
 - `--cost-estimate` adds `costEstimate` (`totalTokens`, `totalSeconds`, per-step estimates).
 - Cost estimate scales by goal/mode and topology roles; `--budget` also influences capture-step token estimate.
 - `--from-state` accepts handoff/status JSON (`session`, `sessionState`, `reason`, `nextAction`); parsed input is echoed as `fromState` in JSON output.
+- Typed `nextAction` objects from `--from-state` are preserved in generated prompts/runbooks (no map-stringification).
 - If `--prompt` is omitted, `--from-state` builds a continuation prompt from state fields; explicit `--prompt` overrides it.
 
 ### `session autopilot`
@@ -968,6 +1021,7 @@ Flags:
 - `--matrix-file PATH`: prompt regression matrix (`mode|prompt`, mode = `bypass|full-auto|any`)
 - `--chaos MODE`: fault mode (`none|delay|drop-marker|fail-child|mixed`, default `none`)
 - `--chaos-report`: normalize chaos outcomes against expected-failure contracts
+- `--contract-profile NAME`: command contract profile (`none|full`, default `none`)
 - `--llm-profile NAME`: profile preset (`none|codex|claude|mixed`)
 - `--model NAME`: optional Codex model pin for smoke spawn sessions
 - `--poll-interval N` (default `1`)
@@ -984,6 +1038,7 @@ Behavior:
 - Returns non-zero on any missing marker, spawn/monitor failure, or timeout.
 - Optional `--prompt-style` runs a nested-wording probe (`session spawn --dry-run --detect-nested --json`) before smoke execution and records probe result in JSON summary.
 - Optional `--matrix-file` runs a multi-prompt regression sweep before smoke execution and fails on expectation mismatch.
+- `--contract-profile full` runs deterministic command-contract probes and includes failures in smoke summary.
 - `--chaos` modes:
   - `none`: normal deterministic run
   - `delay`: injects per-level sleep delays
@@ -1052,6 +1107,25 @@ Flags:
 - `--cleanup-all-hashes`
 - `--json`
 
+### `session state-sandbox`
+
+Manage objective/lane registry state snapshots for deterministic orchestration tests.
+
+```bash
+lisa session state-sandbox list --json
+lisa session state-sandbox snapshot --file /tmp/lisa-state-sandbox.json --json
+lisa session state-sandbox restore --file /tmp/lisa-state-sandbox.json --json
+lisa session state-sandbox clear --json
+```
+
+Flags:
+
+- action selector: positional `list|snapshot|restore|clear` or `--action`
+- `--project-root`
+- `--file`: required for `restore`, optional for `snapshot`
+- `--json`
+- `--json-min`
+
 ### `agent build-cmd`
 
 Build agent startup command without spawning tmux session.
@@ -1082,28 +1156,51 @@ JSON support:
 - `doctor`
 - `capabilities`
 - `cleanup`
+- `oauth add`
+- `oauth list`
+- `oauth remove`
 - `agent build-cmd`
 - `skills sync`
 - `skills doctor`
 - `skills install`
+- `session name`
 - `session spawn`
 - `session detect-nested`
 - `session send`
+- `session turn`
 - `session snapshot`
 - `session status`
 - `session explain`
 - `session monitor`
 - `session capture`
+- `session contract-check`
+- `session schema`
+- `session checkpoint`
+- `session dedupe`
+- `session next`
+- `session aggregate`
+- `session prompt-lint`
+- `session diff-pack`
+- `session loop`
+- `session context-cache`
+- `session anomaly`
+- `session budget-observe`
+- `session budget-enforce`
+- `session budget-plan`
+- `session replay`
 - `session handoff`
 - `session packet`
 - `session context-pack`
 - `session route`
 - `session autopilot`
+- `session objective`
+- `session memory`
+- `session lane`
+- `session state-sandbox`
 - `session guard`
 - `session tree`
 - `session smoke`
 - `session preflight`
-- `session name`
 - `session list`
 - `session exists`
 - `session kill`

@@ -18,6 +18,7 @@ var monitorWaitingTurnCompleteFn = monitorWaitingTurnComplete
 var captureSessionTranscriptFn = captureSessionTranscript
 var shouldUseTranscriptCaptureFn = shouldUseTranscriptCapture
 var monitorWebhookHTTPClient = &http.Client{Timeout: 10 * time.Second}
+var monitorSleepFn = time.Sleep
 
 type waitingTurnCompleteResult struct {
 	Ready        bool
@@ -464,6 +465,7 @@ func cmdSessionMonitor(args []string) int {
 	autoRecover := false
 	recoverMax := 1
 	recoverBudget := 0
+	adaptivePoll := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -514,6 +516,8 @@ func cmdSessionMonitor(args []string) int {
 			}
 			pollInterval = n
 			i++
+		case "--adaptive-poll":
+			adaptivePoll = true
 		case "--max-polls":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --max-polls")
@@ -903,7 +907,11 @@ func cmdSessionMonitor(args []string) int {
 			}
 
 			if poll < maxPolls {
-				time.Sleep(time.Duration(pollInterval) * time.Second)
+				sleepDuration := time.Duration(pollInterval) * time.Second
+				if adaptivePoll {
+					sleepDuration = monitorAdaptiveSleepDuration(status, pollInterval)
+				}
+				monitorSleepFn(sleepDuration)
 			}
 		}
 
@@ -995,6 +1003,26 @@ func monitorEventLimitFromBudget(eventBudget int) int {
 		limit = 24
 	}
 	return limit
+}
+
+func monitorAdaptiveSleepDuration(status sessionStatus, pollInterval int) time.Duration {
+	base := maxInt(1, pollInterval)
+	sleepSeconds := base
+	heartbeatFreshWindow := maxInt(1, status.HeartbeatFreshSecs)
+	heartbeatAge := status.HeartbeatAge
+	heartbeatFresh := status.Signals.HeartbeatFresh || (heartbeatAge >= 0 && heartbeatAge <= heartbeatFreshWindow)
+
+	switch {
+	case status.SessionState == "waiting_input":
+		sleepSeconds = minInt(base*2, 12)
+	case heartbeatFresh && (status.SessionState == "in_progress" || status.SessionState == "degraded"):
+		sleepSeconds = maxInt(1, base/2)
+	case heartbeatAge >= heartbeatFreshWindow*3:
+		sleepSeconds = minInt(base*2, 12)
+	default:
+		sleepSeconds = base
+	}
+	return time.Duration(sleepSeconds) * time.Second
 }
 
 func normalizeMonitorWebhookTarget(raw string) (string, error) {
@@ -1215,6 +1243,7 @@ func cmdSessionCapture(args []string) int {
 	tokenBudget := 320
 	summaryStyle := "terse"
 	stripNoise := true
+	stripBanner := false
 	projectRoot := getPWD()
 	projectRootExplicit := false
 	for i := 0; i < len(args); i++ {
@@ -1285,6 +1314,8 @@ func cmdSessionCapture(args []string) int {
 			stripNoise = false
 		case "--strip-noise":
 			stripNoise = true
+		case "--strip-banner":
+			stripBanner = true
 		case "--project-root":
 			if i+1 >= len(args) {
 				return commandErrorf(jsonOut, "missing_flag_value", "missing value for --project-root")
@@ -1408,6 +1439,8 @@ func cmdSessionCapture(args []string) int {
 	capture = strings.Join(trimLines(capture), "\n")
 	if stripNoise {
 		capture = filterCaptureNoise(capture)
+	} else if stripBanner {
+		capture = filterCaptureBannerChrome(capture)
 	}
 	semanticSource := capture
 	if err := updateCaptureState(projectRoot, session, capture); err != nil {

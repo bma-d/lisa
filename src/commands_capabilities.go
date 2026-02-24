@@ -111,6 +111,7 @@ var commandCapabilities = []commandCapability{
 			"--agent",
 			"--mode",
 			"--poll-interval",
+			"--adaptive-poll",
 			"--max-polls",
 			"--timeout-seconds",
 			"--stop-on-waiting",
@@ -149,13 +150,18 @@ var commandCapabilities = []commandCapability{
 			"--semantic-delta",
 			"--keep-noise",
 			"--strip-noise",
+			"--strip-banner",
 			"--json",
 			"--json-min",
 		},
 	},
 	{
 		Name:  "session packet",
-		Flags: []string{"--session", "--project-root", "--agent", "--mode", "--lines", "--events", "--token-budget", "--summary-style", "--cursor-file", "--fields", "--json", "--json-min"},
+		Flags: []string{"--session", "--project-root", "--agent", "--mode", "--lines", "--events", "--token-budget", "--summary-style", "--cursor-file", "--delta-json", "--fields", "--json", "--json-min"},
+	},
+	{
+		Name:  "session turn",
+		Flags: []string{"--session", "--project-root", "--text", "--keys", "--enter", "--agent", "--mode", "--expect", "--poll-interval", "--max-polls", "--timeout-seconds", "--stop-on-waiting", "--waiting-requires-turn-complete", "--until-marker", "--until-state", "--until-jsonpath", "--auto-recover", "--recover-max", "--recover-budget", "--lines", "--events", "--token-budget", "--summary-style", "--cursor-file", "--fields", "--json", "--json-min"},
 	},
 	{
 		Name:  "session contract-check",
@@ -203,11 +209,11 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session budget-observe",
-		Flags: []string{"--from", "--tokens", "--seconds", "--steps", "--json"},
+		Flags: []string{"--from", "--from-jsonl", "--tokens", "--seconds", "--steps", "--json"},
 	},
 	{
 		Name:  "session budget-enforce",
-		Flags: []string{"--from", "--max-tokens", "--max-seconds", "--max-steps", "--tokens", "--seconds", "--steps", "--json"},
+		Flags: []string{"--from", "--from-jsonl", "--max-tokens", "--max-seconds", "--max-steps", "--tokens", "--seconds", "--steps", "--json"},
 	},
 	{
 		Name:  "session budget-plan",
@@ -227,7 +233,7 @@ var commandCapabilities = []commandCapability{
 	},
 	{
 		Name:  "session route",
-		Flags: []string{"--goal", "--agent", "--lane", "--prompt", "--model", "--profile", "--budget", "--queue", "--sessions", "--queue-limit", "--concurrency", "--topology", "--cost-estimate", "--from-state", "--project-root", "--emit-runbook", "--json"},
+		Flags: []string{"--goal", "--agent", "--lane", "--prompt", "--model", "--profile", "--budget", "--queue", "--sessions", "--queue-limit", "--concurrency", "--topology", "--cost-estimate", "--from-state", "--strict", "--project-root", "--emit-runbook", "--json"},
 	},
 	{
 		Name:  "session autopilot",
@@ -250,12 +256,16 @@ var commandCapabilities = []commandCapability{
 		Flags: []string{"--project-root", "--name", "--goal", "--agent", "--mode", "--nested-policy", "--nesting-intent", "--prompt", "--model", "--budget", "--topology", "--contract", "--clear", "--list", "--json"},
 	},
 	{
+		Name:  "session state-sandbox",
+		Flags: []string{"--action", "--project-root", "--file", "--json", "--json-min"},
+	},
+	{
 		Name:  "session tree",
 		Flags: []string{"--session", "--project-root", "--all-hashes", "--active-only", "--delta", "--delta-json", "--cursor-file", "--flat", "--with-state", "--json", "--json-min"},
 	},
 	{
 		Name:  "session smoke",
-		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--chaos", "--chaos-report", "--llm-profile", "--model", "--poll-interval", "--max-polls", "--keep-sessions", "--report-min", "--export-artifacts", "--json"},
+		Flags: []string{"--project-root", "--levels", "--prompt-style", "--matrix-file", "--chaos", "--chaos-report", "--contract-profile", "--llm-profile", "--model", "--poll-interval", "--max-polls", "--keep-sessions", "--report-min", "--export-artifacts", "--json"},
 	},
 	{
 		Name:  "session preflight",
