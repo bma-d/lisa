@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,6 +14,7 @@ import (
 type sessionPacketDeltaCursor struct {
 	UpdatedAt string         `json:"updatedAt"`
 	Fields    map[string]any `json:"fields"`
+	Offset    int            `json:"offset,omitempty"`
 }
 
 type sessionPacketDeltaFieldChange struct {
@@ -340,21 +342,37 @@ func loadSessionPacketDeltaCursor(path string) (sessionPacketDeltaCursor, error)
 		}
 		return cursor, err
 	}
-	if strings.TrimSpace(string(raw)) == "" {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
 		return cursor, nil
 	}
-	if err := json.Unmarshal(raw, &cursor); err != nil {
-		return sessionPacketDeltaCursor{}, err
+	parseErr := json.Unmarshal(raw, &cursor)
+	if parseErr == nil {
+		if cursor.Fields == nil {
+			cursor.Fields = map[string]any{}
+		}
+		if cursor.Offset < 0 {
+			cursor.Offset = 0
+		}
+		return cursor, nil
 	}
-	if cursor.Fields == nil {
-		cursor.Fields = map[string]any{}
+	legacyOffset, intErr := strconv.Atoi(trimmed)
+	if intErr == nil {
+		if legacyOffset < 0 {
+			legacyOffset = 0
+		}
+		cursor.Offset = legacyOffset
+		return cursor, nil
 	}
-	return cursor, nil
+	return sessionPacketDeltaCursor{}, parseErr
 }
 
 func writeSessionPacketDeltaCursor(path string, cursor sessionPacketDeltaCursor) error {
 	if cursor.Fields == nil {
 		cursor.Fields = map[string]any{}
+	}
+	if cursor.Offset < 0 {
+		cursor.Offset = 0
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

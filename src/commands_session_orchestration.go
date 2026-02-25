@@ -255,7 +255,7 @@ func cmdSessionHandoff(args []string) int {
 			laneRecord = resolved
 			laneFound = true
 			if schemaVersion == "v1" && laneContractRequiresHandoffSchemaV2(laneRecord.Contract) {
-				message := fmt.Sprintf("handoff_schema_v2_required: lane %q contract %q requires --schema v2", laneName, strings.TrimSpace(laneRecord.Contract))
+				message := fmt.Sprintf("handoff_schema_v2_required: lane %q contract %q requires --schema v2|v3|v4", laneName, strings.TrimSpace(laneRecord.Contract))
 				return commandError(jsonOut, "handoff_schema_v2_required", message)
 			}
 		}
@@ -2236,12 +2236,58 @@ func loadCursorOffset(path string) (int, error) {
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil {
+		var payload map[string]any
+		if jsonErr := json.Unmarshal(raw, &payload); jsonErr == nil {
+			if offset, ok := cursorOffsetFromJSON(payload); ok {
+				if offset < 0 {
+					return 0, nil
+				}
+				return offset, nil
+			}
+		}
 		return 0, fmt.Errorf("invalid cursor file offset: %q", value)
 	}
 	if n < 0 {
 		return 0, nil
 	}
 	return n, nil
+}
+
+func cursorOffsetFromJSON(payload map[string]any) (int, bool) {
+	if payload == nil {
+		return 0, false
+	}
+	if rawOffset, ok := payload["offset"]; ok {
+		if offset, ok := coerceCursorOffset(rawOffset); ok {
+			return offset, true
+		}
+	}
+	// Legacy packet-delta cursor payloads may store only field snapshots.
+	if _, hasFields := payload["fields"]; hasFields {
+		return 0, true
+	}
+	return 0, false
+}
+
+func coerceCursorOffset(raw any) (int, bool) {
+	switch v := raw.(type) {
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	default:
+		return 0, false
+	}
 }
 
 func writeCursorOffset(path string, offset int) error {

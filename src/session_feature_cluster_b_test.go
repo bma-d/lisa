@@ -349,6 +349,201 @@ func TestCmdSessionPacketDeltaJSONRequiresCursorFile(t *testing.T) {
 	}
 }
 
+func TestCmdSessionPacketDeltaJSONAcceptsLegacyNumericCursorFile(t *testing.T) {
+	projectRoot := t.TempDir()
+	cursorFile := filepath.Join(projectRoot, "packet.legacy.cursor")
+	session := "lisa-packet-delta-legacy-cursor"
+	if err := os.WriteFile(cursorFile, []byte("41\n"), 0o644); err != nil {
+		t.Fatalf("write legacy cursor: %v", err)
+	}
+
+	origStatus := computeSessionStatusFn
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origStatus
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+	})
+
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, poll int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:              session,
+			Status:               "active",
+			SessionState:         "in_progress",
+			ClassificationReason: "legacy_cursor_probe",
+		}, nil
+	}
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "packet delta legacy cursor", nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionPacket([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--delta-json",
+			"--cursor-file", cursorFile,
+			"--json-min",
+		})
+		if code != 0 {
+			t.Fatalf("expected delta-json success with legacy cursor file, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	payload := parseJSONMap(t, stdout)
+	if payload["deltaCount"].(float64) == 0 {
+		t.Fatalf("expected initial delta entries, got %v", payload["deltaCount"])
+	}
+	updatedRaw, err := os.ReadFile(cursorFile)
+	if err != nil {
+		t.Fatalf("read updated cursor: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(updatedRaw)), "{") {
+		t.Fatalf("expected cursor upgraded to JSON object, got %q", string(updatedRaw))
+	}
+}
+
+func TestCmdSessionPacketCursorFileRoundTripsBetweenDeltaModes(t *testing.T) {
+	projectRoot := t.TempDir()
+	cursorFile := filepath.Join(projectRoot, "packet.roundtrip.cursor")
+	session := "lisa-packet-cursor-roundtrip"
+
+	origStatus := computeSessionStatusFn
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origStatus
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+	})
+
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, poll int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:              session,
+			Status:               "active",
+			SessionState:         "in_progress",
+			ClassificationReason: "cursor_roundtrip",
+		}, nil
+	}
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "packet cursor roundtrip", nil
+	}
+
+	stdoutDelta, stderrDelta := captureOutput(t, func() {
+		code := cmdSessionPacket([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--delta-json",
+			"--cursor-file", cursorFile,
+			"--json-min",
+		})
+		if code != 0 {
+			t.Fatalf("expected delta-json packet success, got %d", code)
+		}
+	})
+	if stderrDelta != "" {
+		t.Fatalf("unexpected stderr: %q", stderrDelta)
+	}
+	deltaPayload := parseJSONMap(t, stdoutDelta)
+	if deltaPayload["deltaCount"].(float64) == 0 {
+		t.Fatalf("expected initial delta entries, got %v", deltaPayload["deltaCount"])
+	}
+
+	stdoutPacket, stderrPacket := captureOutput(t, func() {
+		code := cmdSessionPacket([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--cursor-file", cursorFile,
+			"--json-min",
+		})
+		if code != 0 {
+			t.Fatalf("expected packet cursor-file success after delta-json cursor write, got %d", code)
+		}
+	})
+	if stderrPacket != "" {
+		t.Fatalf("unexpected stderr: %q", stderrPacket)
+	}
+	packetPayload := parseJSONMap(t, stdoutPacket)
+	if mapStringValue(packetPayload, "session") != session {
+		t.Fatalf("expected session %q, got %v", session, packetPayload["session"])
+	}
+}
+
+func TestCmdSessionPacketCursorFileSupportsJsonMinThenDeltaJSONSequence(t *testing.T) {
+	projectRoot := t.TempDir()
+	cursorFile := filepath.Join(projectRoot, "packet.sequence.cursor")
+	session := "lisa-packet-sequence-jsonmin-delta"
+
+	origStatus := computeSessionStatusFn
+	origHas := tmuxHasSessionFn
+	origCapture := tmuxCapturePaneFn
+	t.Cleanup(func() {
+		computeSessionStatusFn = origStatus
+		tmuxHasSessionFn = origHas
+		tmuxCapturePaneFn = origCapture
+	})
+
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, poll int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:              session,
+			Status:               "active",
+			SessionState:         "in_progress",
+			ClassificationReason: "jsonmin_then_delta",
+		}, nil
+	}
+	tmuxHasSessionFn = func(session string) bool { return true }
+	tmuxCapturePaneFn = func(session string, lines int) (string, error) {
+		return "packet json-min then delta-json sequence", nil
+	}
+
+	stdoutMin, stderrMin := captureOutput(t, func() {
+		code := cmdSessionPacket([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--cursor-file", cursorFile,
+			"--json-min",
+		})
+		if code != 0 {
+			t.Fatalf("expected json-min packet success, got %d", code)
+		}
+	})
+	if stderrMin != "" {
+		t.Fatalf("unexpected stderr: %q", stderrMin)
+	}
+	minPayload := parseJSONMap(t, stdoutMin)
+	if mapStringValue(minPayload, "session") != session {
+		t.Fatalf("expected session %q, got %v", session, minPayload["session"])
+	}
+
+	stdoutDelta, stderrDelta := captureOutput(t, func() {
+		code := cmdSessionPacket([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--cursor-file", cursorFile,
+			"--delta-json",
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected delta-json packet success after json-min cursor write, got %d", code)
+		}
+	})
+	if stderrDelta != "" {
+		t.Fatalf("unexpected stderr: %q", stderrDelta)
+	}
+	deltaPayload := parseJSONMap(t, stdoutDelta)
+	if deltaPayload["deltaCount"].(float64) == 0 {
+		t.Fatalf("expected non-zero field delta count on first delta-json call, got %v", deltaPayload["deltaCount"])
+	}
+	if _, ok := deltaPayload["errorCode"]; ok {
+		t.Fatalf("did not expect errorCode in successful delta payload, got %v", deltaPayload["errorCode"])
+	}
+}
+
 func TestCmdSessionPacketLegacyJSONDefaultStillAvailable(t *testing.T) {
 	origStatus := computeSessionStatusFn
 	origHas := tmuxHasSessionFn

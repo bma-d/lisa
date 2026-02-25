@@ -213,8 +213,8 @@ func TestCmdSessionHandoffRejectsSchemaV1WhenLaneRequiresV2(t *testing.T) {
 	if payload["errorCode"] != "handoff_schema_v2_required" {
 		t.Fatalf("expected handoff_schema_v2_required, got %v", payload["errorCode"])
 	}
-	if !strings.Contains(strings.ToLower(mapStringValue(payload, "error")), "--schema v2") {
-		t.Fatalf("expected error text to include --schema v2 guidance, got %v", payload["error"])
+	if !strings.Contains(strings.ToLower(mapStringValue(payload, "error")), "--schema v2|v3|v4") {
+		t.Fatalf("expected error text to include --schema v2|v3|v4 guidance, got %v", payload["error"])
 	}
 
 	_, stderr = captureOutput(t, func() {
@@ -229,5 +229,59 @@ func TestCmdSessionHandoffRejectsSchemaV1WhenLaneRequiresV2(t *testing.T) {
 	})
 	if !strings.Contains(stderr, "handoff_schema_v2_required") {
 		t.Fatalf("expected text error to contain error code, got %q", stderr)
+	}
+}
+
+func TestCmdSessionHandoffAllowsSchemaV4WhenLaneRequiresV2(t *testing.T) {
+	projectRoot := t.TempDir()
+	session := "lisa-handoff-contract-v4"
+	meta := sessionMeta{
+		Session:     session,
+		ProjectRoot: projectRoot,
+		Lane:        "planner",
+	}
+	if err := saveSessionMeta(projectRoot, session, meta); err != nil {
+		t.Fatalf("save meta: %v", err)
+	}
+	if code := cmdSessionLane([]string{
+		"--project-root", projectRoot,
+		"--name", "planner",
+		"--contract", "handoff_v2_required",
+		"--json",
+	}); code != 0 {
+		t.Fatalf("lane setup failed: %d", code)
+	}
+
+	origCompute := computeSessionStatusFn
+	t.Cleanup(func() { computeSessionStatusFn = origCompute })
+	computeSessionStatusFn = func(session, projectRoot, agentHint, modeHint string, full bool, pollCount int) (sessionStatus, error) {
+		return sessionStatus{
+			Session:              session,
+			Status:               "idle",
+			SessionState:         "waiting_input",
+			ClassificationReason: "interactive_idle_cpu",
+		}, nil
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionHandoff([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--schema", "v4",
+			"--json-min",
+		})
+		if code != 0 {
+			t.Fatalf("expected v4 schema acceptance, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("parse payload: %v (%q)", err, stdout)
+	}
+	if payload["schema"] != "v4" {
+		t.Fatalf("expected schema v4 payload, got %v", payload["schema"])
 	}
 }

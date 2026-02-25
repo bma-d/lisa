@@ -292,6 +292,9 @@ Detailed diagnostics with recent event timeline.
 
 JSON: `{"status":{...},"eventFile","events":[...],"droppedEventLines"}`
 
+Notes:
+- `--events` and `--recent` require numeric values; bare flags are usage errors (`errorCode:"invalid_events"`).
+
 ## session packet
 
 One-shot status + summarized raw capture + handoff event packet.
@@ -303,6 +306,7 @@ JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","su
 Notes:
 - `--cursor-file` enables incremental handoff events (`deltaFrom`,`nextDeltaOffset`,`deltaCount`).
 - `--delta-json` requires `--cursor-file` and emits field-level `delta.added|removed|changed` payloads.
+- Packet `--cursor-file` is cross-compatible between non-delta and `--delta-json` paths; legacy numeric cursor content is accepted and upgraded when needed.
 - `--fields` projects JSON payload fields; requires JSON output.
 - `--json-min` emits compact packet plus `recent` event list.
 - `session_not_found` returns JSON payload with `errorCode` and exit `1`.
@@ -316,12 +320,12 @@ Flags: `--session` (required), `--project-root`, `--agent`, `--mode`, `--events`
 | Flag | Default | Description |
 |---|---|---|
 | `--compress` | `none` | `none|zstd`; `zstd` emits `compression`,`encoding`,`compressedPayload`,`uncompressedBytes`,`compressedBytes` and omits `recent` |
-| `--schema` | `v1` | Handoff schema: `v1|v2|v3`; `v2` adds typed state/nextAction/risks/openQuestions, `v3` adds deterministic IDs on state/risk/question/nextAction objects |
+| `--schema` | `v1` | Handoff schema: `v1|v2|v3|v4`; `v2` adds typed state/nextAction/risks/openQuestions, `v3` adds deterministic IDs on state/risk/question/nextAction objects, `v4` adds `nextAction.commandAst` |
 
 JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","summary","recent?","deltaFrom?","nextDeltaOffset?","deltaCount?"}`.
 
 Notes:
-- Active lane contracts such as `handoff_v2_required` require `--schema v2` (or `v3`), otherwise handoff returns `errorCode:"handoff_schema_v2_required"`.
+- Active lane contracts such as `handoff_v2_required` require `--schema v2` (or `v3|v4`), otherwise handoff returns `errorCode:"handoff_schema_v2_required"`.
 
 ## session context-pack
 

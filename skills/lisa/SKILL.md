@@ -136,7 +136,7 @@ Exit/contract quick-map:
 - `autopilot` propagates failing step exit (`monitor` often `2` for timeout/terminal mismatch)
 - `monitor` timeout/degraded exits can still include useful partial payload; inspect JSON before retry.
 - `monitor --webhook` returns exit `1` (`errorCode:"webhook_emit_failed"`) if payload delivery fails.
-- `session guard --machine-policy strict` can return exit `1` (`errorCode:"shared_tmux_risk_detected"`) without `--enforce`.
+- `session guard --machine-policy strict` returns exit `1` (`errorCode:"shared_tmux_risk_detected"`) only when risk is detected; safe contexts return exit `0` with `safe:true`.
 - If active lane contract includes `handoff_v2_required`, `session handoff --json-min` requires `--schema v2|v3|v4` and otherwise returns `errorCode:"handoff_schema_v2_required"`.
 
 Validated edge contracts (2026-02-23):
@@ -144,6 +144,7 @@ Validated edge contracts (2026-02-23):
 - `session guard --shared-tmux --command "./lisa cleanup --include-tmux-default"` hard-fails with `machine-policy strict` (exit `1`) even without `--enforce`.
 - `session monitor --stream-json --emit-handoff` emits both `type:"poll"` and `type:"handoff"` lines before final payload.
 - `session monitor --webhook <unreachable>` exits `1` with `errorCode:"webhook_emit_failed"`.
+- `session packet --cursor-file /tmp/lisa.packet.cursor --json-min` then `session packet --cursor-file /tmp/lisa.packet.cursor --delta-json --json` works with the same cursor file (legacy numeric cursor auto-upgrades).
 - `session route --strict` accepts `nextAction.commandAst.args` as either typed array entries or object shorthand map.
 - `skills doctor --contract-check` can exit `1` for install drift even when contract checks are all `ok:true`.
 - `session diff-pack` now resolves state under per-project runtime env; false `session_not_found` under mixed socket contexts is fixed.

@@ -1,6 +1,6 @@
 # Lisa Validation Snapshot
 
-Validated: 2026-02-23
+Validated: 2026-02-24
 
 ## Guardrails
 
@@ -24,13 +24,14 @@ Validated: 2026-02-23
 - `session monitor --stream-json --emit-handoff` emits both `type:"poll"` and `type:"handoff"` lines before final payload.
 - `session monitor --handoff-cursor-file <PATH>` emits incremental handoff deltas and persists `nextDeltaOffset`.
 - `session monitor --webhook <URL>` fails hard on delivery failure (`errorCode:"webhook_emit_failed"`, exit `1`).
-- `session handoff --json-min` and `session context-pack --json-min` provide compact transfer payloads for multi-agent loops (note: active lane contracts like `handoff_v2_required` require `session handoff --schema v2|v3`).
+- `session handoff --json-min` and `session context-pack --json-min` provide compact transfer payloads for multi-agent loops (note: active lane contracts like `handoff_v2_required` require `session handoff --schema v2|v3|v4`).
 - `session handoff --delta-from <N>` returns incremental `recent` events + `nextDeltaOffset`.
 - `session handoff --cursor-file /tmp/handoff.cursor` persists/reuses `nextDeltaOffset` across loops.
 - `session packet --json-min` provides one-call status + summary + recent handoff items.
 - `session packet --cursor-file <PATH>` persists/reuses handoff event delta offsets.
+- `session packet --cursor-file <PATH> --json-min` followed by `session packet --cursor-file <PATH> --delta-json --json` works with the same cursor file (legacy numeric cursor content is accepted/upgraded).
 - `session context-pack --strategy terse|balanced|full` applies deterministic default budgets.
-- `session context-pack --from-handoff <path|->` builds pack without live status polling, including handoff payloads where `nextAction` is an object (`schema v2|v3`).
+- `session context-pack --from-handoff <path|->` builds pack without live status polling, including handoff payloads where `nextAction` is an object (`schema v2|v3|v4`).
 - Nested diagnostics path: `session spawn --dry-run --detect-nested --json` or `session detect-nested --json`.
 - `session detect-nested --rewrite` emits trigger-safe prompt rewrites.
 - `session detect-nested --why` emits hint-span reasoning payload (`why.spans`), which can be an empty list for non-trigger prompts.
@@ -55,7 +56,8 @@ Validated: 2026-02-23
 - `session tree --delta --json` includes `delta:true` plus `deltaResult` summary fields.
 - `session guard --shared-tmux --enforce --command ...` returns `errorCode:"shared_tmux_guard_enforced"` on medium/high risk.
 - `session guard --shared-tmux --advice-only --command ...` preserves diagnostics while always exiting `0`.
-- `session guard --machine-policy strict` can hard-fail (`errorCode:"shared_tmux_risk_detected"`) without `--enforce`.
+- `session guard --machine-policy strict` hard-fails (`errorCode:"shared_tmux_risk_detected"`) without `--enforce` only when risk exists; safe contexts return `safe:true` and exit `0`.
+- `session explain --events` requires an integer value; bare `--events` returns `errorCode:"invalid_events"` (exit `1`).
 - `session objective` maintains a project-scoped objective register and auto-propagates current objective into `spawn/send/handoff/context-pack` payloads.
 - `session memory --refresh` stores bounded semantic memory snapshots; handoff/context-pack include compact memory blocks when present.
 - `session handoff --schema v2` emits typed `state`, `nextAction`, `risks`, and `openQuestions` fields for parser-safe routers.
