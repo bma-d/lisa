@@ -1,6 +1,6 @@
 # Project Overview
 
-Last Updated: 2026-02-22
+Last Updated: 2026-02-25
 
 ## Technology Stack
 
@@ -27,6 +27,8 @@ lisa/
 │   └── sdk-usage.md
 ├── smoke-nested           # Repo-local nested tmux smoke command
 ├── scripts/
+│   ├── deep-stress.sh       # Full command/runtime stress harness (expected-exit contract checks)
+│   ├── lisa-contract-matrix.sh
 │   └── smoke-nested-3level.sh
 ├── skills/
 │   └── lisa/
