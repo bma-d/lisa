@@ -1,6 +1,6 @@
 # SDK Usage Guide
 
-Last Updated: 2026-02-23
+Last Updated: 2026-02-25
 Related Files: `USAGE.md`, `agent.md`, `src/commands_session.go`, `src/commands_agent.go`
 
 ## Overview
@@ -35,6 +35,7 @@ Nested Codex note: `codex exec --full-auto` runs sandboxed and can block tmux so
 Lisa now auto-enables Codex bypass (`--dangerously-bypass-approvals-and-sandbox`, no `--full-auto`) when exec prompts suggest nesting (`./lisa`, `lisa session spawn`, `nested lisa`).
 You can set `--nested-policy force|off` to bypass prompt heuristics explicitly.
 Use `--model <NAME>` on `session spawn` or `agent build-cmd` when `--agent codex` to inject Codex model selection without packing it into `--agent-args` (example: `--model gpt-5.3-codex-spark`).
+`--model codex-spark` is accepted as an alias and normalized to `gpt-5.3-codex-spark`.
 You can still pass `--agent-args '--dangerously-bypass-approvals-and-sandbox'` explicitly; Lisa omits `--full-auto` automatically because Codex rejects combining both flags.
 For deeply nested prompt chains, prefer heredoc prompt injection (`PROMPT=$(cat <<'EOF' ... EOF)` then `--prompt "$PROMPT"`) instead of highly escaped inline single-quoted chains.
 

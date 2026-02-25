@@ -22,6 +22,22 @@ func TestParseModel(t *testing.T) {
 		t.Fatalf("unexpected model result: %q", model)
 	}
 
+	model, err = parseModel("codex-spark")
+	if err != nil {
+		t.Fatalf("expected codex-spark alias to pass, got %v", err)
+	}
+	if model != "gpt-5.3-codex-spark" {
+		t.Fatalf("expected normalized codex-spark alias, got %q", model)
+	}
+
+	model, err = parseModel("CoDeX-SpArK")
+	if err != nil {
+		t.Fatalf("expected mixed-case codex-spark alias to pass, got %v", err)
+	}
+	if model != "gpt-5.3-codex-spark" {
+		t.Fatalf("expected normalized mixed-case codex-spark alias, got %q", model)
+	}
+
 	_, err = parseModel("bad\nmodel")
 	if err == nil {
 		t.Fatalf("expected control-character model rejection")

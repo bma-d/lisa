@@ -223,15 +223,10 @@ func runSessionContractChecks(projectRoot string) ([]sessionContractCheckResult,
 	}
 	results = append(results, commandsResult)
 
-	missingFlags := make([]string, 0)
+	missingFlags := detectMissingSkillFlags(commandsPath, commandCapabilities)
 	checkedFlags := 0
 	for _, cap := range commandCapabilities {
-		for _, flag := range cap.Flags {
-			checkedFlags++
-			if !strings.Contains(text, flag) {
-				missingFlags = append(missingFlags, cap.Name+":"+flag)
-			}
-		}
+		checkedFlags += len(cap.Flags)
 	}
 	flagsResult := sessionContractCheckResult{
 		Name:    "skill_flag_surface_coverage",
@@ -311,11 +306,11 @@ func sessionSchemaCatalog() map[string]map[string]any {
 		"session handoff": {
 			"type": "object",
 			"properties": map[string]any{
-				"session":         map[string]any{"type": "string"},
-				"status":          map[string]any{"type": "string"},
-				"sessionState":    map[string]any{"type": "string"},
-				"schema":          map[string]any{"type": "string"},
-				"state":           map[string]any{"type": "object"},
+				"session":      map[string]any{"type": "string"},
+				"status":       map[string]any{"type": "string"},
+				"sessionState": map[string]any{"type": "string"},
+				"schema":       map[string]any{"type": "string"},
+				"state":        map[string]any{"type": "object"},
 				"nextAction": map[string]any{
 					"oneOf": []any{
 						map[string]any{"type": "string"},

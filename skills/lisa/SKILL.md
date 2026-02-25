@@ -24,6 +24,7 @@ Axiom: minimum context, deterministic command contracts.
 9. In shared tmux environments, run `session guard --shared-tmux --json` before cleanup/kill-all actions.
 10. `session guard --shared-tmux` returning `safe:false` is expected risk signaling (often exit `1`); switch to `--project-only` flows.
 11. `capabilities` and `session schema` support `--json` but not `--json-min`.
+12. Post-use hygiene: clear inactive runtime artifacts via `session kill-all --project-only --project-root`, stale preview (`session list --stale --prune-preview --json-min`), then `cleanup --dry-run` and `cleanup`.
 
 ## LLM Fast Loop
 
@@ -72,7 +73,10 @@ $LISA_BIN session kill --session "$SESSION" --project-root "$ROOT" --json
 $LISA_BIN session guard --shared-tmux --enforce --command "./lisa session kill-all --project-only --project-root $ROOT" --json
 $LISA_BIN session guard --shared-tmux --advice-only --command "./lisa cleanup --include-tmux-default" --json
 $LISA_BIN session list --project-root "$ROOT" --delta-json --cursor-file /tmp/lisa.list.cursor --json-min
+$LISA_BIN session list --project-root "$ROOT" --stale --prune-preview --json-min
+$LISA_BIN session kill-all --project-only --project-root "$ROOT" --json
 $LISA_BIN cleanup --dry-run --json
+$LISA_BIN cleanup --json
 
 # policy-driven single-command loop
 $LISA_BIN session autopilot --goal analysis --agent codex --project-root "$ROOT" \
@@ -124,6 +128,7 @@ Trigger wording quick-map:
 
 Model note:
 - Prefer lowercase model ids (`gpt-5.3-codex-spark`); mixed-case aliases may fail model preflight.
+- `--model codex-spark` alias normalizes to `gpt-5.3-codex-spark` across spawn/agent/preflight paths.
 
 Exit/contract quick-map:
 - `monitor` success exit `0`: `completed|waiting_input|waiting_input_turn_complete|marker_found|until-state match|until-jsonpath match` (`exitReason`: matched state or `jsonpath_matched`)
@@ -170,5 +175,6 @@ if need_low_token_status: session snapshot or status --json-min
 if need_output: session capture (--delta-from for incremental)
 if need_handoff_packet: session packet or session handoff or session context-pack
 if done_or_abort: session kill or session kill-all --project-only
-if shared tmux: session guard --shared-tmux, then cleanup --dry-run
+if cleanup_after_use: session list --stale --prune-preview then cleanup --dry-run and cleanup
+if shared tmux: session guard --shared-tmux before non-dry-run cleanup
 ```

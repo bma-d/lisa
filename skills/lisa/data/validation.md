@@ -40,10 +40,12 @@ Validated: 2026-02-24
 - Quote/doc mentions like `The string "./lisa" appears in docs only.` are treated as non-executable nested hints.
 - Codex model pinning: `--model <NAME>` on `session spawn` / `agent build-cmd`; verify support with `session preflight --agent codex --model <NAME> --json`.
 - Model ids are case-sensitive in practice (`gpt-5.3-codex-spark` succeeded; `GPT-5.3-Codex-Spark` failed preflight).
+- `--model codex-spark` is normalized to `gpt-5.3-codex-spark` before command assembly/probing.
 - Model preflight probe can fail (`errorCode:"preflight_model_not_supported"`) for unknown aliases; treat this as capability signal, not parser failure.
 - `session preflight --auto-model --json` selects first supported candidate model (`gpt-5.3-codex`, then `gpt-5-codex` by default).
 - `session smoke --report-min --json` emits compact CI payloads and omits rich fields (for example `promptProbe`).
 - `session list --stale --prune-preview` emits safe stale cleanup commands.
+- Post-use cleanup path is stable: `session kill-all --project-only --project-root` then `session list --stale --prune-preview --json-min` then `cleanup --dry-run` and `cleanup`.
 - `session tree --with-state --json-min` emits rows with topology + status/sessionState.
 - `session capture --summary --token-budget N` returns bounded summary payloads.
 - `session capture --summary-style ops|debug` emits role-specific summary bodies.

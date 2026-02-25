@@ -80,6 +80,33 @@ func TestSkillDocsHandoffSchemaV4Contract(t *testing.T) {
 	mustNotContain(t, validationDoc, "session handoff --schema v2|v3`).")
 }
 
+func TestSkillCommandsFlagLexiconCoverage(t *testing.T) {
+	commandsRaw, err := os.ReadFile("../skills/lisa/data/commands.md")
+	if err != nil {
+		t.Fatalf("failed to read skills/lisa/data/commands.md: %v", err)
+	}
+	lexicon := extractSkillFlagLexiconFlags(string(commandsRaw))
+	if len(lexicon) == 0 {
+		t.Fatalf("expected canonical skill flag lexicon line to be present")
+	}
+
+	missing := make([]string, 0)
+	for _, cap := range commandCapabilities {
+		for _, flag := range cap.Flags {
+			if !lexicon[flag] {
+				missing = append(missing, cap.Name+":"+flag)
+			}
+		}
+	}
+	if len(missing) > 0 {
+		preview := missing
+		if len(preview) > 12 {
+			preview = preview[:12]
+		}
+		t.Fatalf("skill flag lexicon drift (sample): %v", preview)
+	}
+}
+
 func usageSection(t *testing.T, doc string, name string) string {
 	t.Helper()
 	header := "### `" + name + "`"

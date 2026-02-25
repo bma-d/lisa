@@ -745,16 +745,53 @@ func detectMissingSkillFlags(commandsPath string, capabilities []commandCapabili
 		}
 		return missing
 	}
-	text := string(raw)
+	lexiconFlags := extractSkillFlagLexiconFlags(string(raw))
+	if len(lexiconFlags) == 0 {
+		missing := make([]string, 0)
+		for _, cap := range capabilities {
+			for _, flag := range cap.Flags {
+				missing = append(missing, cap.Name+":"+flag)
+			}
+		}
+		return missing
+	}
 	missing := make([]string, 0)
 	for _, cap := range capabilities {
 		for _, flag := range cap.Flags {
-			if !strings.Contains(text, flag) {
+			if !lexiconFlags[flag] {
 				missing = append(missing, cap.Name+":"+flag)
 			}
 		}
 	}
 	return missing
+}
+
+func extractSkillFlagLexiconFlags(markdown string) map[string]bool {
+	lines := strings.Split(markdown, "\n")
+	seenHeader := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !seenHeader {
+			if strings.HasPrefix(trimmed, "Canonical flag surface mirror") {
+				seenHeader = true
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "## ") {
+			break
+		}
+		if !strings.HasPrefix(trimmed, "`--") || !strings.HasSuffix(trimmed, "`") {
+			continue
+		}
+		flagLine := strings.Trim(trimmed, "`")
+		flags := strings.Fields(flagLine)
+		out := make(map[string]bool, len(flags))
+		for _, flag := range flags {
+			out[flag] = true
+		}
+		return out
+	}
+	return map[string]bool{}
 }
 
 func hashDirectoryContents(root string) (string, error) {

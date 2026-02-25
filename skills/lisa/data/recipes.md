@@ -28,7 +28,10 @@ $LISA_BIN session capture --session "$S" --json
 $LISA_BIN session capture --session "$S" --raw --lines 200
 $LISA_BIN session capture --session "$S" --raw --keep-noise --lines 200
 
-# 4) cleanup
+# 4) cleanup (session + inactive runtime artifacts)
+$LISA_BIN session kill --session "$S" --project-root /path/to/project
+$LISA_BIN session kill-all --project-only --project-root /path/to/project
+$LISA_BIN session list --project-root /path/to/project --stale --prune-preview --json-min
 $LISA_BIN cleanup --dry-run
 $LISA_BIN cleanup
 ```
@@ -192,6 +195,11 @@ $LISA_BIN cleanup --include-tmux-default
 ```
 
 Safety: in shared tmux environments, run `session guard --shared-tmux` and `cleanup --dry-run` before mutation.
+
+Post-use hygiene (recommended):
+- Always run `session kill-all --project-only --project-root <ROOT>` when the orchestration task is complete.
+- Run `session list --stale --prune-preview --json-min` and review prune plan output.
+- Run `cleanup --dry-run` first, then `cleanup` to remove inactive socket residue.
 
 ## Nested Orchestration (Lisa-in-Lisa)
 

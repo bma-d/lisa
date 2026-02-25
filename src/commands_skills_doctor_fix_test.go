@@ -330,6 +330,40 @@ func TestCmdSkillsDoctorContractCheckIncludesMissingFlags(t *testing.T) {
 	}
 }
 
+func TestDetectMissingSkillFlagsUsesCanonicalLexicon(t *testing.T) {
+	commandsPath := filepath.Join(t.TempDir(), "commands.md")
+	body := strings.Join([]string{
+		"# Commands",
+		"",
+		"## Contract flag lexicon",
+		"",
+		"Canonical flag surface mirror for `session contract-check` / `skills doctor --contract-check`.",
+		"`--json`",
+		"",
+		"## session guard",
+		"",
+		"Flags include `--machine-policy` in table text, but not lexicon.",
+	}, "\n")
+	if err := os.WriteFile(commandsPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write commands fixture: %v", err)
+	}
+
+	missing := detectMissingSkillFlags(commandsPath, []commandCapability{
+		{Name: "capabilities", Flags: []string{"--json"}},
+		{Name: "session guard", Flags: []string{"--machine-policy"}},
+	})
+	found := map[string]bool{}
+	for _, miss := range missing {
+		found[miss] = true
+	}
+	if found["capabilities:--json"] {
+		t.Fatalf("did not expect --json to be missing: %+v", missing)
+	}
+	if !found["session guard:--machine-policy"] {
+		t.Fatalf("expected lexicon drift for --machine-policy: %+v", missing)
+	}
+}
+
 func writeSkillFixture(t *testing.T, skillDir, version string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(skillDir, "data"), 0o755); err != nil {

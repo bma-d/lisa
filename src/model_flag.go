@@ -13,7 +13,12 @@ func parseModel(model string) (string, error) {
 	if strings.ContainsAny(trimmed, "\r\n\t") {
 		return "", fmt.Errorf("invalid --model: control characters are not allowed")
 	}
-	return trimmed, nil
+	switch strings.ToLower(trimmed) {
+	case "codex-spark":
+		return "gpt-5.3-codex-spark", nil
+	default:
+		return trimmed, nil
+	}
 }
 
 func applyModelToAgentArgs(agent, agentArgs, model string) (string, error) {
