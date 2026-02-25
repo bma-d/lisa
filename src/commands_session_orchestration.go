@@ -2401,7 +2401,7 @@ func loadHandoffInputPayload(from string) (*handoffInputPayload, error) {
 		return &payload, nil
 	}
 
-	// Accept v2/v3 handoff shapes where nextAction is an object instead of a string.
+	// Accept v2/v3/v4 handoff shapes where nextAction is an object instead of a string.
 	var generic map[string]any
 	if err := json.Unmarshal(raw, &generic); err != nil {
 		return nil, err

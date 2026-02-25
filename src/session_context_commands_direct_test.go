@@ -389,3 +389,53 @@ func TestCmdSessionSchemaMemoryAndLaneContracts(t *testing.T) {
 		}
 	}
 }
+
+func TestCmdSessionSchemaHandoffSupportsTypedNextActionContract(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		code := cmdSessionSchema([]string{"--command", "handoff", "--json"})
+		if code != 0 {
+			t.Fatalf("expected handoff schema success, got %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr on handoff schema: %q", stderr)
+	}
+
+	payload := decodeJSONMap(t, stdout)
+	schema, ok := payload["schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected schema object, got %v", payload["schema"])
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected schema properties, got %v", schema["properties"])
+	}
+	nextAction, ok := properties["nextAction"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nextAction contract object, got %T (%v)", properties["nextAction"], properties["nextAction"])
+	}
+	oneOf, ok := nextAction["oneOf"].([]any)
+	if !ok {
+		t.Fatalf("expected nextAction.oneOf array, got %T (%v)", nextAction["oneOf"], nextAction["oneOf"])
+	}
+	if len(oneOf) != 2 {
+		t.Fatalf("expected nextAction.oneOf with 2 entries, got %d", len(oneOf))
+	}
+	stringVariant, ok := oneOf[0].(map[string]any)
+	if !ok || mapStringValue(stringVariant, "type") != "string" {
+		t.Fatalf("expected first nextAction variant to be string, got %v", oneOf[0])
+	}
+	objectVariant, ok := oneOf[1].(map[string]any)
+	if !ok || mapStringValue(objectVariant, "type") != "object" {
+		t.Fatalf("expected second nextAction variant to be object, got %v", oneOf[1])
+	}
+	objectProps, ok := objectVariant["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected typed nextAction properties, got %v", objectVariant["properties"])
+	}
+	for _, key := range []string{"name", "command", "id", "commandAst"} {
+		if _, ok := objectProps[key]; !ok {
+			t.Fatalf("expected typed nextAction property %q, got %v", key, objectProps)
+		}
+	}
+}

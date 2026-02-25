@@ -316,7 +316,22 @@ func sessionSchemaCatalog() map[string]map[string]any {
 				"sessionState":    map[string]any{"type": "string"},
 				"schema":          map[string]any{"type": "string"},
 				"state":           map[string]any{"type": "object"},
-				"nextAction":      map[string]any{"type": "string"},
+				"nextAction": map[string]any{
+					"oneOf": []any{
+						map[string]any{"type": "string"},
+						map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"name":    map[string]any{"type": "string"},
+								"command": map[string]any{"type": "string"},
+								"id":      map[string]any{"type": "string"},
+								"commandAst": map[string]any{
+									"type": "object",
+								},
+							},
+						},
+					},
+				},
 				"nextDeltaOffset": map[string]any{"type": "integer"},
 				"recent":          map[string]any{"type": "array"},
 				"objective":       map[string]any{"type": "object"},

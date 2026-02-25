@@ -306,7 +306,6 @@ JSON: `{"session","status","sessionState","reason","nextAction","nextOffset","su
 Notes:
 - `--cursor-file` enables incremental handoff events (`deltaFrom`,`nextDeltaOffset`,`deltaCount`).
 - `--delta-json` requires `--cursor-file` and emits field-level `delta.added|removed|changed` payloads.
-- Packet `--cursor-file` is cross-compatible between non-delta and `--delta-json` paths; legacy numeric cursor content is accepted and upgraded when needed.
 - `--fields` projects JSON payload fields; requires JSON output.
 - `--json-min` emits compact packet plus `recent` event list.
 - `session_not_found` returns JSON payload with `errorCode` and exit `1`.
@@ -340,7 +339,7 @@ Flags: `--for` (alias `--session`, required unless provided by `--from-handoff` 
 JSON: `{"session","sessionState","status","reason","nextAction","nextOffset","strategy","pack","tokenBudget","truncated"}`.
 
 Notes:
-- `--from-handoff` accepts `nextAction` as either string payloads (v1) or object payloads (`name`/`command` in v2/v3).
+- `--from-handoff` accepts `nextAction` as either string payloads (v1) or object payloads (`name`/`command` in v2/v3/v4).
 
 ## session route
 

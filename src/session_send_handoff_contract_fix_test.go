@@ -268,7 +268,7 @@ func TestCmdSessionHandoffAllowsSchemaV4WhenLaneRequiresV2(t *testing.T) {
 			"--session", session,
 			"--project-root", projectRoot,
 			"--schema", "v4",
-			"--json-min",
+			"--json",
 		})
 		if code != 0 {
 			t.Fatalf("expected v4 schema acceptance, got %d", code)
@@ -283,5 +283,38 @@ func TestCmdSessionHandoffAllowsSchemaV4WhenLaneRequiresV2(t *testing.T) {
 	}
 	if payload["schema"] != "v4" {
 		t.Fatalf("expected schema v4 payload, got %v", payload["schema"])
+	}
+	nextAction, ok := payload["nextAction"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected typed nextAction object, got %T (%v)", payload["nextAction"], payload["nextAction"])
+	}
+	commandAST, ok := nextAction["commandAst"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nextAction.commandAst object, got %T (%v)", nextAction["commandAst"], nextAction["commandAst"])
+	}
+	if mapStringValue(commandAST, "schema") != "lisa.command.ast.v1" {
+		t.Fatalf("expected commandAst schema lisa.command.ast.v1, got %v", commandAST["schema"])
+	}
+
+	minOut, minErr := captureOutput(t, func() {
+		code := cmdSessionHandoff([]string{
+			"--session", session,
+			"--project-root", projectRoot,
+			"--schema", "v4",
+			"--json-min",
+		})
+		if code != 0 {
+			t.Fatalf("expected v4 schema acceptance for --json-min, got %d", code)
+		}
+	})
+	if minErr != "" {
+		t.Fatalf("unexpected stderr for --json-min: %q", minErr)
+	}
+	minPayload := map[string]any{}
+	if err := json.Unmarshal([]byte(minOut), &minPayload); err != nil {
+		t.Fatalf("parse --json-min payload: %v (%q)", err, minOut)
+	}
+	if minPayload["schema"] != "v4" {
+		t.Fatalf("expected --json-min schema v4 payload, got %v", minPayload["schema"])
 	}
 }

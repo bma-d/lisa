@@ -58,10 +58,10 @@ To validate nested wording detectors before smoke execution, use `./lisa session
 `session monitor --until-jsonpath '$.path=value'` now supports JSON-structured stop gates.
 `session handoff --delta-from <N>` now emits incremental event packets with `nextDeltaOffset`.
 `session handoff --cursor-file /tmp/handoff.cursor` now persists/reuses incremental handoff offsets.
-When lane contracts require typed handoff (`handoff_v2_required`), `session handoff` must use `--schema v2` (or `v3`), otherwise it returns `errorCode:"handoff_schema_v2_required"`.
+When lane contracts require typed handoff (`handoff_v2_required`), `session handoff` must use `--schema v2` (or `v3|v4`), otherwise it returns `errorCode:"handoff_schema_v2_required"`.
 `session context-pack --strategy terse|balanced|full` now applies deterministic packing defaults for token-sensitive routing.
 `session context-pack --from-handoff <path|->` now repacks handoff JSON without live polling.
-`session context-pack --from-handoff` now accepts handoff payloads where `nextAction` is an object (`schema v2|v3`) as well as string payloads (`schema v1`).
+`session context-pack --from-handoff` now accepts handoff payloads where `nextAction` is an object (`schema v2|v3|v4`) as well as string payloads (`schema v1`).
 `session route --emit-runbook --json` now emits executable step plans (preflight/spawn/monitor/capture/handoff/cleanup).
 `session route --budget <N>` now propagates token-budget hints into runbook capture/context-pack steps.
 `session autopilot --json` now runs spawn->monitor->capture->handoff->optional cleanup in one command.

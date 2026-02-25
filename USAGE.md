@@ -808,7 +808,7 @@ Behavior notes:
 
 - `--from-handoff` builds from handoff JSON payload fields instead of live tmux state polling.
 - `--for` and `--from-handoff` must reference the same session when both are set.
-- `--from-handoff` accepts `nextAction` as either string (v1) or object payload (`name`/`command` in v2/v3).
+- `--from-handoff` accepts `nextAction` as either string (v1) or object payload (`name`/`command` in v2/v3/v4).
 - `--redact` applies in-pack redaction before JSON emission; `none` cannot be combined with other rules.
 - Active redaction rules are returned in `redactRules` (`--json` and `--json-min`).
 

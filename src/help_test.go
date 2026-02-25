@@ -251,7 +251,7 @@ func TestHelpOutputContainsExpectedTokens(t *testing.T) {
 		{
 			"session handoff",
 			[]string{"session", "handoff", "--help"},
-			[]string{"lisa session handoff", "--delta-from", "--compress", "--schema", "--json"},
+			[]string{"lisa session handoff", "--delta-from", "--compress", "--schema", "v1|v2|v3|v4", "--json"},
 		},
 		{
 			"session route",
